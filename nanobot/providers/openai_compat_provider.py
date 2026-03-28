@@ -557,12 +557,6 @@ class OpenAICompatProvider(LLMProvider):
             usage=usage,
         )
 
-    @staticmethod
-    def _handle_error(e: Exception) -> LLMResponse:
-        body = getattr(e, "doc", None) or getattr(getattr(e, "response", None), "text", None)
-        msg = f"Error: {body.strip()[:500]}" if body and body.strip() else f"Error calling LLM: {e}"
-        return LLMResponse(content=msg, finish_reason="error")
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -587,10 +581,7 @@ class OpenAICompatProvider(LLMProvider):
             tool_choice,
         )
         logger.debug(f"LLM Request kwargs (chat): {json.dumps(kwargs, default=str)}")
-        try:
-            return self._parse(await self._client.chat.completions.create(**kwargs))
-        except Exception as e:
-            return self._handle_error(e)
+        return self._parse(await self._client.chat.completions.create(**kwargs))
 
     async def chat_stream(
         self,
@@ -615,18 +606,15 @@ class OpenAICompatProvider(LLMProvider):
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
         logger.debug(f"LLM Request kwargs (chat_stream): {json.dumps(kwargs, default=str)}")
-        try:
-            stream = await self._client.chat.completions.create(**kwargs)
-            chunks: list[Any] = []
-            async for chunk in stream:
-                chunks.append(chunk)
-                if on_content_delta and chunk.choices:
-                    text = getattr(chunk.choices[0].delta, "content", None)
-                    if text:
-                        await on_content_delta(text)
-            return self._parse_chunks(chunks)
-        except Exception as e:
-            return self._handle_error(e)
+        stream = await self._client.chat.completions.create(**kwargs)
+        chunks: list[Any] = []
+        async for chunk in stream:
+            chunks.append(chunk)
+            if on_content_delta and chunk.choices:
+                text = getattr(chunk.choices[0].delta, "content", None)
+                if text:
+                    await on_content_delta(text)
+        return self._parse_chunks(chunks)
 
     def get_default_model(self) -> str:
         return self.default_model

@@ -406,11 +406,8 @@ class AnthropicProvider(LLMProvider):
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
         )
-        try:
-            response = await self._client.messages.create(**kwargs)
-            return self._parse_response(response)
-        except Exception as e:
-            return LLMResponse(content=f"Error calling LLM: {e}", finish_reason="error")
+        response = await self._client.messages.create(**kwargs)
+        return self._parse_response(response)
 
     async def chat_stream(
         self,
@@ -427,15 +424,12 @@ class AnthropicProvider(LLMProvider):
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
         )
-        try:
-            async with self._client.messages.stream(**kwargs) as stream:
-                if on_content_delta:
-                    async for text in stream.text_stream:
-                        await on_content_delta(text)
-                response = await stream.get_final_message()
-            return self._parse_response(response)
-        except Exception as e:
-            return LLMResponse(content=f"Error calling LLM: {e}", finish_reason="error")
+        async with self._client.messages.stream(**kwargs) as stream:
+            if on_content_delta:
+                async for text in stream.text_stream:
+                    await on_content_delta(text)
+            response = await stream.get_final_message()
+        return self._parse_response(response)
 
     def get_default_model(self) -> str:
         return self.default_model
