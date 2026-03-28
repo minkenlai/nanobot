@@ -28,6 +28,17 @@ class ChannelsConfig(Base):
     send_max_retries: int = Field(default=3, ge=0, le=10)  # Max delivery attempts (initial send included)
 
 
+class ModelConfig(Base):
+    """Per-model configuration entry used in the top-level ``models`` dict."""
+
+    model: str
+    provider: str = "auto"
+    temperature: float | None = None
+    max_tokens: int | None = None
+    reasoning_effort: str | None = None
+    prefill: bool | None = None
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -42,6 +53,7 @@ class AgentDefaults(Base):
     max_tool_iterations: int = 40
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
+    fallback_models: list[str] = Field(default_factory=list)  # ordered keys into top-level models dict
 
 
 class AgentsConfig(Base):
@@ -153,6 +165,7 @@ class ToolsConfig(Base):
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
+    models: dict[str, ModelConfig] = Field(default_factory=dict)  # named model configs for fallback chains
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)

@@ -114,15 +114,21 @@ class AgentLoop:
         self._concurrency_gate: asyncio.Semaphore | None = (
             asyncio.Semaphore(_max) if _max > 0 else None
         )
+        # If a FallbackProvider is in use, route memory consolidation through
+        # the last (cheapest/most stable) slot to avoid burning primary quota.
+        from nanobot.providers.fallback import FallbackProvider as _FallbackProvider
+        _mem_provider = provider.memory_provider if isinstance(provider, _FallbackProvider) else provider
+        _mem_model = provider.memory_model if isinstance(provider, _FallbackProvider) else self.model
+
         self.memory_consolidator = MemoryConsolidator(
             workspace=workspace,
-            provider=provider,
-            model=self.model,
+            provider=_mem_provider,
+            model=_mem_model,
             sessions=self.sessions,
             context_window_tokens=context_window_tokens,
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
-            max_completion_tokens=provider.generation.max_tokens,
+            max_completion_tokens=_mem_provider.generation.max_tokens,
         )
         self._register_default_tools()
         self.commands = CommandRouter()

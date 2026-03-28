@@ -375,19 +375,29 @@ def _onboard_plugins(config_path: Path) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _make_provider(config: Config):
-    """Create the appropriate LLM provider from config.
+def _make_single_provider(config: Config, model: str, provider_override: str = "auto"):
+    """Instantiate a single LLM provider for *model* using *config*.
 
-    Routing is driven by ``ProviderSpec.backend`` in the registry.
+    This is the low-level factory used by both the legacy single-model path and
+    the new fallback-chain builder.  ``provider_override`` forces a specific
+    provider name instead of auto-detection (used when a ``ModelConfig`` entry
+    has an explicit ``provider`` field).
     """
     from nanobot.providers.base import GenerationSettings
     from nanobot.providers.registry import find_by_name
 
-    model = config.agents.defaults.model
-    provider_name = config.get_provider_name(model)
-    p = config.get_provider(model)
-    spec = find_by_name(provider_name) if provider_name else None
-    backend = spec.backend if spec else "openai_compat"
+    # Temporarily override the provider field so _match_provider picks the right one.
+    original_provider = config.agents.defaults.provider
+    if provider_override != "auto":
+        config.agents.defaults.provider = provider_override
+
+    try:
+        provider_name = config.get_provider_name(model)
+        p = config.get_provider(model)
+        spec = find_by_name(provider_name) if provider_name else None
+        backend = spec.backend if spec else "openai_compat"
+    finally:
+        config.agents.defaults.provider = original_provider
 
     # --- validation ---
     if backend == "azure_openai":
@@ -440,6 +450,59 @@ def _make_provider(config: Config):
         reasoning_effort=defaults.reasoning_effort,
     )
     return provider
+
+
+def _make_provider(config: Config):
+    """Create the appropriate LLM provider from config.
+
+    If ``agents.defaults.fallback_models`` is set and non-empty, builds a
+    ``FallbackProvider`` wrapping one provider per entry (validated against the
+    top-level ``models`` dict).  Otherwise falls back to the legacy single-model
+    path using ``agents.defaults.model``.
+    """
+    from nanobot.providers.base import GenerationSettings
+
+    fallback_keys = config.agents.defaults.fallback_models
+    if not fallback_keys:
+        # Legacy path — no fallback chain.
+        return _make_single_provider(config, config.agents.defaults.model)
+
+    # Validate all keys exist in config.models.
+    unknown = [k for k in fallback_keys if k not in config.models]
+    if unknown:
+        console.print(
+            f"[red]Error: fallback_models references unknown model key(s): "
+            f"{', '.join(unknown)}[/red]"
+        )
+        console.print(
+            "Each entry in agents.defaults.fallbackModels must be a key in the "
+            "top-level 'models' dict in your config.json."
+        )
+        raise typer.Exit(1)
+
+    # Build one provider per slot.
+    slots: list[tuple] = []
+    for key in fallback_keys:
+        mc = config.models[key]
+        slot_provider = _make_single_provider(config, mc.model, mc.provider)
+        # Apply per-model overrides to GenerationSettings.
+        defaults = config.agents.defaults
+        slot_provider.generation = GenerationSettings(
+            temperature=mc.temperature if mc.temperature is not None else defaults.temperature,
+            max_tokens=mc.max_tokens if mc.max_tokens is not None else defaults.max_tokens,
+            reasoning_effort=mc.reasoning_effort if mc.reasoning_effort is not None else defaults.reasoning_effort,
+        )
+        # Apply prefill override if the provider supports it.
+        if mc.prefill is not None and hasattr(slot_provider, "prefill"):
+            slot_provider.prefill = mc.prefill
+        slots.append((slot_provider, mc.model))
+
+    if len(slots) == 1:
+        # Single-entry chain — no wrapper needed.
+        return slots[0][0]
+
+    from nanobot.providers.fallback import FallbackProvider
+    return FallbackProvider(slots)
 
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
