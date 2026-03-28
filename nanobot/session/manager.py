@@ -136,7 +136,9 @@ class Session:
             # tool_calls but have no text body.
             if content == "":
                 content = None
-            entry: dict[str, Any] = {"role": message["role"], "content": content}
+            entry: dict[str, Any] = {"role": message["role"]}
+            if content is not None:
+                entry["content"] = content
             for key in ("tool_calls", "tool_call_id", "name"):
                 if key in message:
                     entry[key] = message[key]
