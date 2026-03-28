@@ -219,5 +219,5 @@ class FallbackProvider(LLMProvider):
         msg = str(exc).lower()
         return any(
             k in msg
-            for k in ["429", "quota", "rate limit", "daily limit", "resource_exhausted"]
+            for k in ["429", "402", "quota", "rate limit", "daily limit", "resource_exhausted", "payment required"]
         )

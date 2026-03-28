@@ -196,3 +196,122 @@ def test_window_cuts_mid_tool_group():
     # leaving orphan tool results for split_a at the front.
     history = session.get_history(max_messages=6)
     _assert_no_orphans(history)
+
+
+# --- Back-orphan trim tests (_find_legal_end) ---
+
+def test_trailing_assistant_with_no_tool_results_is_trimmed():
+    """An assistant message with tool_calls but no following tool results must be trimmed."""
+    session = Session(key="test:back-orphan-basic")
+    session.messages.append({"role": "user", "content": "do something"})
+    session.messages.append({
+        "role": "assistant", "content": None,
+        "tool_calls": [
+            {"id": "dangling_1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+        ],
+    })
+    # No tool result follows — simulates a crash mid-turn
+
+    history = session.get_history(max_messages=500)
+    # The dangling assistant message should be trimmed
+    assert all(m.get("role") != "assistant" or not m.get("tool_calls") for m in history), \
+        "Dangling assistant tool_calls should have been trimmed from the tail"
+
+
+def test_trailing_assistant_with_partial_tool_results_is_trimmed():
+    """If only some tool results are present (partial), the whole assistant+results block is trimmed."""
+    session = Session(key="test:back-orphan-partial")
+    session.messages.append({"role": "user", "content": "go"})
+    session.messages.append({
+        "role": "assistant", "content": None,
+        "tool_calls": [
+            {"id": "partial_a", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+            {"id": "partial_b", "type": "function", "function": {"name": "y", "arguments": "{}"}},
+        ],
+    })
+    # Only one of two tool results present
+    session.messages.append({"role": "tool", "tool_call_id": "partial_a", "name": "x", "content": "ok"})
+
+    history = session.get_history(max_messages=500)
+    _assert_no_orphans(history)
+    # The incomplete block should be gone
+    assert not any(m.get("tool_call_id") == "partial_a" for m in history), \
+        "Partial tool result block should have been trimmed"
+
+
+def test_complete_tool_turn_at_tail_is_preserved():
+    """A fully resolved tool turn at the tail must NOT be trimmed."""
+    session = Session(key="test:back-clean-tail")
+    session.messages.append({"role": "user", "content": "go"})
+    session.messages.extend(_tool_turn("complete", 0))
+    session.messages.append({"role": "assistant", "content": "all done"})
+
+    history = session.get_history(max_messages=500)
+    _assert_no_orphans(history)
+    assert len(history) == 5  # user + assistant(tool_calls) + 2 tool results + assistant(text)
+    assert history[-1]["content"] == "all done"
+
+
+def test_back_orphan_trim_preserves_earlier_complete_turns():
+    """Trimming the dangling tail must not affect earlier complete tool turns."""
+    session = Session(key="test:back-orphan-preserve-earlier")
+    session.messages.append({"role": "user", "content": "first"})
+    session.messages.extend(_tool_turn("good", 0))
+    session.messages.append({"role": "user", "content": "second"})
+    session.messages.append({
+        "role": "assistant", "content": None,
+        "tool_calls": [
+            {"id": "dangling_x", "type": "function", "function": {"name": "z", "arguments": "{}"}},
+        ],
+    })
+    # No tool result — dangling tail
+
+    history = session.get_history(max_messages=500)
+    _assert_no_orphans(history)
+    # Earlier complete turn must still be present
+    assert any(m.get("tool_call_id") == "good_0_a" for m in history), \
+        "Earlier complete tool turn should be preserved"
+    # Dangling tail must be gone
+    assert not any(m.get("role") == "assistant" and m.get("tool_calls") and
+                   any(tc["id"] == "dangling_x" for tc in m["tool_calls"])
+                   for m in history), \
+        "Dangling assistant tail should be trimmed"
+
+
+def test_find_legal_end_clean_tail_returns_full_length():
+    """_find_legal_end returns len(messages) when the tail is clean."""
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+    assert Session._find_legal_end(messages) == 2
+
+
+def test_find_legal_end_dangling_returns_trimmed_index():
+    """_find_legal_end returns the index of the dangling assistant message."""
+    messages = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "assistant", "content": None,
+            "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "f", "arguments": "{}"}}],
+        },
+        # No tool result
+    ]
+    assert Session._find_legal_end(messages) == 1
+
+
+def test_retain_recent_legal_suffix_trims_back_orphan():
+    """retain_recent_legal_suffix must also trim dangling tool_calls from the back."""
+    session = Session(key="test:retain-back-orphan")
+    session.messages.append({"role": "user", "content": "go"})
+    session.messages.append({
+        "role": "assistant", "content": None,
+        "tool_calls": [
+            {"id": "dangle_r", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+        ],
+    })
+
+    session.retain_recent_legal_suffix(10)
+
+    history = session.get_history(max_messages=500)
+    _assert_no_orphans(history)
