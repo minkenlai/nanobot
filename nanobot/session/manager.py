@@ -139,7 +139,15 @@ class Session:
             entry: dict[str, Any] = {"role": message["role"]}
             if content is not None:
                 entry["content"] = content
-            for key in ("tool_calls", "tool_call_id", "name"):
+            if "tool_calls" in message:
+                # Strip non-standard keys (e.g. extra_content with Google
+                # thought_signature) that Anthropic and other providers reject.
+                _TOOL_CALL_KEYS = {"id", "type", "function"}
+                entry["tool_calls"] = [
+                    {k: v for k, v in tc.items() if k in _TOOL_CALL_KEYS}
+                    for tc in message["tool_calls"]
+                ]
+            for key in ("tool_call_id", "name"):
                 if key in message:
                     entry[key] = message[key]
             out.append(entry)
