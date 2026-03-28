@@ -192,8 +192,13 @@ class OpenAICompatProvider(LLMProvider):
 
         if new_messages and new_messages[0].get("role") == "system":
             new_messages[0] = _mark(new_messages[0])
+        # Only mark user/assistant messages — tool messages don't support
+        # cache_control and providers like Gemini reject content arrays on them.
         if len(new_messages) >= 3:
-            new_messages[-2] = _mark(new_messages[-2])
+            for i in range(len(new_messages) - 2, -1, -1):
+                if new_messages[i].get("role") in ("user", "assistant"):
+                    new_messages[i] = _mark(new_messages[i])
+                    break
 
         new_tools = tools
         if tools:
@@ -239,6 +244,40 @@ class OpenAICompatProvider(LLMProvider):
     # Build kwargs
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _merge_consecutive_roles(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Merge consecutive same-role user/assistant messages.
+
+        Some providers (Anthropic, Gemini) require strictly alternating roles.
+        This can be violated when the gateway was down and multiple user messages
+        accumulated, or when subagent results are injected as consecutive assistant
+        messages.
+        """
+        merged: list[dict[str, Any]] = []
+        for msg in messages:
+            if merged and merged[-1]["role"] == msg["role"] and msg["role"] in ("user", "assistant"):
+                prev = merged[-1]
+                prev_content = prev.get("content")
+                curr_content = msg.get("content")
+                if prev_content and curr_content:
+                    if isinstance(prev_content, str) and isinstance(curr_content, str):
+                        prev["content"] = f"{prev_content}\n\n{curr_content}"
+                    elif isinstance(prev_content, list) and isinstance(curr_content, str):
+                        prev["content"] = prev_content + [{"type": "text", "text": curr_content}]
+                    elif isinstance(prev_content, str) and isinstance(curr_content, list):
+                        prev["content"] = [{"type": "text", "text": prev_content}] + curr_content
+                    else:
+                        prev["content"] = (prev_content or []) + (curr_content or [])
+                elif curr_content:
+                    prev["content"] = curr_content
+                if "tool_calls" in msg:
+                    if "tool_calls" not in prev:
+                        prev["tool_calls"] = []
+                    prev["tool_calls"].extend(msg["tool_calls"])
+            else:
+                merged.append(dict(msg))
+        return merged
+
     def _build_kwargs(
         self,
         messages: list[dict[str, Any]],
@@ -251,6 +290,9 @@ class OpenAICompatProvider(LLMProvider):
     ) -> dict[str, Any]:
         model_name = model or self.default_model
         spec = self._spec
+
+        # Merge consecutive same-role messages before any further processing.
+        messages = self._merge_consecutive_roles(messages)
 
         if spec and spec.supports_prompt_caching:
             messages, tools = self._apply_cache_control(messages, tools)
