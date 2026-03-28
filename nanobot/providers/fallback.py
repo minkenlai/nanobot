@@ -56,12 +56,14 @@ class FallbackProvider(LLMProvider):
 
         while True:
             provider, slot_model = self._slots[self._active_index]
-            effective_model = model if model is not None else slot_model
+            # Always use the slot's own model string — FallbackProvider owns model
+            # selection. The caller's `model` kwarg is intentionally ignored so that
+            # sentinel strings (e.g. "fallbackModels") never leak to the API.
             try:
                 response = await provider.chat(
                     messages=messages,
                     tools=tools,
-                    model=effective_model,
+                    model=slot_model,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
@@ -129,7 +131,7 @@ class FallbackProvider(LLMProvider):
 
         while True:
             provider, slot_model = self._slots[self._active_index]
-            effective_model = model if model is not None else slot_model
+            # Always use the slot's own model string — see chat() for rationale.
             try:
                 # Deliver any pending notification as a leading delta.
                 if notification and on_content_delta:
@@ -139,7 +141,7 @@ class FallbackProvider(LLMProvider):
                 response = await provider.chat_stream(
                     messages=messages,
                     tools=tools,
-                    model=effective_model,
+                    model=slot_model,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,

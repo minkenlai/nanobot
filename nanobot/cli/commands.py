@@ -610,11 +610,14 @@ def gateway(
     cron = CronService(cron_store_path)
 
     # Create agent with cron service
+    # Resolve model string: sentinel "fallbackModels" must not be passed to the
+    # provider API — use None so AgentLoop falls back to provider.get_default_model().
+    _agent_model = None if config.agents.defaults.model == "fallbackModels" else config.agents.defaults.model
     agent = AgentLoop(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
-        model=config.agents.defaults.model,
+        model=_agent_model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         context_window_tokens=config.agents.defaults.context_window_tokens,
         web_search_config=config.tools.web.search,
@@ -816,11 +819,14 @@ def agent(
     else:
         logger.disable("nanobot")
 
+    # Resolve model string: sentinel "fallbackModels" must not be passed to the
+    # provider API — use None so AgentLoop falls back to provider.get_default_model().
+    _agent_model = None if config.agents.defaults.model == "fallbackModels" else config.agents.defaults.model
     agent_loop = AgentLoop(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
-        model=config.agents.defaults.model,
+        model=_agent_model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         context_window_tokens=config.agents.defaults.context_window_tokens,
         web_search_config=config.tools.web.search,
