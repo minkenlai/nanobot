@@ -66,6 +66,46 @@ class Session:
                                     declared.add(str(tc["id"]))
         return start
 
+    @staticmethod
+    def _find_legal_end(messages: list[dict[str, Any]]) -> int:
+        """Find exclusive end index that excludes trailing assistant tool_call(s) with no tool results.
+
+        If the last assistant message has tool_calls but no following tool results,
+        it's an orphaned back-end — trim back to the last complete exchange.
+        Returns len(messages) if the tail is clean.
+        """
+        end = len(messages)
+        # Walk backwards: collect any trailing tool results, then check if the
+        # assistant message before them has unresolved tool_calls.
+        i = end - 1
+        while i >= 0:
+            msg = messages[i]
+            role = msg.get("role")
+            if role == "tool":
+                i -= 1
+                continue
+            if role == "assistant":
+                tool_calls = msg.get("tool_calls") or []
+                if not tool_calls:
+                    break  # clean tail — no dangling calls
+                # Collect IDs declared by this assistant message
+                declared = {str(tc["id"]) for tc in tool_calls if isinstance(tc, dict) and tc.get("id")}
+                # Collect IDs resolved by tool messages that follow
+                resolved = {
+                    str(m.get("tool_call_id"))
+                    for m in messages[i + 1:end]
+                    if m.get("role") == "tool" and m.get("tool_call_id")
+                }
+                if declared - resolved:
+                    # Some tool_calls have no matching result — trim from here
+                    end = i
+                    i -= 1
+                    continue
+                break  # all calls resolved — tail is clean
+            else:
+                break  # user or other role — stop
+        return end
+
     def get_history(self, max_messages: int = 500) -> list[dict[str, Any]]:
         """Return unconsolidated messages for LLM input, aligned to a legal tool-call boundary."""
         unconsolidated = self.messages[self.last_consolidated:]
@@ -82,6 +122,11 @@ class Session:
         start = self._find_legal_start(sliced)
         if start:
             sliced = sliced[start:]
+
+        # Trim trailing assistant tool_calls with no matching tool results.
+        end = self._find_legal_end(sliced)
+        if end < len(sliced):
+            sliced = sliced[:end]
 
         out: list[dict[str, Any]] = []
         for message in sliced:
@@ -118,6 +163,11 @@ class Session:
         start = self._find_legal_start(retained)
         if start:
             retained = retained[start:]
+
+        # Mirror get_history(): trim trailing orphaned tool_calls from the back.
+        end = self._find_legal_end(retained)
+        if end < len(retained):
+            retained = retained[:end]
 
         dropped = len(self.messages) - len(retained)
         self.messages = retained
