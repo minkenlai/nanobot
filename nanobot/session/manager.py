@@ -150,7 +150,24 @@ class Session:
             for key in ("tool_call_id", "name"):
                 if key in message:
                     entry[key] = message[key]
-            out.append(entry)
+            
+            # Merge consecutive user or assistant messages to satisfy strict
+            # alternating-role requirements of providers like Anthropic/Gemini.
+            if out and out[-1]["role"] == entry["role"] and entry["role"] in ("user", "assistant"):
+                prev = out[-1]
+                prev_content = prev.get("content")
+                curr_content = entry.get("content")
+                if prev_content and curr_content:
+                    prev["content"] = f"{prev_content}\n\n{curr_content}"
+                elif curr_content:
+                    prev["content"] = curr_content
+                
+                if "tool_calls" in entry:
+                    if "tool_calls" not in prev:
+                        prev["tool_calls"] = []
+                    prev["tool_calls"].extend(entry["tool_calls"])
+            else:
+                out.append(entry)
         return out
 
     def clear(self) -> None:
