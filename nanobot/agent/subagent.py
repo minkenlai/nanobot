@@ -3,8 +3,11 @@
 import asyncio
 import json
 import uuid
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from loguru import logger
 
@@ -19,6 +22,21 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ExecToolConfig
 from nanobot.providers.base import LLMProvider
+
+_MAX_COMPLETED_RECORDS = 50
+
+
+@dataclass
+class TaskRecord:
+    """Tracks the lifecycle of a single spawned subagent task."""
+
+    task_id: str
+    label: str
+    task: str
+    status: Literal["running", "done", "error"]
+    started_at: datetime
+    finished_at: datetime | None = None
+    result_summary: str | None = None  # first 200 chars of result/error
 
 
 class SubagentManager:
@@ -48,6 +66,9 @@ class SubagentManager:
         self.runner = AgentRunner(provider)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        # Ordered registry: running tasks + last N completed/failed tasks
+        self._task_registry: dict[str, TaskRecord] = {}
+        self._completed_ids: deque[str] = deque(maxlen=_MAX_COMPLETED_RECORDS)
 
     async def spawn(
         self,
@@ -61,6 +82,14 @@ class SubagentManager:
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
+
+        self._task_registry[task_id] = TaskRecord(
+            task_id=task_id,
+            label=display_label,
+            task=task,
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        )
 
         bg_task = asyncio.create_task(
             self._run_subagent(task_id, task, display_label, origin)
@@ -171,6 +200,19 @@ class SubagentManager:
         status: str,
     ) -> None:
         """Announce the subagent result to the main agent via the message bus."""
+        # Update registry with final status
+        if task_id in self._task_registry:
+            record = self._task_registry[task_id]
+            record.status = "done" if status == "ok" else "error"
+            record.finished_at = datetime.now(timezone.utc)
+            record.result_summary = result[:200] + ("…" if len(result) > 200 else "")
+            self._completed_ids.append(task_id)
+            # Evict oldest completed record if deque rolled over
+            if len(self._completed_ids) == _MAX_COMPLETED_RECORDS:
+                oldest = self._completed_ids[0]
+                if oldest != task_id and self._task_registry.get(oldest, TaskRecord("","","","running",datetime.now(timezone.utc))).status != "running":
+                    self._task_registry.pop(oldest, None)
+
         status_text = "completed successfully" if status == "ok" else "failed"
 
         announce_content = f"""[Subagent '{label}' {status_text}]
@@ -251,3 +293,11 @@ Tools like 'read_file' and 'web_fetch' can return native image content. Read vis
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
         return len(self._running_tasks)
+
+    def get_all_records(self) -> list[TaskRecord]:
+        """Return all tracked task records (running + recent completed), newest first."""
+        return sorted(
+            self._task_registry.values(),
+            key=lambda r: r.started_at,
+            reverse=True,
+        )
