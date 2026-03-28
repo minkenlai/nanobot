@@ -1,6 +1,7 @@
 """Configuration loading utilities."""
 
 import json
+import os
 from pathlib import Path
 
 import pydantic
@@ -10,6 +11,43 @@ from nanobot.config.schema import Config
 
 # Global variable to store current config path (for multi-instance support)
 _current_config_path: Path | None = None
+
+# Global variable to store overlay config path
+_current_overlay_path: Path | None = None
+
+
+def set_overlay_path(path: Path) -> None:
+    """Set the current config overlay path."""
+    global _current_overlay_path
+    _current_overlay_path = path
+
+
+def get_overlay_path() -> Path | None:
+    """Get the config overlay path, checking global state then env var."""
+    if _current_overlay_path:
+        return _current_overlay_path
+    env = os.environ.get("NANOBOT_CONFIG_OVERLAY")
+    if env:
+        return Path(env).expanduser()
+    return None
+
+
+def apply_overlay(base: dict, overlay_path: Path) -> dict:
+    """
+    Merge overlay JSON into base config at the section (top-level key) level.
+    Overlay sections replace base sections wholesale — no deep merge.
+    """
+    if not overlay_path.exists():
+        logger.warning(f"Config overlay not found: {overlay_path} — skipping.")
+        return base
+    try:
+        with open(overlay_path, encoding="utf-8") as f:
+            overlay = json.load(f)
+        logger.info(f"Applying config overlay from {overlay_path} (sections: {list(overlay.keys())})")
+        base.update(overlay)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to load config overlay from {overlay_path}: {e} — skipping.")
+    return base
 
 
 def set_config_path(path: Path) -> None:
@@ -42,6 +80,9 @@ def load_config(config_path: Path | None = None) -> Config:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             data = _migrate_config(data)
+            overlay_path = get_overlay_path()
+            if overlay_path:
+                data = apply_overlay(data, overlay_path)
             return Config.model_validate(data)
         except (json.JSONDecodeError, ValueError, pydantic.ValidationError) as e:
             logger.warning(f"Failed to load config from {path}: {e}")

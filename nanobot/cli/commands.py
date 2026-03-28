@@ -518,9 +518,13 @@ def _make_provider(config: Config):
     return FallbackProvider(slots)
 
 
-def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
+def _load_runtime_config(
+    config: str | None = None,
+    workspace: str | None = None,
+    config_overlay: str | None = None,
+) -> Config:
     """Load config and optionally override the active workspace."""
-    from nanobot.config.loader import load_config, set_config_path
+    from nanobot.config.loader import load_config, set_config_path, set_overlay_path
 
     config_path = None
     if config:
@@ -530,6 +534,14 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
             raise typer.Exit(1)
         set_config_path(config_path)
         console.print(f"[dim]Using config: {config_path}[/dim]")
+
+    if config_overlay:
+        overlay_path = Path(config_overlay).expanduser().resolve()
+        if not overlay_path.exists():
+            console.print(f"[red]Error: Config overlay not found: {config_overlay}[/red]")
+            raise typer.Exit(1)
+        set_overlay_path(overlay_path)
+        console.print(f"[dim]Using config overlay: {overlay_path}[/dim]")
 
     loaded = load_config(config_path)
     _warn_deprecated_config_keys(config_path)
@@ -578,6 +590,7 @@ def gateway(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    config_overlay: str | None = typer.Option(None, "--config-overlay", help="Path to config overlay file (merges over base config sections)"),
 ):
     """Start the nanobot gateway."""
     from nanobot.agent.loop import AgentLoop
@@ -592,7 +605,7 @@ def gateway(
         import logging
         logging.basicConfig(level=logging.DEBUG)
 
-    config = _load_runtime_config(config, workspace)
+    config = _load_runtime_config(config, workspace, config_overlay)
     port = port if port is not None else config.gateway.port
 
     console.print(f"{__logo__} Starting nanobot gateway version {__version__} on port {port}...")
@@ -790,6 +803,7 @@ def agent(
     session_id: str = typer.Option("cli:direct", "--session", "-s", help="Session ID"),
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     config: str | None = typer.Option(None, "--config", "-c", help="Config file path"),
+    config_overlay: str | None = typer.Option(None, "--config-overlay", help="Path to config overlay file (merges over base config sections)"),
     markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="Render assistant output as Markdown"),
     logs: bool = typer.Option(False, "--logs/--no-logs", help="Show nanobot runtime logs during chat"),
 ):
@@ -800,7 +814,7 @@ def agent(
     from nanobot.bus.queue import MessageBus
     from nanobot.cron.service import CronService
 
-    config = _load_runtime_config(config, workspace)
+    config = _load_runtime_config(config, workspace, config_overlay)
     sync_workspace_templates(config.workspace_path)
 
     bus = MessageBus()
