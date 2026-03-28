@@ -455,17 +455,30 @@ def _make_single_provider(config: Config, model: str, provider_override: str = "
 def _make_provider(config: Config):
     """Create the appropriate LLM provider from config.
 
-    If ``agents.defaults.fallback_models`` is set and non-empty, builds a
-    ``FallbackProvider`` wrapping one provider per entry (validated against the
-    top-level ``models`` dict).  Otherwise falls back to the legacy single-model
-    path using ``agents.defaults.model``.
+    Two modes:
+    - **Legacy (default):** ``agents.defaults.model`` is a normal model string.
+      ``fallback_models`` is ignored unless non-empty (for backwards compat).
+    - **Sentinel / fallback chain:** ``agents.defaults.model == "fallbackModels"``
+      is an explicit opt-in.  ``agents.defaults.fallbackModels`` must be a
+      non-empty ordered list of keys into the top-level ``models`` dict.
+      Builds a ``FallbackProvider`` that tries each slot in order on quota errors.
     """
     from nanobot.providers.base import GenerationSettings
 
+    model_str = config.agents.defaults.model
     fallback_keys = config.agents.defaults.fallback_models
-    if not fallback_keys:
+
+    # Sentinel: model="fallbackModels" is an explicit opt-in to the fallback chain.
+    if model_str == "fallbackModels":
+        if not fallback_keys:
+            console.print(
+                "[red]Error: agents.defaults.model is set to 'fallbackModels' but "
+                "agents.defaults.fallbackModels is empty or missing.[/red]"
+            )
+            raise typer.Exit(1)
+    elif not fallback_keys:
         # Legacy path — no fallback chain.
-        return _make_single_provider(config, config.agents.defaults.model)
+        return _make_single_provider(config, model_str)
 
     # Validate all keys exist in config.models.
     unknown = [k for k in fallback_keys if k not in config.models]
