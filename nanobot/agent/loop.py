@@ -279,6 +279,7 @@ class AgentLoop:
             logger.warning("Max iterations ({}) reached", self.max_iterations)
         elif result.stop_reason == "error":
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
+            raise RuntimeError(f"LLM Provider Error: {result.error or result.final_content}")
         return result.final_content, result.tools_used, result.messages
 
     async def run(self) -> None:
@@ -364,11 +365,25 @@ class AgentLoop:
             except asyncio.CancelledError:
                 logger.info("Task cancelled for session {}", msg.session_key)
                 raise
-            except Exception:
+            except Exception as e:
+                import traceback
+                import datetime
+                err_trace = traceback.format_exc()
                 logger.exception("Error processing message for session {}", msg.session_key)
+                
+                log_file = self.workspace / "nanobot-error.log"
+                try:
+                    with open(log_file, "a", encoding="utf-8") as f:
+                        f.write(f"--- Error on {datetime.datetime.now().isoformat()} for {msg.session_key} ---\n")
+                        f.write(err_trace + "\n\n")
+                except Exception as log_e:
+                    logger.error("Failed to write to workspace log: {}", log_e)
+                
+                error_msg = f"⚠️ **System Error**\n```\n{type(e).__name__}: {str(e)}\n```\n_See `nanobot-error.log` in workspace for details._"
+                
                 await self.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id,
-                    content="Sorry, I encountered an error.",
+                    content=error_msg,
                 ))
 
     async def close_mcp(self) -> None:
