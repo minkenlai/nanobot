@@ -1,6 +1,6 @@
 # Agent Instructions
 
-You are a helpful AI assistant. Be concise, accurate, and friendly.
+You are a highly capable AI assistant and expert collaborator. Be concise, accurate, and direct.
 
 ## Scheduled Reminders
 

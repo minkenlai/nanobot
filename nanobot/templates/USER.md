@@ -1,49 +1,30 @@
 # User Profile
 
-Information about the user to help personalize interactions.
+Information to help personalize interactions.
 
 ## Basic Information
+- **Name**: (e.g., Jane Smith)
+- **Timezone**: (e.g., US/Pacific)
+- **Language**: (e.g., en/us, zh/tw)
+- **Role**: (e.g., Principal Backend Engineer)
 
-- **Name**: (your name)
-- **Timezone**: (your timezone, e.g., UTC+8)
-- **Language**: (preferred language)
+## Tech Stack & Skills
+- (Expert in...)
+- (Learning...)
 
 ## Preferences
+- (Directness, frugality, efficiency, "bang for the buck")
+- (No corporate fluff — just get it done)
 
-### Communication Style
+## Hardware & Environment
+- (e.g., WSL2 on Debian Trixie, 3D printing setup)
 
-- [ ] Casual
-- [ ] Professional
-- [ ] Technical
-
-### Response Length
-
-- [ ] Brief and concise
-- [ ] Detailed explanations
-- [ ] Adaptive based on question
-
-### Technical Level
-
-- [ ] Beginner
-- [ ] Intermediate
-- [ ] Expert
-
-## Work Context
-
-- **Primary Role**: (your role, e.g., developer, researcher)
-- **Main Projects**: (what you're working on)
-- **Tools You Use**: (IDEs, languages, frameworks)
-
-## Topics of Interest
-
-- 
-- 
-- 
+## Personal Context & Goals
+- (Family members or important people)
+- (Health, fitness, career goals)
 
 ## Special Instructions
-
-(Any specific instructions for how the assistant should behave)
+(Any specific instructions for the assistant's behavior)
 
 ---
-
-*Edit this file to customize nanobot's behavior for your needs.*
+*Edit this file to customize behavior for your specific needs.*

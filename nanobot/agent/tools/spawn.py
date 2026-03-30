@@ -33,6 +33,8 @@ class SpawnTool(Tool):
             "Spawn a subagent to handle a task in the background. "
             "Use this for complex or time-consuming tasks that can run independently. "
             "The subagent will complete the task and report back when done. "
+            "Subagents automatically inherit the core persona (SOUL.md), user preferences (USER.md), "
+            "and operational guardrails (SUBAGENT.md), so you don't need to repeat these in the task. "
             "For deliverables or existing projects, inspect the workspace first "
             "and use a dedicated subdirectory when helpful."
         )

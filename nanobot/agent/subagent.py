@@ -319,6 +319,19 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
         from nanobot.agent.skills import SkillsLoader
 
         time_ctx = ContextBuilder._build_runtime_context(None, None)
+
+        # Load core persona and guidelines if they exist
+        core_files = ["SOUL.md", "USER.md", "SUBAGENT.md"]
+        core_parts = []
+        for cf in core_files:
+            p = self.workspace / cf
+            if p.exists():
+                try:
+                    content = p.read_text(encoding="utf-8")
+                    core_parts.append(f"### {cf}\n\n{content}")
+                except Exception as e:
+                    logger.warning("Failed to read core file {} for subagent: {}", cf, e)
+
         parts = [
             f"""# Subagent
 
@@ -332,6 +345,9 @@ Tools like 'read_file' and 'web_fetch' can return native image content. Read vis
 ## Workspace
 {self.workspace}"""
         ]
+
+        if core_parts:
+            parts.append("## Core Persona & Guidelines\n\n" + "\n\n".join(core_parts))
 
         skills_summary = SkillsLoader(self.workspace).build_skills_summary()
         if skills_summary:
