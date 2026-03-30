@@ -375,147 +375,15 @@ def _onboard_plugins(config_path: Path) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _make_single_provider(config: Config, model: str, provider_override: str = "auto"):
-    """Instantiate a single LLM provider for *model* using *config*.
-
-    This is the low-level factory used by both the legacy single-model path and
-    the new fallback-chain builder.  ``provider_override`` forces a specific
-    provider name instead of auto-detection (used when a ``ModelConfig`` entry
-    has an explicit ``provider`` field).
-    """
-    from nanobot.providers.base import GenerationSettings
-    from nanobot.providers.registry import find_by_name
-
-    # Temporarily override the provider field so _match_provider picks the right one.
-    original_provider = config.agents.defaults.provider
-    if provider_override != "auto":
-        config.agents.defaults.provider = provider_override
+def _make_provider(config: Config):
+    """Wrapper around build_provider to maintain CLI error handling."""
+    from nanobot.providers.factory import build_provider
 
     try:
-        provider_name = config.get_provider_name(model)
-        p = config.get_provider(model)
-        spec = find_by_name(provider_name) if provider_name else None
-        backend = spec.backend if spec else "openai_compat"
-    finally:
-        config.agents.defaults.provider = original_provider
-
-    # --- validation ---
-    if backend == "azure_openai":
-        if not p or not p.api_key or not p.api_base:
-            console.print("[red]Error: Azure OpenAI requires api_key and api_base.[/red]")
-            console.print("Set them in ~/.nanobot/config.json under providers.azure_openai section")
-            console.print("Use the model field to specify the deployment name.")
-            raise typer.Exit(1)
-    elif backend == "openai_compat" and not model.startswith("bedrock/"):
-        needs_key = not (p and p.api_key)
-        exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
-        if needs_key and not exempt:
-            console.print("[red]Error: No API key configured.[/red]")
-            console.print("Set one in ~/.nanobot/config.json under providers section")
-            raise typer.Exit(1)
-
-    # --- instantiation by backend ---
-    if backend == "openai_codex":
-        from nanobot.providers.openai_codex_provider import OpenAICodexProvider
-        provider = OpenAICodexProvider(default_model=model)
-    elif backend == "azure_openai":
-        from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
-        provider = AzureOpenAIProvider(
-            api_key=p.api_key,
-            api_base=p.api_base,
-            default_model=model,
-        )
-    elif backend == "anthropic":
-        from nanobot.providers.anthropic_provider import AnthropicProvider
-        provider = AnthropicProvider(
-            api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model),
-            default_model=model,
-            extra_headers=p.extra_headers if p else None,
-        )
-    else:
-        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-        provider = OpenAICompatProvider(
-            api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model),
-            default_model=model,
-            extra_headers=p.extra_headers if p else None,
-            spec=spec,
-        )
-
-    defaults = config.agents.defaults
-    provider.generation = GenerationSettings(
-        temperature=defaults.temperature,
-        max_tokens=defaults.max_tokens,
-        reasoning_effort=defaults.reasoning_effort,
-    )
-    return provider
-
-
-def _make_provider(config: Config):
-    """Create the appropriate LLM provider from config.
-
-    Two modes:
-    - **Legacy (default):** ``agents.defaults.model`` is a normal model string.
-      ``fallback_models`` is ignored unless non-empty (for backwards compat).
-    - **Sentinel / fallback chain:** ``agents.defaults.model == "fallbackModels"``
-      is an explicit opt-in.  ``agents.defaults.fallbackModels`` must be a
-      non-empty ordered list of keys into the top-level ``models`` dict.
-      Builds a ``FallbackProvider`` that tries each slot in order on quota errors.
-    """
-    from nanobot.providers.base import GenerationSettings
-
-    model_str = config.agents.defaults.model
-    fallback_keys = config.agents.defaults.fallback_models
-
-    # Sentinel: model="fallbackModels" is an explicit opt-in to the fallback chain.
-    if model_str == "fallbackModels":
-        if not fallback_keys:
-            console.print(
-                "[red]Error: agents.defaults.model is set to 'fallbackModels' but "
-                "agents.defaults.fallbackModels is empty or missing.[/red]"
-            )
-            raise typer.Exit(1)
-    elif not fallback_keys:
-        # Legacy path — no fallback chain.
-        return _make_single_provider(config, model_str)
-
-    # Validate all keys exist in config.models.
-    unknown = [k for k in fallback_keys if k not in config.models]
-    if unknown:
-        console.print(
-            f"[red]Error: fallback_models references unknown model key(s): "
-            f"{', '.join(unknown)}[/red]"
-        )
-        console.print(
-            "Each entry in agents.defaults.fallbackModels must be a key in the "
-            "top-level 'models' dict in your config.json."
-        )
+        return build_provider(config, "defaults")
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
         raise typer.Exit(1)
-
-    # Build one provider per slot.
-    slots: list[tuple] = []
-    for key in fallback_keys:
-        mc = config.models[key]
-        slot_provider = _make_single_provider(config, mc.model, mc.provider)
-        # Apply per-model overrides to GenerationSettings.
-        defaults = config.agents.defaults
-        slot_provider.generation = GenerationSettings(
-            temperature=mc.temperature if mc.temperature is not None else defaults.temperature,
-            max_tokens=mc.max_tokens if mc.max_tokens is not None else defaults.max_tokens,
-            reasoning_effort=mc.reasoning_effort if mc.reasoning_effort is not None else defaults.reasoning_effort,
-        )
-        # Apply prefill override if the provider supports it.
-        if mc.prefill is not None and hasattr(slot_provider, "prefill"):
-            slot_provider.prefill = mc.prefill
-        slots.append((slot_provider, mc.model))
-
-    if len(slots) == 1:
-        # Single-entry chain — no wrapper needed.
-        return slots[0][0]
-
-    from nanobot.providers.fallback import FallbackProvider
-    return FallbackProvider(slots)
 
 
 def _load_runtime_config(
@@ -630,6 +498,7 @@ def gateway(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
+        config=config,
         model=_agent_model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         context_window_tokens=config.agents.defaults.context_window_tokens,
@@ -840,6 +709,7 @@ def agent(
         bus=bus,
         provider=provider,
         workspace=config.workspace_path,
+        config=config,
         model=_agent_model,
         max_iterations=config.agents.defaults.max_tool_iterations,
         context_window_tokens=config.agents.defaults.context_window_tokens,

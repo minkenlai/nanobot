@@ -57,6 +57,7 @@ class AgentLoop:
         bus: MessageBus,
         provider: LLMProvider,
         workspace: Path,
+        config: Config | None = None,
         model: str | None = None,
         max_iterations: int = 40,
         context_window_tokens: int = 65_536,
@@ -70,12 +71,13 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
     ):
-        from nanobot.config.schema import ExecToolConfig, WebSearchConfig
+        from nanobot.config.schema import Config, ExecToolConfig, WebSearchConfig
 
         self.bus = bus
         self.channels_config = channels_config
         self.provider = provider
         self.workspace = workspace
+        self.config = config or Config()
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
         self.context_window_tokens = context_window_tokens
@@ -92,6 +94,7 @@ class AgentLoop:
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
         self.subagents = SubagentManager(
+            config=self.config,
             provider=provider,
             workspace=workspace,
             bus=bus,

@@ -20,8 +20,9 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ExecToolConfig
+from nanobot.config.schema import Config, ExecToolConfig, WebSearchConfig
 from nanobot.providers.base import LLMProvider
+from nanobot.providers.factory import build_provider
 
 _MAX_COMPLETED_RECORDS = 50
 
@@ -44,17 +45,17 @@ class SubagentManager:
 
     def __init__(
         self,
+        config: Config,
         provider: LLMProvider,
         workspace: Path,
         bus: MessageBus,
         model: str | None = None,
-        web_search_config: "WebSearchConfig | None" = None,
+        web_search_config: WebSearchConfig | None = None,
         web_proxy: str | None = None,
-        exec_config: "ExecToolConfig | None" = None,
+        exec_config: ExecToolConfig | None = None,
         restrict_to_workspace: bool = False,
     ):
-        from nanobot.config.schema import ExecToolConfig, WebSearchConfig
-
+        self.config = config
         self.provider = provider
         self.workspace = workspace
         self.bus = bus
@@ -74,7 +75,7 @@ class SubagentManager:
         self,
         task: str,
         label: str | None = None,
-        model: str | None = None,
+        agent: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
@@ -93,7 +94,7 @@ class SubagentManager:
         )
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, model)
+            self._run_subagent(task_id, task, display_label, origin, agent)
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -117,11 +118,19 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
-        model: str | None = None,
+        agent: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
-        target_model = model or self.model
-        logger.info("Subagent [{}] starting task: {} (model: {})", task_id, label, target_model)
+        agent_name = agent or "defaults"
+        try:
+            provider = build_provider(self.config, agent_name)
+        except Exception as e:
+            logger.error("Subagent [{}] failed to build provider for agent '{}': {}", task_id, agent_name, e)
+            await self._announce_result(task_id, label, task, f"Error: Failed to initialize agent '{agent_name}': {e}", origin, "error")
+            return
+
+        target_model = provider.get_default_model()
+        logger.info("Subagent [{}] starting task: {} (agent: {}, model: {})", task_id, label, agent_name, target_model)
 
         try:
             # Build subagent tools (no message tool, no spawn tool)
@@ -153,7 +162,8 @@ class SubagentManager:
                         args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                         logger.debug("Subagent [{}] executing: {} with arguments: {}", task_id, tool_call.name, args_str)
 
-            result = await self.runner.run(AgentRunSpec(
+            runner = AgentRunner(provider)
+            result = await runner.run(AgentRunSpec(
                 initial_messages=messages,
                 tools=tools,
                 model=target_model,
@@ -161,7 +171,7 @@ class SubagentManager:
                 hook=_SubagentHook(),
                 max_iterations_message="Task completed but no final response was generated.",
                 error_message=None,
-                fail_on_tool_error=True,
+                fail_on_tool_error=False,
             ))
             if result.stop_reason == "tool_error":
                 await self._announce_result(

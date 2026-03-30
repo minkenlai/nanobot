@@ -50,20 +50,20 @@ class SpawnTool(Tool):
                     "type": "string",
                     "description": "Optional short label for the task (for display)",
                 },
-                "model": {
+                "agent": {
                     "type": "string",
-                    "description": "Optional AI model override for the subagent (e.g., 'gpt-4o', 'gemini-2.5-pro'). Overrides the default model.",
+                    "description": "Optional agent profile to use (e.g., 'deep', 'fast'). Overrides the default agent.",
                 },
             },
             "required": ["task"],
         }
 
-    async def execute(self, task: str, label: str | None = None, model: str | None = None, **kwargs: Any) -> str:
+    async def execute(self, task: str, label: str | None = None, agent: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
         return await self._manager.spawn(
             task=task,
             label=label,
-            model=model,
+            agent=agent,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
             session_key=self._session_key,
