@@ -52,6 +52,7 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     max_tool_iterations: int = 40
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
+    grounding: str | None = None  # e.g. "google_search"
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
     fallback_models: list[str] = Field(default_factory=list)  # ordered keys into top-level models dict
 
@@ -60,6 +61,24 @@ class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
+    
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="allow")
+    
+    def get_agent(self, name: str) -> AgentDefaults:
+        """Get an agent configuration by name. Extra configs are lazily parsed."""
+        if name == "defaults":
+            return self.defaults
+        data = getattr(self, name, None)
+        if data is None:
+            raise ValueError(f"Agent '{name}' is not configured.")
+        if isinstance(data, dict):
+            # Lazily parse the extra dictionary into AgentDefaults
+            parsed = AgentDefaults.model_validate(data)
+            setattr(self, name, parsed)
+            return parsed
+        if isinstance(data, AgentDefaults):
+            return data
+        raise ValueError(f"Agent '{name}' configuration is invalid type: {type(data)}")
 
 
 class ProviderConfig(Base):
@@ -178,12 +197,13 @@ class Config(BaseSettings):
         return Path(self.agents.defaults.workspace).expanduser()
 
     def _match_provider(
-        self, model: str | None = None
+        self, model: str | None = None, agent_name: str = "defaults"
     ) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from nanobot.providers.registry import PROVIDERS, find_by_name
 
-        forced = self.agents.defaults.provider
+        agent_config = self.agents.get_agent(agent_name)
+        forced = agent_config.provider
         if forced != "auto":
             spec = find_by_name(forced)
             if spec:
@@ -191,7 +211,7 @@ class Config(BaseSettings):
                 return (p, spec.name) if p else (None, None)
             return None, None
 
-        model_lower = (model or self.agents.defaults.model).lower()
+        model_lower = (model or agent_config.model).lower()
         model_normalized = model_lower.replace("-", "_")
         model_prefix = model_lower.split("/", 1)[0] if "/" in model_lower else ""
         normalized_prefix = model_prefix.replace("-", "_")
@@ -242,26 +262,26 @@ class Config(BaseSettings):
                 return p, spec.name
         return None, None
 
-    def get_provider(self, model: str | None = None) -> ProviderConfig | None:
+    def get_provider(self, model: str | None = None, agent_name: str = "defaults") -> ProviderConfig | None:
         """Get matched provider config (api_key, api_base, extra_headers). Falls back to first available."""
-        p, _ = self._match_provider(model)
+        p, _ = self._match_provider(model, agent_name)
         return p
 
-    def get_provider_name(self, model: str | None = None) -> str | None:
+    def get_provider_name(self, model: str | None = None, agent_name: str = "defaults") -> str | None:
         """Get the registry name of the matched provider (e.g. "deepseek", "openrouter")."""
-        _, name = self._match_provider(model)
+        _, name = self._match_provider(model, agent_name)
         return name
 
-    def get_api_key(self, model: str | None = None) -> str | None:
+    def get_api_key(self, model: str | None = None, agent_name: str = "defaults") -> str | None:
         """Get API key for the given model. Falls back to first available key."""
-        p = self.get_provider(model)
+        p = self.get_provider(model, agent_name)
         return p.api_key if p else None
 
-    def get_api_base(self, model: str | None = None) -> str | None:
+    def get_api_base(self, model: str | None = None, agent_name: str = "defaults") -> str | None:
         """Get API base URL for the given model. Applies default URLs for gateway/local providers."""
         from nanobot.providers.registry import find_by_name
 
-        p, name = self._match_provider(model)
+        p, name = self._match_provider(model, agent_name)
         if p and p.api_base:
             return p.api_base
         # Only gateways get a default api_base here. Standard providers

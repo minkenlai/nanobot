@@ -231,14 +231,14 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         backend="openai_compat",
         default_api_base="https://api.deepseek.com",
     ),
-    # Gemini: Google's OpenAI-compatible endpoint
+    # Gemini: native backend for grounding, search and direct API usage
     ProviderSpec(
         name="gemini",
         keywords=("gemini",),
         env_key="GEMINI_API_KEY",
         display_name="Gemini",
-        backend="openai_compat",
-        default_api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+        backend="gemini_native",
+        default_api_base="https://generativelanguage.googleapis.com/v1beta",
     ),
     # Zhipu (智谱): OpenAI-compatible at open.bigmodel.cn
     ProviderSpec(
