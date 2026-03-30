@@ -53,23 +53,21 @@ class FallbackProvider(LLMProvider):
     ) -> LLMResponse:
         """Delegate to the active slot, falling back on quota errors."""
         notification = self._check_reset()
+        current_max_tokens = max_tokens
 
         while True:
             provider, slot_model = self._slots[self._active_index]
-            # Always use the slot's own model string — FallbackProvider owns model
-            # selection. The caller's `model` kwarg is intentionally ignored so that
-            # sentinel strings (e.g. "fallbackModels") never leak to the API.
             try:
                 response = await provider.chat(
                     messages=messages,
                     tools=tools,
                     model=slot_model,
-                    max_tokens=max_tokens,
+                    max_tokens=current_max_tokens,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
                     tool_choice=tool_choice,
                 )
-                # Prepend any notification to the response content.
+                # Success - return response.
                 if notification and response.content is not None:
                     response = LLMResponse(
                         content=notification + "\n\n" + response.content,
@@ -92,24 +90,35 @@ class FallbackProvider(LLMProvider):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if self._is_quota_error(exc) and self._active_index < len(self._slots) - 1:
-                    old_model = slot_model
-                    self._active_index += 1
-                    if self._reset_at is None:
-                        self._reset_at = self._next_reset_midnight()
-                    # Update generation settings to the new active slot's provider.
-                    self.generation = self._slots[self._active_index][0].generation
-                    new_model = self._slots[self._active_index][1]
-                    fallback_msg = (
-                        f"⚠️ Model quota hit on {old_model}. "
-                        f"Switching to fallback: {new_model}."
-                    )
-                    notification = (
-                        (notification + "\n" + fallback_msg) if notification else fallback_msg
-                    )
-                    # Retry with new slot (loop continues).
-                else:
-                    raise
+                msg = str(exc).lower()
+                is_max_tokens_issue = "max_tokens" in msg or "max tokens" in msg
+                
+                # If we hit a 402/quota error, try next slot or reduce max_tokens
+                if self._is_quota_error(exc):
+                    if is_max_tokens_issue and current_max_tokens > 1024:
+                        # Optimization: if we hit a max_tokens issue, try again with reduced tokens
+                        # BEFORE giving up on the current slot or moving to next.
+                        current_max_tokens //= 2
+                        logger.warning(f"FallbackProvider: Reducing max_tokens to {current_max_tokens} for {slot_model}")
+                        continue
+                    
+                    if self._active_index < len(self._slots) - 1:
+                        old_model = slot_model
+                        self._active_index += 1
+                        if self._reset_at is None:
+                            self._reset_at = self._next_reset_midnight()
+                        # Update generation settings to the new active slot's provider.
+                        self.generation = self._slots[self._active_index][0].generation
+                        new_model = self._slots[self._active_index][1]
+                        fallback_msg = (
+                            f"⚠️ Model quota hit on {old_model}. "
+                            f"Switching to fallback: {new_model}."
+                        )
+                        notification = (
+                            (notification + "\n" + fallback_msg) if notification else fallback_msg
+                        )
+                        continue
+                raise
 
     async def chat_stream(
         self,
@@ -122,16 +131,12 @@ class FallbackProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        """Stream from the active slot, falling back on quota errors.
-
-        If a fallback notification is pending, it is delivered as a leading
-        delta before the actual response stream begins.
-        """
+        """Stream from the active slot, falling back on quota errors."""
         notification = self._check_reset()
+        current_max_tokens = max_tokens
 
         while True:
             provider, slot_model = self._slots[self._active_index]
-            # Always use the slot's own model string — see chat() for rationale.
             try:
                 # Deliver any pending notification as a leading delta.
                 if notification and on_content_delta:
@@ -142,7 +147,7 @@ class FallbackProvider(LLMProvider):
                     messages=messages,
                     tools=tools,
                     model=slot_model,
-                    max_tokens=max_tokens,
+                    max_tokens=current_max_tokens,
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
                     tool_choice=tool_choice,
@@ -152,24 +157,35 @@ class FallbackProvider(LLMProvider):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if self._is_quota_error(exc) and self._active_index < len(self._slots) - 1:
-                    old_model = slot_model
-                    self._active_index += 1
-                    if self._reset_at is None:
-                        self._reset_at = self._next_reset_midnight()
-                    # Update generation settings to the new active slot's provider.
-                    self.generation = self._slots[self._active_index][0].generation
-                    new_model = self._slots[self._active_index][1]
-                    fallback_msg = (
-                        f"⚠️ Model quota hit on {old_model}. "
-                        f"Switching to fallback: {new_model}."
-                    )
-                    notification = (
-                        (notification + "\n" + fallback_msg) if notification else fallback_msg
-                    )
-                    # Retry with new slot (loop continues).
-                else:
-                    raise
+                msg = str(exc).lower()
+                is_max_tokens_issue = "max_tokens" in msg or "max tokens" in msg
+                
+                # If we hit a 402/quota error, try next slot or reduce max_tokens
+                if self._is_quota_error(exc):
+                    if is_max_tokens_issue and current_max_tokens > 1024:
+                        # Optimization: if we hit a max_tokens issue, try again with reduced tokens
+                        # BEFORE giving up on the current slot or moving to next.
+                        current_max_tokens //= 2
+                        logger.warning(f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_model}")
+                        continue
+                        
+                    if self._active_index < len(self._slots) - 1:
+                        old_model = slot_model
+                        self._active_index += 1
+                        if self._reset_at is None:
+                            self._reset_at = self._next_reset_midnight()
+                        # Update generation settings to the new active slot's provider.
+                        self.generation = self._slots[self._active_index][0].generation
+                        new_model = self._slots[self._active_index][1]
+                        fallback_msg = (
+                            f"⚠️ Model quota hit on {old_model}. "
+                            f"Switching to fallback: {new_model}."
+                        )
+                        notification = (
+                            (notification + "\n" + fallback_msg) if notification else fallback_msg
+                        )
+                        continue
+                raise
 
     def get_default_model(self) -> str:
         """Return the active slot's model string."""
