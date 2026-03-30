@@ -204,7 +204,7 @@ class SubagentManager:
                     hook=_SubagentHook(),
                     max_iterations_message="Task completed but no final response was generated.",
                     error_message=None,
-                    fail_on_tool_error=True,
+                    fail_on_tool_error=False,
                 )
             )
             if result.stop_reason == "tool_error":
