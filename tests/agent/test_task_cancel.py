@@ -148,7 +148,8 @@ class TestSubagentCancellation:
         bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
-        mgr = SubagentManager(provider=provider, workspace=MagicMock(), bus=bus)
+        from nanobot.config.schema import Config
+        mgr = SubagentManager(config=Config(), provider=provider, workspace=MagicMock(), bus=bus)
 
         cancelled = asyncio.Event()
 
@@ -176,7 +177,8 @@ class TestSubagentCancellation:
         bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
-        mgr = SubagentManager(provider=provider, workspace=MagicMock(), bus=bus)
+        from nanobot.config.schema import Config
+        mgr = SubagentManager(config=Config(), provider=provider, workspace=MagicMock(), bus=bus)
         assert await mgr.cancel_by_session("nonexistent") == 0
 
     @pytest.mark.asyncio
@@ -205,7 +207,8 @@ class TestSubagentCancellation:
             captured_second_call[:] = messages
             return LLMResponse(content="done", tool_calls=[])
         provider.chat_with_retry = scripted_chat_with_retry
-        mgr = SubagentManager(provider=provider, workspace=tmp_path, bus=bus)
+        from nanobot.config.schema import Config
+        mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
 
         async def fake_execute(self, name, arguments):
             return "tool result"
@@ -235,7 +238,8 @@ class TestSubagentCancellation:
             content="thinking",
             tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
         ))
-        mgr = SubagentManager(provider=provider, workspace=tmp_path, bus=bus)
+        from nanobot.config.schema import Config
+        mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
         mgr._announce_result = AsyncMock()
 
         calls = {"n": 0}
@@ -271,7 +275,8 @@ class TestSubagentCancellation:
             content="thinking",
             tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
         ))
-        mgr = SubagentManager(provider=provider, workspace=tmp_path, bus=bus)
+        from nanobot.config.schema import Config
+        mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
         mgr._announce_result = AsyncMock()
 
         started = asyncio.Event()

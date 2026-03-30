@@ -319,7 +319,8 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
         content="working",
         tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
     ))
-    mgr = SubagentManager(provider=provider, workspace=tmp_path, bus=bus)
+    from nanobot.config.schema import Config
+    mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
     mgr._announce_result = AsyncMock()
 
     async def fake_execute(self, name, arguments):
