@@ -9,12 +9,12 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
     """Create the appropriate LLM provider from config.
 
     Two modes:
-    - **Legacy (default):** model is a normal model string.
-      fallback_models is ignored unless non-empty (for backwards compat).
-    - **Sentinel / fallback chain:** model == "fallbackModels" is an
-      explicit opt-in. fallback_models must be a non-empty ordered list
+    - **Single Provider:** fallback_models is empty. Uses the configured
+      model and provider fields.
+    - **Fallback Chain:** fallback_models is a non-empty ordered list
       of keys into the top-level models dict. Builds a FallbackProvider
-      that tries each slot in order on quota errors.
+      that tries each slot in order on quota errors. The agent's base
+      'model' and 'provider' fields are ignored.
     """
     try:
         agent_config = config.agents.get_agent(agent_name)
@@ -24,14 +24,7 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
     model_str = agent_config.model
     fallback_keys = agent_config.fallback_models
 
-    # Sentinel: model="fallbackModels" is an explicit opt-in to the fallback chain.
-    if model_str == "fallbackModels":
-        if not fallback_keys:
-            raise ValueError(
-                f"agents.{agent_name}.model is set to 'fallbackModels' but "
-                f"agents.{agent_name}.fallbackModels is empty or missing."
-            )
-    elif not fallback_keys:
+    if not fallback_keys:
         # Legacy path — no fallback chain.
         return _build_single_provider(config, agent_name, model_str, agent_config.provider)
 
@@ -48,18 +41,20 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
     for key in fallback_keys:
         mc = config.models[key]
         slot_provider = _build_single_provider(config, agent_name, mc.model, mc.provider)
-        
+
         # Apply per-model overrides to GenerationSettings.
         slot_provider.generation = GenerationSettings(
             temperature=mc.temperature if mc.temperature is not None else agent_config.temperature,
             max_tokens=mc.max_tokens if mc.max_tokens is not None else agent_config.max_tokens,
-            reasoning_effort=mc.reasoning_effort if mc.reasoning_effort is not None else agent_config.reasoning_effort,
+            reasoning_effort=mc.reasoning_effort
+            if mc.reasoning_effort is not None
+            else agent_config.reasoning_effort,
         )
-        
+
         # Apply prefill override if the provider supports it.
         if mc.prefill is not None and hasattr(slot_provider, "prefill"):
             slot_provider.prefill = mc.prefill
-            
+
         slots.append((slot_provider, mc.model))
 
     if len(slots) == 1:
@@ -67,6 +62,7 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
         return slots[0][0]
 
     from nanobot.providers.fallback import FallbackProvider
+
     return FallbackProvider(slots)
 
 
@@ -109,16 +105,19 @@ def _build_single_provider(
     # --- instantiation by backend ---
     if backend == "openai_codex":
         from nanobot.providers.openai_codex_provider import OpenAICodexProvider
+
         provider = OpenAICodexProvider(default_model=model)
     elif backend == "azure_openai":
         from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
+
         provider = AzureOpenAIProvider(
-            api_key=p.api_key, # type: ignore
-            api_base=p.api_base, # type: ignore
+            api_key=p.api_key,  # type: ignore
+            api_base=p.api_base,  # type: ignore
             default_model=model,
         )
     elif backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
+
         provider = AnthropicProvider(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(model, agent_name=agent_name),
@@ -127,6 +126,7 @@ def _build_single_provider(
         )
     elif backend == "gemini_native":
         from nanobot.providers.gemini_provider import GeminiNativeProvider
+
         provider = GeminiNativeProvider(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(model, agent_name=agent_name),
@@ -135,6 +135,7 @@ def _build_single_provider(
         )
     else:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+
         provider = OpenAICompatProvider(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(model, agent_name=agent_name),
