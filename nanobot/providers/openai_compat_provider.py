@@ -294,8 +294,12 @@ class OpenAICompatProvider(LLMProvider):
         # Merge consecutive same-role messages before any further processing.
         messages = self._merge_consecutive_roles(messages)
 
+        # Apply prompt caching if supported by provider and model.
+        # OpenRouter supports it but only for Anthropic models.
+        is_anthropic = "anthropic/" in model_name.lower() or "claude-" in model_name.lower()
         if spec and spec.supports_prompt_caching:
-            messages, tools = self._apply_cache_control(messages, tools)
+            if spec.name != "openrouter" or is_anthropic:
+                messages, tools = self._apply_cache_control(messages, tools)
 
         if spec and spec.strip_model_prefix:
             model_name = model_name.split("/")[-1]
