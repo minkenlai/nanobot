@@ -42,13 +42,34 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
         mc = config.models[key]
         slot_provider = _build_single_provider(config, agent_name, mc.model, mc.provider)
 
+        explicit_agent_fields = agent_config.model_fields_set
+
+        # Agent config takes precedence over model config only if explicitly specified
+        temp = (
+            agent_config.temperature
+            if "temperature" in explicit_agent_fields
+            else (mc.temperature if mc.temperature is not None else agent_config.temperature)
+        )
+        max_tok = (
+            agent_config.max_tokens
+            if "max_tokens" in explicit_agent_fields
+            else (mc.max_tokens if mc.max_tokens is not None else agent_config.max_tokens)
+        )
+        reason = (
+            agent_config.reasoning_effort
+            if "reasoning_effort" in explicit_agent_fields
+            else (
+                mc.reasoning_effort
+                if mc.reasoning_effort is not None
+                else agent_config.reasoning_effort
+            )
+        )
+
         # Apply per-model overrides to GenerationSettings.
         slot_provider.generation = GenerationSettings(
-            temperature=mc.temperature if mc.temperature is not None else agent_config.temperature,
-            max_tokens=mc.max_tokens if mc.max_tokens is not None else agent_config.max_tokens,
-            reasoning_effort=mc.reasoning_effort
-            if mc.reasoning_effort is not None
-            else agent_config.reasoning_effort,
+            temperature=temp,
+            max_tokens=max_tok,
+            reasoning_effort=reason,
         )
 
         # Apply prefill override if the provider supports it.
