@@ -150,6 +150,7 @@ class OpenAICompatProvider(LLMProvider):
             api_key=api_key or "no-key",
             base_url=effective_base,
             default_headers=default_headers,
+            timeout=120.0,
         )
 
     def _setup_env(self, api_key: str, api_base: str | None) -> None:

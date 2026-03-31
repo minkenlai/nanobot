@@ -60,7 +60,7 @@ class GeminiNativeProvider(LLMProvider):
             payload["tools"] = tools
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
@@ -124,7 +124,7 @@ class GeminiNativeProvider(LLMProvider):
             if gemini_tools:
                 payload["tools"] = gemini_tools
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code != 200:
                 logger.error(f"Gemini API Error: {resp.status_code} {resp.text}")
