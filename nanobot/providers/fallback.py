@@ -11,6 +11,8 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from loguru import logger
+
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
 
 
@@ -92,7 +94,7 @@ class FallbackProvider(LLMProvider):
             except Exception as exc:
                 msg = str(exc).lower()
                 is_max_tokens_issue = "max_tokens" in msg or "max tokens" in msg
-                
+
                 # If we hit a 402/quota error, try next slot or reduce max_tokens
                 if self._is_quota_error(exc):
                     if is_max_tokens_issue and current_max_tokens > 1024:
@@ -101,7 +103,7 @@ class FallbackProvider(LLMProvider):
                         current_max_tokens //= 2
                         logger.warning(f"FallbackProvider: Reducing max_tokens to {current_max_tokens} for {slot_model}")
                         continue
-                    
+
                     if self._active_index < len(self._slots) - 1:
                         old_model = slot_model
                         self._active_index += 1
@@ -159,7 +161,7 @@ class FallbackProvider(LLMProvider):
             except Exception as exc:
                 msg = str(exc).lower()
                 is_max_tokens_issue = "max_tokens" in msg or "max tokens" in msg
-                
+
                 # If we hit a 402/quota error, try next slot or reduce max_tokens
                 if self._is_quota_error(exc):
                     if is_max_tokens_issue and current_max_tokens > 1024:
@@ -168,7 +170,7 @@ class FallbackProvider(LLMProvider):
                         current_max_tokens //= 2
                         logger.warning(f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_model}")
                         continue
-                        
+
                     if self._active_index < len(self._slots) - 1:
                         old_model = slot_model
                         self._active_index += 1

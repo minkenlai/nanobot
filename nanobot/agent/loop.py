@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import os
 import time
 from contextlib import AsyncExitStack, nullcontext
@@ -16,10 +15,10 @@ from loguru import logger
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.memory import MemoryConsolidator
-from nanobot.agent.runner import AgentRunSpec, AgentRunner
+from nanobot.agent.runner import AgentRunner, AgentRunSpec
+from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -28,8 +27,9 @@ from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.task_status import TaskStatusTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.bus.queue import MessageBus
+from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
+from nanobot.config.schema import Config
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
@@ -369,11 +369,11 @@ class AgentLoop:
                 logger.info("Task cancelled for session {}", msg.session_key)
                 raise
             except Exception as e:
-                import traceback
                 import datetime
+                import traceback
                 err_trace = traceback.format_exc()
                 logger.exception("Error processing message for session {}", msg.session_key)
-                
+
                 log_file = self.workspace / "nanobot-error.log"
                 try:
                     with open(log_file, "a", encoding="utf-8") as f:
@@ -381,9 +381,9 @@ class AgentLoop:
                         f.write(err_trace + "\n\n")
                 except Exception as log_e:
                     logger.error("Failed to write to workspace log: {}", log_e)
-                
+
                 error_msg = f"⚠️ **System Error**\n```\n{type(e).__name__}: {str(e)}\n```\n_See `nanobot-error.log` in workspace for details._"
-                
+
                 await self.bus.publish_outbound(OutboundMessage(
                     channel=msg.channel, chat_id=msg.chat_id,
                     content=error_msg,

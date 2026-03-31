@@ -24,8 +24,13 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
     model_str = agent_config.model
     fallback_keys = agent_config.fallback_models
 
+    # If the model is a key in the models dict, treat it as a single-entry fallback
+    # to ensure resolution and model-specific settings are applied.
+    if not fallback_keys and model_str in config.models:
+        fallback_keys = [model_str]
+
     if not fallback_keys:
-        # Legacy path — no fallback chain.
+        # Legacy path — no fallback chain and not a known model key.
         return _build_single_provider(config, agent_name, model_str, agent_config.provider)
 
     # Validate all keys exist in config.models.

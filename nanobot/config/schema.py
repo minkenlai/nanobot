@@ -61,9 +61,9 @@ class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
-    
+
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="allow")
-    
+
     def get_agent(self, name: str) -> AgentDefaults:
         """Get an agent configuration by name. Extra configs are lazily parsed."""
         if name == "defaults":

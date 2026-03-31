@@ -180,7 +180,7 @@ class WebSearchTool(Tool):
             headers = {"Accept": "application/json", "Authorization": f"Bearer {api_key}"}
             async with httpx.AsyncClient(proxy=self.proxy) as client:
                 r = await client.get(
-                    f"https://s.jina.ai/",
+                    "https://s.jina.ai/",
                     params={"q": query},
                     headers=headers,
                     timeout=15.0,
@@ -224,8 +224,8 @@ class WebFetchTool(Tool):
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "URL to fetch"},
-            "extractMode": {"type": "string", "enum": ["markdown", "text"], "default": "markdown"},
-            "maxChars": {"type": "integer", "minimum": 100},
+            "extract_mode": {"type": "string", "enum": ["markdown", "text"], "default": "markdown", "format": "enum"},
+            "max_chars": {"type": "integer", "minimum": 100},
         },
         "required": ["url"],
     }
@@ -234,8 +234,11 @@ class WebFetchTool(Tool):
         self.max_chars = max_chars
         self.proxy = proxy
 
-    async def execute(self, url: str, extractMode: str = "markdown", maxChars: int | None = None, **kwargs: Any) -> Any:
-        max_chars = maxChars or self.max_chars
+    async def execute(self, url: str, extract_mode: str | None = None, max_chars: int | None = None, **kwargs: Any) -> Any:
+        # Backward compatibility for camelCase parameters
+        limit_chars = max_chars or kwargs.get("maxChars") or self.max_chars
+        mode = extract_mode or kwargs.get("extractMode") or "markdown"
+
         is_valid, error_msg = _validate_url_safe(url)
         if not is_valid:
             return json.dumps({"error": f"URL validation failed: {error_msg}", "url": url}, ensure_ascii=False)
@@ -258,12 +261,12 @@ class WebFetchTool(Tool):
         except Exception as e:
             logger.debug("Pre-fetch image detection failed for {}: {}", url, e)
 
-        result = await self._fetch_jina(url, max_chars)
+        result = await self._fetch_jina(url, limit_chars)
         if result is None:
-            result = await self._fetch_readability(url, extractMode, max_chars)
+            result = await self._fetch_readability(url, mode, limit_chars)
         return result
 
-    async def _fetch_jina(self, url: str, max_chars: int) -> str | None:
+    async def _fetch_jina(self, url: str, limit_chars: int) -> str | None:
         """Try fetching via Jina Reader API. Returns None on failure."""
         try:
             headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
@@ -285,9 +288,9 @@ class WebFetchTool(Tool):
 
             if title:
                 text = f"# {title}\n\n{text}"
-            truncated = len(text) > max_chars
+            truncated = len(text) > limit_chars
             if truncated:
-                text = text[:max_chars]
+                text = text[:limit_chars]
             text = f"{_UNTRUSTED_BANNER}\n\n{text}"
 
             return json.dumps({
@@ -299,7 +302,7 @@ class WebFetchTool(Tool):
             logger.debug("Jina Reader failed for {}, falling back to readability: {}", url, e)
             return None
 
-    async def _fetch_readability(self, url: str, extract_mode: str, max_chars: int) -> Any:
+    async def _fetch_readability(self, url: str, extract_mode: str, limit_chars: int) -> Any:
         """Local fallback using readability-lxml."""
         from readability import Document
 
@@ -332,9 +335,9 @@ class WebFetchTool(Tool):
             else:
                 text, extractor = r.text, "raw"
 
-            truncated = len(text) > max_chars
+            truncated = len(text) > limit_chars
             if truncated:
-                text = text[:max_chars]
+                text = text[:limit_chars]
             text = f"{_UNTRUSTED_BANNER}\n\n{text}"
 
             return json.dumps({

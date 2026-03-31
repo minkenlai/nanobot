@@ -142,9 +142,9 @@ class Session:
             if "tool_calls" in message:
                 # Strip non-standard keys (e.g. extra_content with Google
                 # thought_signature) that Anthropic and other providers reject.
-                _TOOL_CALL_KEYS = {"id", "type", "function"}
+                tool_call_keys = {"id", "type", "function"}
                 entry["tool_calls"] = [
-                    {k: v for k, v in tc.items() if k in _TOOL_CALL_KEYS}
+                    {k: v for k, v in tc.items() if k in tool_call_keys}
                     for tc in message["tool_calls"]
                 ]
             for key in ("tool_call_id", "name"):

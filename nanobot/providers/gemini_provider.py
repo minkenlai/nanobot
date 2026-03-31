@@ -182,11 +182,17 @@ class GeminiNativeProvider(LLMProvider):
                         }
                     }
 
-                    psf = fn.get("provider_specific_fields", {})
+                    psf = tc.get("function_provider_specific_fields") or fn.get("provider_specific_fields") or {}
                     if isinstance(psf, dict):
                         ts = psf.get("thought_signature") or psf.get("thoughtSignature")
                         if ts:
                             part_payload["thought_signature"] = ts
+
+                        thought = psf.get("thought")
+                        if thought:
+                            # Gemini reasoning models often want thought text preceding the function call
+                            # or in its own part. Let's add it as its own part before this one.
+                            parts.append({"thought": thought})
 
                     parts.append(part_payload)
 
@@ -245,18 +251,30 @@ class GeminiNativeProvider(LLMProvider):
         for part in parts:
             if "text" in part:
                 text += part["text"]
+            if "thought" in part:
+                # Preserve the thought text in provider-specific fields if needed,
+                # but for Gemini history, we just need to ensure it's echoed back.
+                # We'll store it in a way that _convert_messages can find it.
+                pass
             if "functionCall" in part:
                 fc = part["functionCall"]
+                # Gemini thought_signature can be at the part level
                 ts = part.get("thought_signature") or part.get("thoughtSignature")
+                # Or sometimes inside functionCall in some versions/wrappers
                 if not ts and isinstance(fc, dict):
                     ts = fc.get("thought_signature") or fc.get("thoughtSignature")
+
+                thought = part.get("thought")
 
                 tool_calls.append(
                     ToolCallRequest(
                         id=fc.get("name", "tc"),
                         name=fc["name"],
                         arguments=fc.get("args", {}),
-                        function_provider_specific_fields={"thought_signature": ts} if ts else None,
+                        function_provider_specific_fields={
+                            "thought_signature": ts,
+                            "thought": thought,
+                        } if (ts or thought) else None,
                     )
                 )
 
