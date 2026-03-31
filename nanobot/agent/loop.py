@@ -220,6 +220,10 @@ class AgentLoop:
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        reasoning_effort: str | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop.
 
@@ -271,8 +275,11 @@ class AgentLoop:
         result = await self.runner.run(AgentRunSpec(
             initial_messages=initial_messages,
             tools=self.tools,
-            model=self.model,
+            model=model or self.model,
             max_iterations=self.max_iterations,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
             hook=_LoopHook(),
             error_message="Sorry, I encountered an error calling the AI model.",
             concurrent_tools=True,
@@ -437,9 +444,27 @@ class AgentLoop:
                 current_message=msg.content, channel=channel, chat_id=chat_id,
                 current_role=current_role,
             )
+            # Resolve agent profile override from metadata
+            agent_profile = msg.metadata.get("agent_profile")
+            loop_kwargs = {}
+            if agent_profile and self.config.agents:
+                try:
+                    profile_cfg = self.config.agents.get_agent(agent_profile)
+                    loop_kwargs["model"] = profile_cfg.model
+                    loop_kwargs["max_tokens"] = profile_cfg.max_tokens
+                    loop_kwargs["temperature"] = profile_cfg.temperature
+                    loop_kwargs["reasoning_effort"] = profile_cfg.reasoning_effort
+                    logger.info("Overriding agent profile for turn: {}", agent_profile)
+                except ValueError as e:
+                    logger.warning("Invalid agent profile requested in metadata: {}", e)
+
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
+                on_progress=on_progress or _bus_progress,
+                on_stream=on_stream,
+                on_stream_end=on_stream_end,
+                **loop_kwargs,
             )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
@@ -482,6 +507,20 @@ class AgentLoop:
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
 
+        # Resolve agent profile override from metadata
+        agent_profile = msg.metadata.get("agent_profile")
+        loop_kwargs = {}
+        if agent_profile and self.config.agents:
+            try:
+                profile_cfg = self.config.agents.get_agent(agent_profile)
+                loop_kwargs["model"] = profile_cfg.model
+                loop_kwargs["max_tokens"] = profile_cfg.max_tokens
+                loop_kwargs["temperature"] = profile_cfg.temperature
+                loop_kwargs["reasoning_effort"] = profile_cfg.reasoning_effort
+                logger.info("Overriding agent profile for turn: {}", agent_profile)
+            except ValueError as e:
+                logger.warning("Invalid agent profile requested in metadata: {}", e)
+
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages,
             on_progress=on_progress or _bus_progress,
@@ -489,6 +528,7 @@ class AgentLoop:
             on_stream_end=on_stream_end,
             channel=msg.channel, chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
+            **loop_kwargs,
         )
 
         if final_content is None:
