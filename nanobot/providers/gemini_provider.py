@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 from typing import Any
 
 import httpx
@@ -27,6 +29,55 @@ class GeminiNativeProvider(LLMProvider):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.grounding = grounding
+        self._cache_state: dict[str, Any] = {}
+
+    async def _get_or_create_cached_content(
+        self,
+        model_name: str,
+        system_instruction: dict[str, Any],
+        tools: list[dict[str, Any]] | None,
+    ) -> str | None:
+        """Explicitly cache system prompt and tools, returning the cache name if successful."""
+        state_str = json.dumps({"system": system_instruction, "tools": tools}, sort_keys=True)
+        state_hash = hashlib.sha256(state_str.encode("utf-8")).hexdigest()
+
+        now = time.time()
+
+        if (
+            self._cache_state.get("hash") == state_hash
+            and self._cache_state.get("expires", 0) > now + 60
+        ):
+            return self._cache_state["name"]
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/cachedContents?key={self.api_key}"
+
+        payload = {
+            "model": f"models/{model_name}",
+            "systemInstruction": system_instruction,
+            "ttl": "3600s",
+        }
+        if tools:
+            payload["tools"] = tools
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    name = data["name"]
+                    self._cache_state = {"hash": state_hash, "name": name, "expires": now + 3600}
+                    logger.debug(f"Created Gemini cachedContent: {name}")
+                    return name
+                else:
+                    logger.warning(
+                        f"Failed to create Gemini cachedContent ({resp.status_code}): {resp.text}. "
+                        "Falling back to inline payload. "
+                        "(Note: Cache requires minimum token count on some models)"
+                    )
+                    return None
+        except Exception as e:
+            logger.error(f"Error creating Gemini cachedContent: {e}")
+            return None
 
     async def chat(
         self,
@@ -51,17 +102,27 @@ class GeminiNativeProvider(LLMProvider):
         if self.grounding in ("google_search", "google_maps"):
             gemini_tools.append({"google_search_retrieval": {}})
 
-        payload = {
+        payload: dict[str, Any] = {
             "contents": contents,
             "generationConfig": {
                 "temperature": temperature,
                 "maxOutputTokens": max_tokens,
             },
         }
+
         if system_instruction:
-            payload["systemInstruction"] = system_instruction
-        if gemini_tools:
-            payload["tools"] = gemini_tools
+            cached_content_name = await self._get_or_create_cached_content(
+                model_name=model_name, system_instruction=system_instruction, tools=gemini_tools
+            )
+            if cached_content_name:
+                payload["cachedContent"] = cached_content_name
+            else:
+                payload["systemInstruction"] = system_instruction
+                if gemini_tools:
+                    payload["tools"] = gemini_tools
+        else:
+            if gemini_tools:
+                payload["tools"] = gemini_tools
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(url, json=payload)
