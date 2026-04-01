@@ -201,10 +201,12 @@ class TelegramChannel(BaseChannel):
     BOT_COMMANDS = [
         BotCommand("start", "Start the bot"),
         BotCommand("new", "Start a new conversation"),
-        BotCommand("stop", "Stop the current task"),
+        BotCommand("stop", "Cancel active tasks in this session"),
         BotCommand("help", "Show available commands"),
-        BotCommand("restart", "Restart the bot"),
+        BotCommand("restart", "Refresh code in-place"),
         BotCommand("status", "Show bot status"),
+        BotCommand("tasks", "List background tasks"),
+        BotCommand("usage", "Show token usage"),
     ]
 
     @classmethod
@@ -293,7 +295,11 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("stop", self._forward_command))
         self._app.add_handler(CommandHandler("restart", self._forward_command))
         self._app.add_handler(CommandHandler("status", self._forward_command))
-        self._app.add_handler(CommandHandler("help", self._on_help))
+        self._app.add_handler(CommandHandler("tasks", self._forward_command))
+        self._app.add_handler(CommandHandler("usage", self._forward_command))
+        self._app.add_handler(CommandHandler("halt", self._forward_command))
+        self._app.add_handler(CommandHandler("RIP", self._forward_command))
+        self._app.add_handler(CommandHandler("help", self._forward_command))
 
         # Add message handler for text, photos, voice, documents
         self._app.add_handler(
@@ -465,7 +471,7 @@ class TelegramChannel(BaseChannel):
         except ValueError:
             logger.error("Invalid chat_id: {}", chat_id_str)
             return
-        
+
         message_thread_id = msg.message_thread_id
         reply_to_message_id = msg.metadata.get("message_id")
 

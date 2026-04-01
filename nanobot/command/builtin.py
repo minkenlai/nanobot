@@ -15,6 +15,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Show help for builtin commands."""
     msg = ctx.msg
     content = "**Available Commands:**\n"
+    content += "- `/new`: Start a fresh conversation (clears context)\n"
     content += "- `/help`: Show this help\n"
     content += "- `/status`: Show system status and version\n"
     content += "- `/tasks`: List current and recent background tasks\n"
@@ -149,6 +150,22 @@ async def cmd_usage(ctx: CommandContext) -> OutboundMessage:
     return OutboundMessage(address=msg.address, content=content)
 
 
+async def cmd_new(ctx: CommandContext) -> OutboundMessage:
+    """Start a fresh session."""
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+    snapshot = session.messages[session.last_consolidated :]
+    session.clear()
+    loop.sessions.save(session)
+    loop.sessions.invalidate(session.key)
+    if snapshot:
+        loop._schedule_background(loop.memory_consolidator.archive_messages(snapshot))
+    return OutboundMessage(
+        address=ctx.msg.address,
+        content="New session started.",
+    )
+
+
 async def cmd_tasks(ctx: CommandContext) -> OutboundMessage:
     """List current and recent background tasks."""
     msg = ctx.msg
@@ -173,6 +190,7 @@ async def cmd_tasks(ctx: CommandContext) -> OutboundMessage:
 
 def register_builtin_commands(router: CommandRouter) -> None:
     """Register all builtin commands."""
+    router.exact("/new", cmd_new)
     router.exact("/help", cmd_help)
     router.exact("/status", cmd_status)
     router.exact("/tasks", cmd_tasks)
