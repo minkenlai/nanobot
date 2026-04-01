@@ -21,7 +21,8 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     content += "- `/stop`: Cancel all active tasks in this session\n"
     content += "- `/restart`: Refresh code in-place (preserves PID)\n"
     content += "- `/restart --full`: Graceful full reboot (requires systemd)\n"
-    content += "- `/shutdown`: Stop the gateway process (Manual mode only)\n"
+    content += "- `/halt`: Stop the gateway process (Manual mode only)\n"
+    content += "- `/RIP`: Witty alias for `/halt`\n"
     return OutboundMessage(address=msg.address, content=content)
 
 
@@ -115,7 +116,7 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
     return OutboundMessage(address=msg.address, content=content)
 
 
-async def cmd_shutdown(ctx: CommandContext) -> OutboundMessage:
+async def cmd_halt(ctx: CommandContext) -> OutboundMessage:
     """Gracefully shut down the process."""
     msg = ctx.msg
     loop = ctx.loop
@@ -127,12 +128,12 @@ async def cmd_shutdown(ctx: CommandContext) -> OutboundMessage:
             "Please stop the service via systemd if you want me to stay off.",
         )
 
-    async def _do_shutdown():
+    async def _do_halt():
         await asyncio.sleep(1)
         loop.stop()
 
-    asyncio.create_task(_do_shutdown())
-    return OutboundMessage(address=msg.address, content="👋 Goodbye! Shutting down...")
+    asyncio.create_task(_do_halt())
+    return OutboundMessage(address=msg.address, content="👋 Goodbye! Halting...")
 
 
 async def cmd_usage(ctx: CommandContext) -> OutboundMessage:
@@ -154,4 +155,5 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/usage", cmd_usage)
     router.priority("/stop", cmd_stop)
     router.priority("/restart", cmd_restart)
-    router.priority("/shutdown", cmd_shutdown)
+    router.priority("/halt", cmd_halt)
+    router.priority("/RIP", cmd_halt)
