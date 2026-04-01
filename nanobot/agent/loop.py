@@ -274,14 +274,17 @@ class AgentLoop:
                 lines = log_file.read_text(encoding="utf-8").splitlines()[-20:]
                 for line in reversed(lines):
                     if "SHUTDOWN:" in line and "RESTART_REQ" in line:
-                        # Format: [timestamp] SHUTDOWN: RESTART_REQ channel:chat_id[:thread_id] to branch
+                        # Format: [timestamp] SHUTDOWN: RESTART_REQ {URI} to branch {branch}
                         parts = line.split("RESTART_REQ")[-1].strip().split()
                         if parts:
-                            target = parts[0]
-                            pending_notification = target.split(":")
-                            logger.debug(
-                                "Found pending notification target: {}", pending_notification
-                            )
+                            uri = parts[0]
+                            try:
+                                pending_notification = Address.from_uri(uri)
+                                logger.debug(
+                                    "Found pending notification target: {}", pending_notification
+                                )
+                            except Exception as e:
+                                logger.warning("Failed to parse URI from log {}: {}", uri, e)
                         break
             except Exception as e:
                 logger.error("Error reading lifecycle log for notifications: {}", e)
@@ -297,22 +300,13 @@ class AgentLoop:
         # 4. If a notification was pending, send it
         if pending_notification:
             try:
-                channel = pending_notification[0]
-                chat_id = pending_notification[1]
-                thread_id = int(pending_notification[2]) if len(pending_notification) > 2 else None
-
                 msg = "🔄 **System bootstrapped successfully**\n"
                 msg += f"**Branch:** `{branch}`\n"
                 msg += f"**Commit:** `{sha}`"
 
-                segments = [str(chat_id)]
-                if thread_id:
-                    segments.append(str(thread_id))
-                address = Address(channel=channel, segments=tuple(segments))
-
                 await self.bus.publish_outbound(
                     OutboundMessage(
-                        address=address,
+                        address=pending_notification,
                         content=msg,
                     )
                 )
