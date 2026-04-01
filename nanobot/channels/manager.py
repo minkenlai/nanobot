@@ -32,6 +32,11 @@ class ChannelManager:
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
 
+        # Common channel name aliases
+        self._aliases = {
+            "tg": "telegram",
+        }
+
         self._init_channels()
 
     def _init_channels(self) -> None:
@@ -144,7 +149,8 @@ class ChannelManager:
                     msg, extra_pending = self._coalesce_stream_deltas(msg)
                     pending.extend(extra_pending)
 
-                channel = self.channels.get(msg.channel)
+                channel_name = self._aliases.get(msg.channel, msg.channel)
+                channel = self.channels.get(channel_name)
                 if channel:
                     await self._send_with_retry(channel, msg)
                 else:
@@ -244,7 +250,7 @@ class ChannelManager:
 
     def get_channel(self, name: str) -> BaseChannel | None:
         """Get a channel by name."""
-        return self.channels.get(name)
+        return self.channels.get(self._aliases.get(name, name))
 
     def get_status(self) -> dict[str, Any]:
         """Get status of all channels."""
