@@ -222,16 +222,16 @@ class AgentLoop:
 
         # 1. Get current Git state
         try:
-            # Use the directory of the running code to find the Git state
+            # Use the directory of this file to find the nearest Git repository
             from pathlib import Path
-            source_root = Path(__file__).resolve().parent.parent.parent
+            source_dir = Path(__file__).resolve().parent
             branch = (
-                subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=source_root)
+                subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=source_dir)
                 .decode()
                 .strip()
             )
             sha = (
-                subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=source_root)
+                subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=source_dir)
                 .decode()
                 .strip()
             )
