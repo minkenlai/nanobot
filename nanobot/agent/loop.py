@@ -173,6 +173,25 @@ class AgentLoop:
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
 
+    @property
+    def is_supervised(self) -> bool:
+        """Check if the process is running under a supervisor (e.g. systemd)."""
+        import os
+        return "INVOCATION_ID" in os.environ
+
+    async def stop_tasks_by_session(self, session_key: str) -> int:
+        """Cancel all active tasks for a given session."""
+        tasks = self._active_tasks.get(session_key, [])
+        if not tasks:
+            return 0
+        
+        count = len(tasks)
+        for task in list(tasks):
+            if not task.done():
+                task.cancel()
+        
+        return count
+
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
@@ -391,6 +410,10 @@ class AgentLoop:
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
             raise RuntimeError(f"LLM Provider Error: {result.error or result.final_content}")
         return result.final_content, result.tools_used, result.messages
+
+    def stop(self) -> None:
+        """Stop the agent loop."""
+        self._running = False
 
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
