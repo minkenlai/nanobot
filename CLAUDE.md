@@ -78,6 +78,15 @@ User config lives at `~/.nanobot/config.json` (Pydantic `BaseSettings`, supports
 - Tests live in `tests/` mirroring the source structure
 - Integration tests hit real code paths; avoid mocking internals
 
+## Deployment Architecture (v3.1)
+
+Production environments use a symlink-based worktree architecture:
+- **Workspace:** `~/.nanobot/workspace`
+- **Active Code:** Symlink `~/.nanobot/workspace/current` points to a specific Git worktree (e.g., `nanobot-dev`, `nanobot-main`).
+- **Service:** `nanobot.service` runs the gateway using the virtual environment inside the `current` symlink.
+- **Environment Overrides:** Managed via `~/.nanobot/workspace/nanobot.env` (e.g., `EXTRA_ARGS` for config overlays).
+- **Lifecycle Logging:** Restarts/shutdowns log intents to `~/.nanobot/workspace/logs/lifecycle.log`. The bot processes read this log on boot to report success to the user.
+
 ## Branching
 
 - `main`: stable, production-ready
