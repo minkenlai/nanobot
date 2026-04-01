@@ -167,6 +167,7 @@ class MatrixChannel(BaseChannel):
 
     name = "matrix"
     display_name = "Matrix"
+    aliases = ["mx"]
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:

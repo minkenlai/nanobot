@@ -22,6 +22,7 @@ class BaseChannel(ABC):
 
     name: str = "base"
     display_name: str = "Base"
+    aliases: list[str] = []
     transcription_api_key: str = ""
 
     def __init__(self, config: Any, bus: MessageBus):

@@ -278,6 +278,7 @@ class FeishuChannel(BaseChannel):
 
     name = "feishu"
     display_name = "Feishu"
+    aliases = ["fs", "lark"]
 
     _STREAM_EDIT_INTERVAL = 0.5  # throttle between CardKit streaming updates
 

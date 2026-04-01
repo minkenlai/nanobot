@@ -39,6 +39,7 @@ class WhatsAppChannel(BaseChannel):
 
     name = "whatsapp"
     display_name = "WhatsApp"
+    aliases = ["wa"]
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:

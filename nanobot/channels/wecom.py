@@ -48,6 +48,7 @@ class WecomChannel(BaseChannel):
 
     name = "wecom"
     display_name = "WeCom"
+    aliases = ["wc", "office"]
 
     @classmethod
     def default_config(cls) -> dict[str, Any]:

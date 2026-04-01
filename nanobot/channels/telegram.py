@@ -195,6 +195,7 @@ class TelegramChannel(BaseChannel):
 
     name = "telegram"
     display_name = "Telegram"
+    aliases = ["tg"]
 
     # Commands registered with Telegram's command menu
     BOT_COMMANDS = [

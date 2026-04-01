@@ -31,11 +31,7 @@ class ChannelManager:
         self.bus = bus
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
-
-        # Common channel name aliases
-        self._aliases = {
-            "tg": "telegram",
-        }
+        self._aliases: dict[str, str] = {}
 
         self._init_channels()
 
@@ -60,6 +56,11 @@ class ChannelManager:
                 channel = cls(section, self.bus)
                 channel.transcription_api_key = groq_key
                 self.channels[name] = channel
+
+                # Register aliases for enabled channel
+                for alias in getattr(cls, "aliases", []):
+                    self._aliases[alias] = name
+
                 logger.info("{} channel enabled", cls.display_name)
             except Exception as e:
                 logger.warning("{} channel not available: {}", name, e)
