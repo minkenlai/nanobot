@@ -439,8 +439,16 @@ class TelegramChannel(BaseChannel):
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Telegram."""
+        # Wait up to 30 seconds for the bot to initialize (useful for startup notifications)
+        wait_count = 0
+        while not self._app and wait_count < 30:
+            if wait_count == 0:
+                logger.debug("Telegram bot not running yet, waiting for initialization...")
+            await asyncio.sleep(1)
+            wait_count += 1
+
         if not self._app:
-            logger.warning("Telegram bot not running")
+            logger.warning("Telegram bot not running after 30s timeout, dropping message")
             return
 
         # Progress handling: Maintain a cumulative audit trail of actions
@@ -458,9 +466,9 @@ class TelegramChannel(BaseChannel):
             logger.error("Invalid chat_id: {}", msg.chat_id)
             return
         reply_to_message_id = msg.metadata.get("message_id")
-        message_thread_id = msg.metadata.get("message_thread_id")
+        message_thread_id = msg.message_thread_id or msg.metadata.get("message_thread_id")
 
-        # If thread ID is missing from metadata, try to recover it from the message we're replying to
+        # If thread ID is missing, try to recover it from the message we're replying to
         if message_thread_id is None and reply_to_message_id is not None:
             message_thread_id = self._message_threads.get((str(chat_id), reply_to_message_id))
 
