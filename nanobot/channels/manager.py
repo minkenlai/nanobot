@@ -36,15 +36,29 @@ class ChannelManager:
         self._init_channels()
 
     def _init_channels(self) -> None:
-        """Initialize channels discovered via pkgutil scan + entry_points plugins."""
-        from nanobot.channels.registry import discover_all
+        """Initialize channels discovered via lightweight scan, only loading enabled ones."""
+        from nanobot.channels.registry import (
+            discover_channel_names,
+            discover_plugins,
+            load_channel_class,
+        )
 
         groq_key = self.config.providers.groq.api_key
 
-        for name, cls in discover_all().items():
+        # 1. Gather all potential channel names (built-ins + plugins)
+        # Built-ins take precedence if names collide.
+        available_builtins = discover_channel_names()
+        available_plugins = discover_plugins()
+
+        # 2. Iterate through config to see what the user actually wants
+        # We also check the built-in list to ensure we're not trying to load something that doesn't exist
+        all_potential_names = set(available_builtins) | set(available_plugins.keys())
+
+        for name in all_potential_names:
             section = getattr(self.config.channels, name, None)
             if section is None:
                 continue
+
             enabled = (
                 section.get("enabled", False)
                 if isinstance(section, dict)
@@ -52,13 +66,28 @@ class ChannelManager:
             )
             if not enabled:
                 continue
+
             try:
+                # 3. Only now do we perform the "heavy" import/load
+                if name in available_builtins:
+                    cls = load_channel_class(name)
+                else:
+                    cls = available_plugins[name]
+
                 channel = cls(section, self.bus)
                 channel.transcription_api_key = groq_key
                 self.channels[name] = channel
 
                 # Register aliases for enabled channel
                 for alias in getattr(cls, "aliases", []):
+                    if alias in self._aliases:
+                        logger.warning(
+                            "Channel alias '{}' from '{}' is already taken by '{}'. Skipping.",
+                            alias,
+                            name,
+                            self._aliases[alias],
+                        )
+                        continue
                     self._aliases[alias] = name
 
                 logger.info("{} channel enabled", cls.display_name)
