@@ -100,8 +100,9 @@ class ExecTool(Tool):
         import datetime
 
         try:
-            # Use a stable path for the audit log relative to the workspace root
-            audit_path = Path("audit.log")
+            # Use a stable path for the audit log relative to the workspace logs dir
+            audit_path = Path("logs") / "audit.log"
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open(audit_path, "a", encoding="utf-8") as f:
                 f.write(f"[{timestamp}] CWD: {cwd} | CMD: {command}\n")
