@@ -5,8 +5,6 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from loguru import logger
-
 from nanobot.bus.events import OutboundMessage
 
 if TYPE_CHECKING:
@@ -18,11 +16,47 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     msg = ctx.msg
     content = "**Available Commands:**\n"
     content += "- `/help`: Show this help\n"
+    content += "- `/status`: Show system status and version\n"
     content += "- `/usage`: Show token usage for the current session\n"
     content += "- `/stop`: Cancel all active tasks in this session\n"
     content += "- `/restart`: Refresh code in-place (preserves PID)\n"
     content += "- `/restart --full`: Graceful full reboot (requires systemd)\n"
     content += "- `/shutdown`: Stop the gateway process (Manual mode only)\n"
+    return OutboundMessage(address=msg.address, content=content)
+
+
+async def cmd_status(ctx: CommandContext) -> OutboundMessage:
+    """Show system status and version."""
+    msg = ctx.msg
+    loop = ctx.loop
+
+    # Get version/commit info if possible
+    sha = "unknown"
+    branch = "unknown"
+    try:
+        import subprocess
+
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=loop.workspace / "nanobot-dev", text=True
+        ).strip()
+        branch = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=loop.workspace / "nanobot-dev",
+            text=True,
+        ).strip()
+    except Exception:
+        pass
+
+    status = "🟢 Running"
+    if loop.is_supervised:
+        status += " (Supervised)"
+    else:
+        status += " (Manual)"
+
+    content = f"**System Status:** {status}\n"
+    content += f"**Branch:** `{branch}`\n"
+    content += f"**Commit:** `{sha}`\n"
+    content += f"**PID:** `{os.getpid()}`"
     return OutboundMessage(address=msg.address, content=content)
 
 
@@ -49,18 +83,14 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
         return OutboundMessage(
             address=msg.address,
             content="🛑 **Abort:** I am not running under a supervisor (systemd). "
-            "If I perform a full restart, I won't be able to come back! "
             "Use `/restart` (in-place) to refresh code, or `/shutdown` to stop.",
         )
 
     async def _do_restart():
-        # Record intent in lifecycle.log for the new process to pick up
         from datetime import datetime
 
         log_file = loop.workspace / "logs" / "lifecycle.log"
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Use URI format for the target
         target = msg.address.to_uri()
 
         try:
@@ -74,18 +104,13 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
         await asyncio.sleep(1)
 
         if is_full:
-            # For a full restart, we just stop the loop.
-            # Systemd's Restart=always will handle the rest.
             loop.stop()
         else:
-            # In-place restart preserves the PID
             os.execv(sys.executable, [sys.executable, "-m", "nanobot"] + sys.argv[1:])
 
     asyncio.create_task(_do_restart())
     content = (
-        "🔄 Restarting (full)... See you in a moment!"
-        if is_full
-        else "🔄 Restarting in-place..."
+        "🔄 Restarting (full)... See you in a moment!" if is_full else "🔄 Restarting in-place..."
     )
     return OutboundMessage(address=msg.address, content=content)
 
@@ -98,9 +123,8 @@ async def cmd_shutdown(ctx: CommandContext) -> OutboundMessage:
     if loop.is_supervised:
         return OutboundMessage(
             address=msg.address,
-            content="🛑 **Abort:** I am running under systemd. If I shut down, I will be "
-            "restarted automatically! Please stop the service from the terminal "
-            "if you want me to stay off.",
+            content="🛑 **Abort:** I am running under systemd. "
+            "Please stop the service via systemd if you want me to stay off.",
         )
 
     async def _do_shutdown():
@@ -116,17 +140,18 @@ async def cmd_usage(ctx: CommandContext) -> OutboundMessage:
     msg = ctx.msg
     loop = ctx.loop
     usage = loop.get_usage(msg.session_key)
-    content = f"**Token Usage (Session):**\n"
+    content = "**Token Usage (Session):**\n"
     content += f"- Input: {usage.get('input_tokens', 0):,}\n"
     content += f"- Output: {usage.get('output_tokens', 0):,}\n"
     content += f"- Total: {usage.get('total_tokens', 0):,}"
     return OutboundMessage(address=msg.address, content=content)
 
 
-def register_builtin_commands(router: "CommandRouter") -> None:
+def register_builtin_commands(router: CommandRouter) -> None:
     """Register all builtin commands."""
     router.exact("/help", cmd_help)
-    router.exact("/stop", cmd_stop)
-    router.exact("/restart", cmd_restart)
+    router.exact("/status", cmd_status)
     router.exact("/usage", cmd_usage)
-    router.exact("/shutdown", cmd_shutdown)
+    router.priority("/stop", cmd_stop)
+    router.priority("/restart", cmd_restart)
+    router.priority("/shutdown", cmd_shutdown)

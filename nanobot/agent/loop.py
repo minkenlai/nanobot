@@ -177,6 +177,7 @@ class AgentLoop:
     def is_supervised(self) -> bool:
         """Check if the process is running under a supervisor (e.g. systemd)."""
         import os
+
         return "INVOCATION_ID" in os.environ
 
     async def stop_tasks_by_session(self, session_key: str) -> int:
@@ -184,12 +185,12 @@ class AgentLoop:
         tasks = self._active_tasks.get(session_key, [])
         if not tasks:
             return 0
-        
+
         count = len(tasks)
         for task in list(tasks):
             if not task.done():
                 task.cancel()
-        
+
         return count
 
     async def _connect_mcp(self) -> None:
@@ -215,7 +216,9 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    def _set_tool_context(self, address: Address, session_key: str, message_id: str | None = None) -> None:
+    def _set_tool_context(
+        self, address: Address, session_key: str, message_id: str | None = None
+    ) -> None:
         """Update context for all tools that need routing info."""
         for name in ("message", "spawn", "cron"):
             if tool := self.tools.get(name):
@@ -236,8 +239,8 @@ class AgentLoop:
 
     async def _audit_lifecycle(self) -> None:
         """Log startup to lifecycle.log and check for pending notifications."""
-        from datetime import datetime
         import subprocess
+        from datetime import datetime
 
         log_file = self.workspace / "logs" / "lifecycle.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -246,9 +249,12 @@ class AgentLoop:
         try:
             # Use the directory of this file to find the nearest Git repository
             from pathlib import Path
+
             source_dir = Path(__file__).resolve().parent
             branch = (
-                subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=source_dir)
+                subprocess.check_output(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=source_dir
+                )
                 .decode()
                 .strip()
             )
@@ -273,13 +279,16 @@ class AgentLoop:
                         if parts:
                             target = parts[0]
                             pending_notification = target.split(":")
-                            logger.debug("Found pending notification target: {}", pending_notification)
+                            logger.debug(
+                                "Found pending notification target: {}", pending_notification
+                            )
                         break
             except Exception as e:
                 logger.error("Error reading lifecycle log for notifications: {}", e)
 
         # 3. Log current START
         import os
+
         pid = os.getpid()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with log_file.open("a", encoding="utf-8") as f:
@@ -410,10 +419,6 @@ class AgentLoop:
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
             raise RuntimeError(f"LLM Provider Error: {result.error or result.final_content}")
         return result.final_content, result.tools_used, result.messages
-
-    def stop(self) -> None:
-        """Stop the agent loop."""
-        self._running = False
 
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
@@ -613,9 +618,7 @@ class AgentLoop:
             async def _bus_progress(text: str) -> None:
                 from nanobot.bus.events import ProgressEvent
 
-                await self.bus.publish_progress(
-                    ProgressEvent(address=address, content=text)
-                )
+                await self.bus.publish_progress(ProgressEvent(address=address, content=text))
 
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages,
