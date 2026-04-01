@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from nanobot.config.loader import get_config_path
@@ -10,7 +11,12 @@ from nanobot.utils.helpers import ensure_dir
 
 def get_data_dir() -> Path:
     """Return the instance-level runtime data directory."""
-    return ensure_dir(get_config_path().parent)
+    path = get_config_path().parent
+    # If the config is in a read-only directory (like systemd credentials),
+    # fall back to the default home-based location for data.
+    if not os.access(path, os.W_OK):
+        return ensure_dir(Path.home() / ".nanobot")
+    return ensure_dir(path)
 
 
 def get_runtime_subdir(name: str) -> Path:
@@ -22,6 +28,11 @@ def get_media_dir(channel: str | None = None) -> Path:
     """Return the media directory, optionally namespaced per channel."""
     base = get_runtime_subdir("media")
     return ensure_dir(base / channel) if channel else base
+
+
+def get_cron_dir() -> Path:
+    """Return the cron storage directory."""
+    return get_runtime_subdir("cron")
 
 
 def get_logs_dir() -> Path:
