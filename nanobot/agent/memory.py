@@ -280,7 +280,14 @@ class MemoryConsolidator:
     def estimate_session_prompt_tokens(self, session: Session) -> tuple[int, str]:
         """Estimate current prompt size for the normal session history view."""
         history = session.get_history(max_messages=0)
-        channel, chat_id = (session.key.split(":", 1) if ":" in session.key else (None, None))
+        from nanobot.bus.events import Address
+
+        try:
+            addr = Address.from_uri(session.key)
+            channel = addr.channel
+            chat_id = addr.segments[0] if addr.segments else None
+        except Exception:
+            channel, chat_id = None, None
         probe_messages = self._build_messages(
             history=history,
             current_message="[token-probe]",

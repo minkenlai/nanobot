@@ -221,7 +221,12 @@ class SlackChannel(BaseChannel):
             logger.debug("Slack reactions_add failed: {}", e)
 
         # Thread-scoped session key for channel/group messages
-        session_key = f"slack:{chat_id}:{thread_ts}" if thread_ts and channel_type != "im" else None
+        segments = [chat_id]
+        if thread_ts and channel_type != "im":
+            segments.append(thread_ts)
+        
+        address = Address(channel="slack", segments=tuple(segments))
+        session_key = address.to_uri()
 
         try:
             await self._handle_message(
