@@ -3,7 +3,6 @@ from pathlib import Path
 from nanobot.config.paths import (
     get_bridge_install_dir,
     get_cli_history_path,
-    get_cron_dir,
     get_data_dir,
     get_legacy_sessions_dir,
     get_logs_dir,
@@ -20,7 +19,6 @@ def test_runtime_dirs_follow_config_path(monkeypatch, tmp_path: Path) -> None:
 
     assert get_data_dir() == config_file.parent
     assert get_runtime_subdir("cron") == config_file.parent / "cron"
-    assert get_cron_dir() == config_file.parent / "cron"
     assert get_logs_dir() == config_file.parent / "logs"
 
 
