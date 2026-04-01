@@ -194,6 +194,11 @@ class AgentLoop:
 
         return count
 
+    def get_usage(self, session_key: str) -> dict[str, int]:
+        """Get total token usage for the given session."""
+        session = self.sessions.get_or_create(session_key)
+        return session.metadata.get("usage", {})
+
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:

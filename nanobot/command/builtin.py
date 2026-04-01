@@ -17,6 +17,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     content = "**Available Commands:**\n"
     content += "- `/help`: Show this help\n"
     content += "- `/status`: Show system status and version\n"
+    content += "- `/tasks`: List current and recent background tasks\n"
     content += "- `/usage`: Show token usage for the current session\n"
     content += "- `/stop`: Cancel all active tasks in this session\n"
     content += "- `/restart`: Refresh code in-place (preserves PID)\n"
@@ -148,10 +149,33 @@ async def cmd_usage(ctx: CommandContext) -> OutboundMessage:
     return OutboundMessage(address=msg.address, content=content)
 
 
+async def cmd_tasks(ctx: CommandContext) -> OutboundMessage:
+    """List current and recent background tasks."""
+    msg = ctx.msg
+    loop = ctx.loop
+    records = loop.subagents.get_all_records()
+
+    if not records:
+        return OutboundMessage(address=msg.address, content="No background tasks found.")
+
+    content = "**Background Tasks (Recent):**\n\n"
+    for r in records[:10]:  # Show last 10
+        status_emoji = {"running": "⚙️", "done": "✅", "error": "❌"}.get(r.status, "❓")
+        started = r.started_at.strftime("%H:%M:%S")
+        content += f"{status_emoji} **{r.label}** (`{r.task_id}`)\n"
+        content += f"  - Status: {r.status} (Started: {started})\n"
+        if r.result_summary:
+            content += f"  - Result: {r.result_summary}\n"
+        content += "\n"
+
+    return OutboundMessage(address=msg.address, content=content)
+
+
 def register_builtin_commands(router: CommandRouter) -> None:
     """Register all builtin commands."""
     router.exact("/help", cmd_help)
     router.exact("/status", cmd_status)
+    router.exact("/tasks", cmd_tasks)
     router.exact("/usage", cmd_usage)
     router.priority("/stop", cmd_stop)
     router.priority("/restart", cmd_restart)
