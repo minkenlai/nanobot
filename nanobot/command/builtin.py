@@ -39,11 +39,14 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
         from datetime import datetime
         log_file = loop.workspace / "logs" / "lifecycle.log"
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Target format: channel:chat_id[:thread_id]
         target = f"{msg.channel}:{msg.chat_id}"
         if msg.message_thread_id:
             target = f"{target}:{msg.message_thread_id}"
         
         try:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
             with log_file.open("a", encoding="utf-8") as f:
                 f.write(f"[{now}] SHUTDOWN: RESTART_REQ {target} (IN-PLACE)\n")
         except Exception:
