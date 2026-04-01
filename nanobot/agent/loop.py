@@ -222,13 +222,16 @@ class AgentLoop:
 
         # 1. Get current Git state
         try:
+            # Use the directory of the running code to find the Git state
+            from pathlib import Path
+            source_root = Path(__file__).resolve().parent.parent.parent
             branch = (
-                subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=self.workspace)
+                subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=source_root)
                 .decode()
                 .strip()
             )
             sha = (
-                subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=self.workspace)
+                subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=source_root)
                 .decode()
                 .strip()
             )
