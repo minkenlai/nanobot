@@ -212,6 +212,74 @@ class AgentLoop:
 
         return strip_think(text) or None
 
+    async def _audit_lifecycle(self) -> None:
+        """Log startup to lifecycle.log and check for pending notifications."""
+        from datetime import datetime
+        import subprocess
+
+        log_file = self.workspace / "logs" / "lifecycle.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # 1. Get current Git state
+        try:
+            branch = (
+                subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=self.workspace)
+                .decode()
+                .strip()
+            )
+            sha = (
+                subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=self.workspace)
+                .decode()
+                .strip()
+            )
+        except Exception:
+            branch, sha = "unknown", "unknown"
+
+        # 2. Check for pending notification from a SHUTDOWN entry
+        pending_notification = None
+        if log_file.exists():
+            try:
+                # Read last 10 lines to find the last SHUTDOWN
+                lines = log_file.read_text(encoding="utf-8").splitlines()[-10:]
+                for line in reversed(lines):
+                    if "SHUTDOWN:" in line and "RESTART_REQ" in line:
+                        # Format: [timestamp] SHUTDOWN: RESTART_REQ channel:chat_id[:thread_id] to branch
+                        parts = line.split("RESTART_REQ")[-1].strip().split()
+                        if parts:
+                            target = parts[0]
+                            pending_notification = target.split(":")
+                        break
+            except Exception as e:
+                logger.error("Error reading lifecycle log for notifications: {}", e)
+
+        # 3. Log current START
+        pid = os.getpid()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with log_file.open("a", encoding="utf-8") as f:
+            f.write(f"[{now}] START: branch={branch} sha={sha} pid={pid}\n")
+
+        # 4. If a notification was pending, send it
+        if pending_notification:
+            try:
+                channel = pending_notification[0]
+                chat_id = pending_notification[1]
+                thread_id = pending_notification[2] if len(pending_notification) > 2 else None
+
+                msg = f"🔄 **System bootstrapped successfully**\n"
+                msg += f"**Branch:** `{branch}`\n"
+                msg += f"**Commit:** `{sha}`"
+
+                await self.bus.publish_outbound(
+                    OutboundMessage(
+                        channel=channel,
+                        chat_id=chat_id,
+                        content=msg,
+                        message_thread_id=thread_id,
+                    )
+                )
+            except Exception as e:
+                logger.error("Failed to send lifecycle notification: {}", e)
+
     @staticmethod
     def _tool_hint(tool_calls: list) -> str:
         """Format tool calls as concise hint, e.g. 'web_search("query")'."""
@@ -318,6 +386,12 @@ class AgentLoop:
         self._running = True
         await self._connect_mcp()
         logger.info("Agent loop started")
+
+        # Lifecycle Audit: Log start and handle pending notifications
+        try:
+            await self._audit_lifecycle()
+        except Exception as e:
+            logger.error("Lifecycle audit failed: {}", e)
 
         while self._running:
             try:
