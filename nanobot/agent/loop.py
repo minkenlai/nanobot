@@ -421,8 +421,9 @@ class AgentLoop:
                 err_trace = traceback.format_exc()
                 logger.exception("Error processing message for session {}", msg.session_key)
 
-                log_file = self.workspace / "nanobot-error.log"
+                log_file = self.workspace / "logs" / "error.log"
                 try:
+                    log_file.parent.mkdir(parents=True, exist_ok=True)
                     with open(log_file, "a", encoding="utf-8") as f:
                         f.write(
                             f"--- Error on {datetime.datetime.now().isoformat()} for {msg.session_key} ---\n"
@@ -431,7 +432,7 @@ class AgentLoop:
                 except Exception as log_e:
                     logger.error("Failed to write to workspace log: {}", log_e)
 
-                error_msg = f"⚠️ **System Error**\n```\n{type(e).__name__}: {str(e)}\n```\n_See `nanobot-error.log` in workspace for details._"
+                error_msg = f"⚠️ **System Error**\n```\n{type(e).__name__}: {str(e)}\n```\n_See `logs/error.log` in workspace for details._"
 
                 await self.bus.publish_outbound(
                     OutboundMessage(
