@@ -38,6 +38,18 @@ class GeminiNativeProvider(LLMProvider):
         tools: list[dict[str, Any]] | None,
     ) -> str | None:
         """Explicitly cache system prompt and tools, returning the cache name if successful."""
+        # Estimate tokens to ensure we meet the 1024 minimum for Gemini caching
+        from nanobot.utils.helpers import estimate_prompt_tokens
+
+        # We only cache system instruction and tools
+        token_estimate = estimate_prompt_tokens([system_instruction], tools)
+        if token_estimate < 1024:
+            logger.debug(
+                f"Skipping Gemini cache: estimated tokens ({token_estimate}) "
+                "below minimum requirement (1024)."
+            )
+            return None
+
         state_str = json.dumps({"system": system_instruction, "tools": tools}, sort_keys=True)
         state_hash = hashlib.sha256(state_str.encode("utf-8")).hexdigest()
 
@@ -78,6 +90,18 @@ class GeminiNativeProvider(LLMProvider):
         except Exception as e:
             logger.error(f"Error creating Gemini cachedContent: {e}")
             return None
+
+    def estimate_prompt_tokens(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+    ) -> tuple[int, str]:
+        """Estimate tokens for Gemini models."""
+        from nanobot.utils.helpers import estimate_prompt_tokens
+
+        # Use the standard tiktoken-based estimate as a reasonable heuristic for Gemini
+        return estimate_prompt_tokens(messages, tools), "tiktoken_heuristic"
 
     async def chat(
         self,
