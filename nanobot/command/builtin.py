@@ -32,13 +32,28 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
 async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
     """Restart the process in-place via os.execv."""
     msg = ctx.msg
+    loop = ctx.loop
 
     async def _do_restart():
+        # Record intent in lifecycle.log for the new process to pick up
+        from datetime import datetime
+        log_file = loop.workspace / "logs" / "lifecycle.log"
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        target = f"{msg.channel}:{msg.chat_id}"
+        if msg.message_thread_id:
+            target = f"{target}:{msg.message_thread_id}"
+        
+        try:
+            with log_file.open("a", encoding="utf-8") as f:
+                f.write(f"[{now}] SHUTDOWN: RESTART_REQ {target} (IN-PLACE)\n")
+        except Exception:
+            pass
+
         await asyncio.sleep(1)
         os.execv(sys.executable, [sys.executable, "-m", "nanobot"] + sys.argv[1:])
 
     asyncio.create_task(_do_restart())
-    return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content="Restarting...")
+    return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content="🔄 Restarting in-place...")
 
 
 async def cmd_status(ctx: CommandContext) -> OutboundMessage:
