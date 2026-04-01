@@ -548,8 +548,7 @@ def gateway(
         if isinstance(cron_tool, CronTool):
             cron_token = cron_tool.set_cron_context(True)
         address = Address(
-            channel=job.payload.channel or "cli",
-            segments=(str(job.payload.to or "direct"),)
+            channel=job.payload.channel or "cli", segments=(str(job.payload.to or "direct"),)
         )
         try:
             resp = await agent.process_direct(
@@ -577,8 +576,7 @@ def gateway(
             if should_notify:
                 # Use Address for routing
                 address = Address(
-                    channel=job.payload.channel or "cli",
-                    segments=(str(job.payload.to),)
+                    channel=job.payload.channel or "cli", segments=(str(job.payload.to),)
                 )
                 await bus.publish_outbound(
                     OutboundMessage(
@@ -641,9 +639,7 @@ def gateway(
             return  # No external channel available to deliver to
 
         address = Address(channel=channel, segments=(str(chat_id),))
-        await bus.publish_outbound(
-            OutboundMessage(address=address, content=response)
-        )
+        await bus.publish_outbound(OutboundMessage(address=address, content=response))
 
     hb_cfg = config.gateway.heartbeat
     heartbeat = HeartbeatService(
@@ -672,10 +668,26 @@ def gateway(
         try:
             await cron.start()
             await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
+
+            # Run agent and channels concurrently.
+            # Use FIRST_COMPLETED so if the agent loop stops (via /restart --full),
+            # the gateway can proceed to the finally block and shut down cleanly.
+            agent_task = asyncio.create_task(agent.run(), name="agent_loop")
+            channels_task = asyncio.create_task(channels.start_all(), name="channels_loop")
+
+            done, pending = await asyncio.wait(
+                [agent_task, channels_task], return_when=asyncio.FIRST_COMPLETED
             )
+
+            # Raise any exceptions that occurred
+            for task in done:
+                if task.exception():
+                    raise task.exception()
+
+            # Cancel the remaining background task
+            for task in pending:
+                task.cancel()
+
         except KeyboardInterrupt:
             console.print("\nShutting down...")
         except Exception:
