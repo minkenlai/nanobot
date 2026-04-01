@@ -66,7 +66,7 @@ class CommandRouter:
         parts = ctx.raw.strip().split()
         if not parts:
             return None
-        
+
         cmd_part = parts[0].lower()
         if handler := self._priority.get(cmd_part):
             ctx.args = " ".join(parts[1:])
@@ -80,7 +80,7 @@ class CommandRouter:
             return None
 
         cmd_part = parts[0].lower()
-        
+
         # 1. Exact match (on first word)
         if handler := self._exact.get(cmd_part):
             ctx.args = " ".join(parts[1:])
@@ -90,7 +90,7 @@ class CommandRouter:
         cmd_full = ctx.raw.lower()
         for pfx, handler in self._prefix:
             if cmd_full.startswith(pfx):
-                ctx.args = ctx.raw[len(pfx):]
+                ctx.args = ctx.raw[len(pfx) :]
                 return await handler(ctx)
 
         for interceptor in self._interceptors:

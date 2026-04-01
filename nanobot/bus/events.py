@@ -33,12 +33,12 @@ class Address:
         parts = [p for p in uri.split(":") if p]
         if not parts:
             return cls(channel="unknown")
-            
+
         channel = parts[0]
         # Map 'telegram' to 'tg' for brevity
         if channel == "telegram":
             channel = "tg"
-            
+
         segments = tuple(p for p in parts[1:] if p.lower() != "topic")
         return cls(channel=channel, segments=segments)
 

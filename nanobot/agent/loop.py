@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import time
 from contextlib import AsyncExitStack, nullcontext
 from pathlib import Path
@@ -239,7 +240,6 @@ class AgentLoop:
 
     async def _audit_lifecycle(self) -> None:
         """Log startup to lifecycle.log and check for pending notifications."""
-        import subprocess
         from datetime import datetime
 
         log_file = self.workspace / "logs" / "lifecycle.log"

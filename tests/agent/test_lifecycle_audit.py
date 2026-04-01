@@ -1,13 +1,9 @@
-import asyncio
-import os
-import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import OutboundMessage
 
 
 @pytest.mark.asyncio
@@ -42,7 +38,7 @@ async def test_audit_lifecycle_with_pending_notification(tmp_path: Path):
     log_file = tmp_path / "logs" / "lifecycle.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
     log_file.write_text(
-        "[2026-03-31 12:00:00] SHUTDOWN: RESTART_REQ cli:test_chat\n", encoding="utf-8"
+        "[2026-03-31 12:00:00] SHUTDOWN: RESTART_REQ cli://test_chat\n", encoding="utf-8"
     )
 
     with patch("nanobot.agent.loop.subprocess.check_output") as mock_subprocess:
@@ -76,7 +72,7 @@ async def test_audit_lifecycle_with_thread_id(tmp_path: Path):
     log_file = tmp_path / "logs" / "lifecycle.log"
     log_file.parent.mkdir(parents=True, exist_ok=True)
     log_file.write_text(
-        "[2026-03-31 12:00:00] SHUTDOWN: RESTART_REQ telegram:123:456\n", encoding="utf-8"
+        "[2026-03-31 12:00:00] SHUTDOWN: RESTART_REQ tg://123/456\n", encoding="utf-8"
     )
 
     with patch("nanobot.agent.loop.subprocess.check_output") as mock_subprocess:
@@ -86,6 +82,6 @@ async def test_audit_lifecycle_with_thread_id(tmp_path: Path):
 
     bus.publish_outbound.assert_called_once()
     outbound = bus.publish_outbound.call_args[0][0]
-    assert outbound.channel == "telegram"
+    assert outbound.channel == "tg"
     assert outbound.chat_id == "123"
-    assert outbound.message_thread_id == "456"
+    assert outbound.message_thread_id == 456
