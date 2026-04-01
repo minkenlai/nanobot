@@ -24,15 +24,22 @@ class Address:
         """Parse from a URI string or old-style colon string."""
         if "://" in uri:
             scheme, path = uri.split("://", 1)
-            segments = tuple(path.split("/")) if path else ()
+            # Filter out empty segments caused by leading/trailing/double slashes
+            segments = tuple(s for s in path.split("/") if s)
             return cls(channel=scheme, segments=segments)
 
         # Fallback for old-style 'telegram:chat_id:topic:thread_id'
-        parts = uri.split(":")
+        # or even just 'tg' with no segments
+        parts = [p for p in uri.split(":") if p]
+        if not parts:
+            return cls(channel="unknown")
+            
         channel = parts[0]
-        # Map 'telegram' to 'tg' for brevity in new URIs if desired, 
-        # but for now let's keep it literal.
-        segments = tuple(p for p in parts[1:] if p != "topic")
+        # Map 'telegram' to 'tg' for brevity
+        if channel == "telegram":
+            channel = "tg"
+            
+        segments = tuple(p for p in parts[1:] if p.lower() != "topic")
         return cls(channel=channel, segments=segments)
 
 
