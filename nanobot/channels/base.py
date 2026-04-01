@@ -8,7 +8,7 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.events import Address, InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 
 
@@ -123,30 +123,45 @@ class BaseChannel(ABC):
     async def _handle_message(
         self,
         sender_id: str,
-        chat_id: str,
         content: str,
+        address: Address | None = None,
         media: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
+        # Legacy fields for backward compatibility
+        chat_id: str | None = None,
+        message_thread_id: int | None = None,
         session_key: str | None = None,
     ) -> None:
         """
         Handle an incoming message from the chat platform.
 
-        This method checks permissions and forwards to the bus.
-
         Args:
             sender_id: The sender's identifier.
-            chat_id: The chat/channel identifier.
             content: Message text content.
+            address: The unified conversation address.
             media: Optional list of media URLs.
             metadata: Optional channel-specific metadata.
-            session_key: Optional session key override (e.g. thread-scoped sessions).
         """
+        # Construction of address from legacy fields if missing
+        if address is None:
+            if chat_id is not None:
+                segments = [str(chat_id)]
+                if message_thread_id is not None:
+                    segments.append(str(message_thread_id))
+                address = Address(channel=self.name, segments=tuple(segments))
+            elif session_key is not None:
+                address = Address.from_uri(session_key)
+
+        if not address:
+            logger.error("Missing address in _handle_message for channel {}", self.name)
+            return
+
         if not self.is_allowed(sender_id):
             logger.warning(
                 "Access denied for sender {} on channel {}. "
                 "Add them to allowFrom list in config to grant access.",
-                sender_id, self.name,
+                sender_id,
+                self.name,
             )
             return
 
@@ -155,13 +170,11 @@ class BaseChannel(ABC):
             meta = {**meta, "_wants_stream": True}
 
         msg = InboundMessage(
-            channel=self.name,
+            address=address,
             sender_id=str(sender_id),
-            chat_id=str(chat_id),
             content=content,
             media=media or [],
             metadata=meta,
-            session_key_override=session_key,
         )
 
         await self.bus.publish_inbound(msg)

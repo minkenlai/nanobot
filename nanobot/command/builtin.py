@@ -26,7 +26,7 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     sub_cancelled = await loop.subagents.cancel_by_session(msg.session_key)
     total = cancelled + sub_cancelled
     content = f"Stopped {total} task(s)." if total else "No active task to stop."
-    return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=content)
+    return OutboundMessage(address=msg.address, content=content)
 
 
 async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
@@ -39,12 +39,10 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
         from datetime import datetime
         log_file = loop.workspace / "logs" / "lifecycle.log"
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Target format: channel:chat_id[:thread_id]
-        target = f"{msg.channel}:{msg.chat_id}"
-        if msg.message_thread_id:
-            target = f"{target}:{msg.message_thread_id}"
-        
+
+        # Use URI format for the target
+        target = msg.address.to_uri()
+
         try:
             log_file.parent.mkdir(parents=True, exist_ok=True)
             with log_file.open("a", encoding="utf-8") as f:
@@ -56,7 +54,7 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
         os.execv(sys.executable, [sys.executable, "-m", "nanobot"] + sys.argv[1:])
 
     asyncio.create_task(_do_restart())
-    return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content="🔄 Restarting in-place...")
+    return OutboundMessage(address=msg.address, content="🔄 Restarting in-place...")
 
 
 async def cmd_status(ctx: CommandContext) -> OutboundMessage:
@@ -71,8 +69,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     if ctx_est <= 0:
         ctx_est = loop._last_usage.get("prompt_tokens", 0)
     return OutboundMessage(
-        channel=ctx.msg.channel,
-        chat_id=ctx.msg.chat_id,
+        address=ctx.msg.address,
         content=build_status_content(
             version=__version__, model=loop.model,
             start_time=loop._start_time, last_usage=loop._last_usage,
@@ -95,7 +92,7 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     if snapshot:
         loop._schedule_background(loop.memory_consolidator.archive_messages(snapshot))
     return OutboundMessage(
-        channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+        address=ctx.msg.address,
         content="New session started.",
     )
 
@@ -111,8 +108,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
         "/help — Show available commands",
     ]
     return OutboundMessage(
-        channel=ctx.msg.channel,
-        chat_id=ctx.msg.chat_id,
+        address=ctx.msg.address,
         content="\n".join(lines),
         metadata={"render_as": "text"},
     )

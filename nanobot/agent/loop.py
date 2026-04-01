@@ -26,7 +26,7 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.task_status import TaskStatusTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.events import Address, InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import Config
@@ -196,12 +196,15 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
+    def _set_tool_context(self, address: Address, session_key: str, message_id: str | None = None) -> None:
         """Update context for all tools that need routing info."""
         for name in ("message", "spawn", "cron"):
             if tool := self.tools.get(name):
                 if hasattr(tool, "set_context"):
-                    tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
+                    if name == "message":
+                        tool.set_context(address, message_id)
+                    else:
+                        tool.set_context(address, session_key)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -270,16 +273,19 @@ class AgentLoop:
                 chat_id = pending_notification[1]
                 thread_id = int(pending_notification[2]) if len(pending_notification) > 2 else None
 
-                msg = f"🔄 **System bootstrapped successfully**\n"
+                msg = "🔄 **System bootstrapped successfully**\n"
                 msg += f"**Branch:** `{branch}`\n"
                 msg += f"**Commit:** `{sha}`"
 
+                segments = [str(chat_id)]
+                if thread_id:
+                    segments.append(str(thread_id))
+                address = Address(channel=channel, segments=tuple(segments))
+
                 await self.bus.publish_outbound(
                     OutboundMessage(
-                        channel=channel,
-                        chat_id=chat_id,
+                        address=address,
                         content=msg,
-                        message_thread_id=thread_id,
                     )
                 )
             except Exception as e:
@@ -301,12 +307,11 @@ class AgentLoop:
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
+        address: Address,
         on_progress: Callable[..., Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
         *,
-        channel: str = "cli",
-        chat_id: str = "direct",
         message_id: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
@@ -321,6 +326,7 @@ class AgentLoop:
         ``resuming=False`` means this is the final response.
         """
         loop_self = self
+        session_key = address.to_uri()
 
         class _LoopHook(AgentHook):
             def __init__(self) -> None:
@@ -357,7 +363,7 @@ class AgentLoop:
                 for tc in context.tool_calls:
                     args_str = json.dumps(tc.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tc.name, args_str[:200])
-                loop_self._set_tool_context(channel, chat_id, message_id)
+                loop_self._set_tool_context(address, session_key, message_id)
 
             def finalize_content(
                 self, context: AgentHookContext, content: str | None
@@ -448,8 +454,7 @@ class AgentLoop:
                     async def on_stream(delta: str) -> None:
                         await self.bus.publish_outbound(
                             OutboundMessage(
-                                channel=msg.channel,
-                                chat_id=msg.chat_id,
+                                address=msg.address,
                                 content=delta,
                                 metadata={
                                     "_stream_delta": True,
@@ -462,8 +467,7 @@ class AgentLoop:
                         nonlocal stream_segment
                         await self.bus.publish_outbound(
                             OutboundMessage(
-                                channel=msg.channel,
-                                chat_id=msg.chat_id,
+                                address=msg.address,
                                 content="",
                                 metadata={
                                     "_stream_end": True,
@@ -484,8 +488,7 @@ class AgentLoop:
                 elif msg.channel == "cli":
                     await self.bus.publish_outbound(
                         OutboundMessage(
-                            channel=msg.channel,
-                            chat_id=msg.chat_id,
+                            address=msg.address,
                             content="",
                             metadata=msg.metadata or {},
                         )
@@ -515,8 +518,7 @@ class AgentLoop:
 
                 await self.bus.publish_outbound(
                     OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
+                        address=msg.address,
                         content=error_msg,
                     )
                 )
@@ -553,23 +555,22 @@ class AgentLoop:
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
-        # System messages: parse origin from chat_id ("channel:chat_id")
+        # System messages: parse origin address
         if msg.channel == "system":
-            channel, chat_id = (
-                msg.chat_id.split(":", 1) if ":" in msg.chat_id else ("cli", msg.chat_id)
-            )
-            logger.info("Processing system message from {}", msg.sender_id)
-            key = f"{channel}:{chat_id}"
+            # msg.chat_id was stored as "channel:chat_id" or a URI
+            address = Address.from_uri(msg.chat_id)
+            logger.info("Processing system message for {}", address)
+            key = address.to_uri()
             session = self.sessions.get_or_create(key)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
+            self._set_tool_context(address, key, msg.metadata.get("message_id"))
             history = session.get_history(max_messages=0)
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
                 history=history,
                 current_message=msg.content,
-                channel=channel,
-                chat_id=chat_id,
+                channel=address.channel,
+                chat_id=address.segments[0] if address.segments else "",
                 current_role=current_role,
             )
             # Resolve agent profile override from metadata
@@ -590,13 +591,12 @@ class AgentLoop:
                 from nanobot.bus.events import ProgressEvent
 
                 await self.bus.publish_progress(
-                    ProgressEvent(channel=channel, chat_id=chat_id, content=text)
+                    ProgressEvent(address=address, content=text)
                 )
 
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages,
-                channel=channel,
-                chat_id=chat_id,
+                address=address,
                 message_id=msg.metadata.get("message_id"),
                 on_progress=on_progress or _bus_progress,
                 on_stream=on_stream,
@@ -607,8 +607,7 @@ class AgentLoop:
             self.sessions.save(session)
             self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
             return OutboundMessage(
-                channel=channel,
-                chat_id=chat_id,
+                address=address,
                 content=final_content or "Background task completed.",
             )
 
@@ -626,7 +625,7 @@ class AgentLoop:
 
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        self._set_tool_context(msg.address, key, msg.metadata.get("message_id"))
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
@@ -646,8 +645,7 @@ class AgentLoop:
             meta["_tool_hint"] = tool_hint
             await self.bus.publish_outbound(
                 OutboundMessage(
-                    channel=msg.channel,
-                    chat_id=msg.chat_id,
+                    address=msg.address,
                     content=content,
                     metadata=meta,
                 )
@@ -669,11 +667,10 @@ class AgentLoop:
 
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages,
+            address=msg.address,
             on_progress=on_progress or _bus_progress,
             on_stream=on_stream,
             on_stream_end=on_stream_end,
-            channel=msg.channel,
-            chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
             **loop_kwargs,
         )
@@ -695,8 +692,7 @@ class AgentLoop:
         if on_stream is not None:
             meta["_streamed"] = True
         return OutboundMessage(
-            channel=msg.channel,
-            chat_id=msg.chat_id,
+            address=msg.address,
             content=final_content,
             metadata=meta,
         )
@@ -785,16 +781,29 @@ class AgentLoop:
     async def process_direct(
         self,
         content: str,
-        session_key: str = "cli:direct",
-        channel: str = "cli",
-        chat_id: str = "direct",
+        session_key: str = "cli://direct",
+        address: Address | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        # Legacy parameters for backward compatibility
+        channel: str | None = None,
+        chat_id: str | None = None,
     ) -> OutboundMessage | None:
         """Process a message directly and return the outbound payload."""
         await self._connect_mcp()
-        msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
+
+        if address is None:
+            if channel and chat_id:
+                address = Address(channel=channel, segments=(str(chat_id),))
+            else:
+                address = Address.from_uri(session_key)
+
+        msg = InboundMessage(
+            address=address,
+            sender_id="user",
+            content=content,
+        )
         return await self._process_message(
             msg,
             session_key=session_key,

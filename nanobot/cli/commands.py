@@ -32,6 +32,7 @@ from rich.table import Table
 from rich.text import Text
 
 from nanobot import __logo__, __version__
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.cli.stream import StreamRenderer, ThinkingSpinner
 from nanobot.config.paths import get_workspace_path, is_default_workspace
 from nanobot.config.schema import Config
@@ -546,12 +547,15 @@ def gateway(
         cron_token = None
         if isinstance(cron_tool, CronTool):
             cron_token = cron_tool.set_cron_context(True)
+        address = Address(
+            channel=job.payload.channel or "cli",
+            segments=(str(job.payload.to or "direct"),)
+        )
         try:
             resp = await agent.process_direct(
                 reminder_note,
-                session_key=f"cron:{job.id}",
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to or "direct",
+                session_key=f"cron://{job.id}",
+                address=address,
             )
         finally:
             if isinstance(cron_tool, CronTool) and cron_token is not None:
@@ -571,12 +575,14 @@ def gateway(
                 agent.model,
             )
             if should_notify:
-                from nanobot.bus.events import OutboundMessage
-
+                # Use Address for routing
+                address = Address(
+                    channel=job.payload.channel or "cli",
+                    segments=(str(job.payload.to),)
+                )
                 await bus.publish_outbound(
                     OutboundMessage(
-                        channel=job.payload.channel or "cli",
-                        chat_id=job.payload.to,
+                        address=address,
                         content=response,
                     )
                 )
@@ -611,11 +617,12 @@ def gateway(
         async def _silent(*_args, **_kwargs):
             pass
 
+        address = Address(channel=channel, segments=(str(chat_id),))
+
         resp = await agent.process_direct(
             tasks,
-            session_key="heartbeat",
-            channel=channel,
-            chat_id=chat_id,
+            session_key="heartbeat://direct",
+            address=address,
             on_progress=_silent,
         )
 
@@ -629,13 +636,13 @@ def gateway(
 
     async def on_heartbeat_notify(response: str) -> None:
         """Deliver a heartbeat response to the user's channel."""
-        from nanobot.bus.events import OutboundMessage
-
         channel, chat_id = _pick_heartbeat_target()
         if channel == "cli":
             return  # No external channel available to deliver to
+
+        address = Address(channel=channel, segments=(str(chat_id),))
         await bus.publish_outbound(
-            OutboundMessage(channel=channel, chat_id=chat_id, content=response)
+            OutboundMessage(address=address, content=response)
         )
 
     hb_cfg = config.gateway.heartbeat
@@ -893,11 +900,12 @@ def agent(
                         turn_response.clear()
                         renderer = StreamRenderer(render_markdown=markdown)
 
+                        address = Address(channel=cli_channel, segments=(str(cli_chat_id),))
+
                         await bus.publish_inbound(
                             InboundMessage(
-                                channel=cli_channel,
+                                address=address,
                                 sender_id="user",
-                                chat_id=cli_chat_id,
                                 content=user_input,
                                 metadata={"_wants_stream": True},
                             )

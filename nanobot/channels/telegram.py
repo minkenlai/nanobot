@@ -16,7 +16,7 @@ from telegram.error import BadRequest, TimedOut
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.request import HTTPXRequest
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.paths import get_media_dir
@@ -378,26 +378,27 @@ class TelegramChannel(BaseChannel):
         if not msg.metadata.get("_tool_hint", False):
             return
         try:
-            chat_id_int = int(msg.chat_id)
-            thread_id = msg.metadata.get("message_thread_id")
+            chat_id_str = msg.chat_id
+            chat_id_int = int(chat_id_str)
+            thread_id = msg.message_thread_id
             thread_kwargs = {"message_thread_id": thread_id} if thread_id else {}
 
             # Update audit trail history
-            history = self._progress_history.get(msg.chat_id, [])
+            history = self._progress_history.get(chat_id_str, [])
             if history:
                 # Convert the previous ongoing step to "Done"
                 history[-1] = history[-1].replace("⚙️", "✅")
             history.append(f"⚙️ `{msg.content}`")
-            self._progress_history[msg.chat_id] = history
+            self._progress_history[chat_id_str] = history
 
             status_text = "🔎 **Audit Trail:**\n" + "\n".join(history)
 
-            if msg.chat_id in self._progress_message_id:
+            if chat_id_str in self._progress_message_id:
                 try:
                     await self._call_with_retry(
                         self._app.bot.edit_message_text,
                         chat_id=chat_id_int,
-                        message_id=self._progress_message_id[msg.chat_id],
+                        message_id=self._progress_message_id[chat_id_str],
                         text=_markdown_to_telegram_html(status_text),
                         parse_mode="HTML",
                     )
@@ -405,7 +406,7 @@ class TelegramChannel(BaseChannel):
                 except Exception as e:
                     if self._is_not_modified_error(e):
                         return
-                    logger.debug("Progress edit failed for {}: {}", msg.chat_id, e)
+                    logger.debug("Progress edit failed for {}: {}", chat_id_str, e)
 
             sent = await self._call_with_retry(
                 self._app.bot.send_message,
@@ -414,7 +415,7 @@ class TelegramChannel(BaseChannel):
                 parse_mode="HTML",
                 **thread_kwargs,
             )
-            self._progress_message_id[msg.chat_id] = sent.message_id
+            self._progress_message_id[chat_id_str] = sent.message_id
         except Exception as e:
             logger.warning("Failed to update audit trail for {}: {}", msg.chat_id, e)
 
@@ -456,21 +457,24 @@ class TelegramChannel(BaseChannel):
             await self._update_audit_trail(msg)
             return
 
-        # Final response: Finalize audit trail and clear state
-        await self._finalize_audit_trail(msg.chat_id)
-        self._stop_typing(msg.chat_id)
-
+        # Unpack the Address
+        chat_id_str = msg.chat_id
         try:
-            chat_id = int(msg.chat_id)
+            chat_id = int(chat_id_str)
         except ValueError:
-            logger.error("Invalid chat_id: {}", msg.chat_id)
+            logger.error("Invalid chat_id: {}", chat_id_str)
             return
+        
+        message_thread_id = msg.message_thread_id
         reply_to_message_id = msg.metadata.get("message_id")
-        message_thread_id = msg.message_thread_id or msg.metadata.get("message_thread_id")
 
-        # If thread ID is missing, try to recover it from the message we're replying to
+        # Final response: Finalize audit trail and clear state
+        await self._finalize_audit_trail(chat_id_str)
+        self._stop_typing(chat_id_str)
+
+        # If thread ID is missing, try to recover it from context
         if message_thread_id is None and reply_to_message_id is not None:
-            message_thread_id = self._message_threads.get((str(chat_id), reply_to_message_id))
+            message_thread_id = self._message_threads.get((chat_id_str, reply_to_message_id))
 
         thread_kwargs = {}
         if message_thread_id is not None:
@@ -921,7 +925,6 @@ class TelegramChannel(BaseChannel):
         self._remember_thread_context(message)
 
         metadata = self._build_message_metadata(message, user)
-        session_key = self._derive_topic_session_key(message)
 
         # Profile pinning support for forum topics
         if (thread_id := getattr(message, "message_thread_id", None)) is not None:
@@ -929,12 +932,17 @@ class TelegramChannel(BaseChannel):
             if profile:
                 metadata["agent_profile"] = profile
 
+        # Create the unified address
+        segments = [str(message.chat_id)]
+        if thread_id is not None:
+            segments.append(str(thread_id))
+        address = Address(channel="tg", segments=tuple(segments))
+
         await self._handle_message(
+            address=address,
             sender_id=self._sender_id(user),
-            chat_id=str(message.chat_id),
             content=message.text or "",
             metadata=metadata,
-            session_key=session_key,
         )
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -992,7 +1000,6 @@ class TelegramChannel(BaseChannel):
 
         str_chat_id = str(chat_id)
         metadata = self._build_message_metadata(message, user)
-        session_key = self._derive_topic_session_key(message)
 
         # Profile pinning support for forum topics
         if (thread_id := getattr(message, "message_thread_id", None)) is not None:
@@ -1000,17 +1007,22 @@ class TelegramChannel(BaseChannel):
             if profile:
                 metadata["agent_profile"] = profile
 
+        # Create the unified address
+        segments = [str_chat_id]
+        if thread_id is not None:
+            segments.append(str(thread_id))
+        address = Address(channel="tg", segments=tuple(segments))
+
         # Telegram media groups: buffer briefly, forward as one aggregated turn.
         if media_group_id := getattr(message, "media_group_id", None):
             key = f"{str_chat_id}:{media_group_id}"
             if key not in self._media_group_buffers:
                 self._media_group_buffers[key] = {
                     "sender_id": sender_id,
-                    "chat_id": str_chat_id,
+                    "address": address,
                     "contents": [],
                     "media": [],
                     "metadata": metadata,
-                    "session_key": session_key,
                 }
                 self._start_typing(str_chat_id)
                 await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji)
@@ -1027,13 +1039,17 @@ class TelegramChannel(BaseChannel):
         await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji)
 
         # Forward to the message bus
+        segments = [str_chat_id]
+        if thread_id is not None:
+            segments.append(str(thread_id))
+        address = Address(channel="tg", segments=tuple(segments))
+
         await self._handle_message(
+            address=address,
             sender_id=sender_id,
-            chat_id=str_chat_id,
             content=content,
             media=media_paths,
             metadata=metadata,
-            session_key=session_key,
         )
 
     async def _flush_media_group(self, key: str) -> None:
@@ -1044,12 +1060,11 @@ class TelegramChannel(BaseChannel):
                 return
             content = "\n".join(buf["contents"]) or "[empty message]"
             await self._handle_message(
+                address=buf["address"],
                 sender_id=buf["sender_id"],
-                chat_id=buf["chat_id"],
                 content=content,
                 media=list(dict.fromkeys(buf["media"])),
                 metadata=buf["metadata"],
-                session_key=buf.get("session_key"),
             )
         finally:
             self._media_group_tasks.pop(key, None)

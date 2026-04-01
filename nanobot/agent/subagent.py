@@ -18,7 +18,7 @@ from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTo
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.bus.events import InboundMessage
+from nanobot.bus.events import Address, InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config, ExecToolConfig, WebSearchConfig
 from nanobot.providers.base import LLMProvider
@@ -76,14 +76,15 @@ class SubagentManager:
         task: str,
         label: str | None = None,
         agent: str | None = None,
-        origin_channel: str = "cli",
-        origin_chat_id: str = "direct",
+        origin: Address | None = None,
         session_key: str | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
-        origin = {"channel": origin_channel, "chat_id": origin_chat_id}
+        # Fallback for old-style callers if any remain
+        if origin is None:
+            origin = Address(channel="cli", segments=("direct",))
 
         self._task_registry[task_id] = TaskRecord(
             task_id=task_id,
@@ -117,7 +118,7 @@ class SubagentManager:
         task_id: str,
         task: str,
         label: str,
-        origin: dict[str, str],
+        origin: Address,
         agent: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
@@ -245,7 +246,7 @@ class SubagentManager:
         label: str,
         task: str,
         result: str,
-        origin: dict[str, str],
+        origin: Address,
         status: str,
     ) -> None:
         """Announce the subagent result to the main agent via the message bus."""
@@ -281,15 +282,14 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
 
         # Inject as system message to trigger main agent
         msg = InboundMessage(
-            channel="system",
+            address=origin,
             sender_id="subagent",
-            chat_id=f"{origin['channel']}:{origin['chat_id']}",
             content=announce_content,
         )
 
         await self.bus.publish_inbound(msg)
         logger.debug(
-            "Subagent [{}] announced result to {}:{}", task_id, origin["channel"], origin["chat_id"]
+            "Subagent [{}] announced result to {}", task_id, origin
         )
 
     @staticmethod
