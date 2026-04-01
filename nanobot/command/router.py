@@ -55,24 +55,41 @@ class CommandRouter:
         self._interceptors.append(handler)
 
     def is_priority(self, text: str) -> bool:
-        return text.strip().lower() in self._priority
+        """Check if the first word of the text is a priority command."""
+        parts = text.strip().split()
+        if not parts:
+            return False
+        return parts[0].lower() in self._priority
 
     async def dispatch_priority(self, ctx: CommandContext) -> OutboundMessage | None:
         """Dispatch a priority command. Called from run() without the lock."""
-        handler = self._priority.get(ctx.raw.lower())
-        if handler:
+        parts = ctx.raw.strip().split()
+        if not parts:
+            return None
+        
+        cmd_part = parts[0].lower()
+        if handler := self._priority.get(cmd_part):
+            ctx.args = " ".join(parts[1:])
             return await handler(ctx)
         return None
 
     async def dispatch(self, ctx: CommandContext) -> OutboundMessage | None:
         """Try exact, prefix, then interceptors. Returns None if unhandled."""
-        cmd = ctx.raw.lower()
+        parts = ctx.raw.strip().split()
+        if not parts:
+            return None
 
-        if handler := self._exact.get(cmd):
+        cmd_part = parts[0].lower()
+        
+        # 1. Exact match (on first word)
+        if handler := self._exact.get(cmd_part):
+            ctx.args = " ".join(parts[1:])
             return await handler(ctx)
 
+        # 2. Prefix match (on full string, e.g. "/team ")
+        cmd_full = ctx.raw.lower()
         for pfx, handler in self._prefix:
-            if cmd.startswith(pfx):
+            if cmd_full.startswith(pfx):
                 ctx.args = ctx.raw[len(pfx):]
                 return await handler(ctx)
 
