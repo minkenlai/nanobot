@@ -242,8 +242,8 @@ class AgentLoop:
         pending_notification = None
         if log_file.exists():
             try:
-                # Read last 10 lines to find the last SHUTDOWN
-                lines = log_file.read_text(encoding="utf-8").splitlines()[-10:]
+                # Read last 20 lines to find the last SHUTDOWN
+                lines = log_file.read_text(encoding="utf-8").splitlines()[-20:]
                 for line in reversed(lines):
                     if "SHUTDOWN:" in line and "RESTART_REQ" in line:
                         # Format: [timestamp] SHUTDOWN: RESTART_REQ channel:chat_id[:thread_id] to branch
@@ -251,11 +251,13 @@ class AgentLoop:
                         if parts:
                             target = parts[0]
                             pending_notification = target.split(":")
+                            logger.debug("Found pending notification target: {}", pending_notification)
                         break
             except Exception as e:
                 logger.error("Error reading lifecycle log for notifications: {}", e)
 
         # 3. Log current START
+        import os
         pid = os.getpid()
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with log_file.open("a", encoding="utf-8") as f:
@@ -264,9 +266,13 @@ class AgentLoop:
         # 4. If a notification was pending, send it
         if pending_notification:
             try:
+                # Wait for channels to warm up (Telegram connection, etc.)
+                logger.debug("Waiting 10s for channels to connect before sending notification...")
+                await asyncio.sleep(10)
+
                 channel = pending_notification[0]
                 chat_id = pending_notification[1]
-                thread_id = pending_notification[2] if len(pending_notification) > 2 else None
+                thread_id = int(pending_notification[2]) if len(pending_notification) > 2 else None
 
                 msg = f"🔄 **System bootstrapped successfully**\n"
                 msg += f"**Branch:** `{branch}`\n"
