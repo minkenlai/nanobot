@@ -266,10 +266,6 @@ class AgentLoop:
         # 4. If a notification was pending, send it
         if pending_notification:
             try:
-                # Wait for channels to warm up (Telegram connection, etc.)
-                logger.debug("Waiting 10s for channels to connect before sending notification...")
-                await asyncio.sleep(10)
-
                 channel = pending_notification[0]
                 chat_id = pending_notification[1]
                 thread_id = int(pending_notification[2]) if len(pending_notification) > 2 else None
