@@ -1,19 +1,16 @@
-import importlib
 import sys
 import zipfile
 from pathlib import Path
 
-# Ensure nanobot-dev is on sys.path for package imports
-if str(Path(__file__).parents[2].resolve()) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).parents[2].resolve()))
+import init_skill
+import package_skill
+import quick_validate
 
-SCRIPT_DIR = Path("nanobot/skills/skill-creator/scripts").resolve()
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-init_skill = importlib.import_module("init_skill")
-package_skill = importlib.import_module("package_skill")
-quick_validate = importlib.import_module("quick_validate")
+# Add the skill-creator scripts directory to sys.path so we can import its modules
+scripts_dir = (
+    Path(__file__).parent.parent.parent / "nanobot" / "skills" / "skill-creator" / "scripts"
+)
+sys.path.insert(0, str(scripts_dir.resolve()))
 
 
 def test_init_skill_creates_expected_files(tmp_path: Path) -> None:
