@@ -108,7 +108,11 @@ class BaseChannel(ABC):
     def supports_streaming(self) -> bool:
         """True when config enables streaming AND this subclass implements send_delta."""
         cfg = self.config
-        streaming = cfg.get("streaming", False) if isinstance(cfg, dict) else getattr(cfg, "streaming", False)
+        streaming = (
+            cfg.get("streaming", False)
+            if isinstance(cfg, dict)
+            else getattr(cfg, "streaming", False)
+        )
         return bool(streaming) and type(self).send_delta is not BaseChannel.send_delta
 
     def is_allowed(self, sender_id: str) -> bool:

@@ -18,9 +18,11 @@ def _make_loop(tmp_path):
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
 
-    with patch("nanobot.agent.loop.ContextBuilder"), \
-         patch("nanobot.agent.loop.SessionManager"), \
-         patch("nanobot.agent.loop.SubagentManager") as MockSubMgr:
+    with (
+        patch("nanobot.agent.loop.ContextBuilder"),
+        patch("nanobot.agent.loop.SessionManager"),
+        patch("nanobot.agent.loop.SubagentManager") as MockSubMgr,
+    ):
         MockSubMgr.return_value.cancel_by_session = AsyncMock(return_value=0)
         loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path)
     return loop
@@ -53,24 +55,25 @@ async def test_runner_preserves_reasoning_fields_and_tool_results():
     tools.execute = AsyncMock(return_value="tool result")
 
     runner = AgentRunner(provider)
-    result = await runner.run(AgentRunSpec(
-        initial_messages=[
-            {"role": "system", "content": "system"},
-            {"role": "user", "content": "do task"},
-        ],
-        tools=tools,
-        model="test-model",
-        max_iterations=3,
-    ))
+    result = await runner.run(
+        AgentRunSpec(
+            initial_messages=[
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "do task"},
+            ],
+            tools=tools,
+            model="test-model",
+            max_iterations=3,
+        )
+    )
 
     assert result.final_content == "done"
     assert result.tools_used == ["list_dir"]
-    assert result.tool_events == [
-        {"name": "list_dir", "status": "ok", "detail": "tool result"}
-    ]
+    assert result.tool_events == [{"name": "list_dir", "status": "ok", "detail": "tool result"}]
 
     assistant_messages = [
-        msg for msg in captured_second_call
+        msg
+        for msg in captured_second_call
         if msg.get("role") == "assistant" and msg.get("tool_calls")
     ]
     assert len(assistant_messages) == 1
@@ -110,34 +113,40 @@ async def test_runner_calls_hooks_in_order():
             events.append(("before_iteration", context.iteration))
 
         async def before_execute_tools(self, context: AgentHookContext) -> None:
-            events.append((
-                "before_execute_tools",
-                context.iteration,
-                [tc.name for tc in context.tool_calls],
-            ))
+            events.append(
+                (
+                    "before_execute_tools",
+                    context.iteration,
+                    [tc.name for tc in context.tool_calls],
+                )
+            )
 
         async def after_iteration(self, context: AgentHookContext) -> None:
-            events.append((
-                "after_iteration",
-                context.iteration,
-                context.final_content,
-                list(context.tool_results),
-                list(context.tool_events),
-                context.stop_reason,
-            ))
+            events.append(
+                (
+                    "after_iteration",
+                    context.iteration,
+                    context.final_content,
+                    list(context.tool_results),
+                    list(context.tool_events),
+                    context.stop_reason,
+                )
+            )
 
         def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
             events.append(("finalize_content", context.iteration, content))
             return content.upper() if content else content
 
     runner = AgentRunner(provider)
-    result = await runner.run(AgentRunSpec(
-        initial_messages=[],
-        tools=tools,
-        model="test-model",
-        max_iterations=3,
-        hook=RecordingHook(),
-    ))
+    result = await runner.run(
+        AgentRunSpec(
+            initial_messages=[],
+            tools=tools,
+            model="test-model",
+            max_iterations=3,
+            hook=RecordingHook(),
+        )
+    )
 
     assert result.final_content == "DONE"
     assert events == [
@@ -187,13 +196,15 @@ async def test_runner_streaming_hook_receives_deltas_and_end_signal():
             endings.append(resuming)
 
     runner = AgentRunner(provider)
-    result = await runner.run(AgentRunSpec(
-        initial_messages=[],
-        tools=tools,
-        model="test-model",
-        max_iterations=1,
-        hook=StreamingHook(),
-    ))
+    result = await runner.run(
+        AgentRunSpec(
+            initial_messages=[],
+            tools=tools,
+            model="test-model",
+            max_iterations=1,
+            hook=StreamingHook(),
+        )
+    )
 
     assert result.final_content == "hello"
     assert streamed == ["he", "llo"]
@@ -206,21 +217,25 @@ async def test_runner_returns_max_iterations_fallback():
     from nanobot.agent.runner import AgentRunner, AgentRunSpec
 
     provider = MagicMock()
-    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="still working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
-    ))
+    provider.chat_with_retry = AsyncMock(
+        return_value=LLMResponse(
+            content="still working",
+            tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
+        )
+    )
     tools = MagicMock()
     tools.get_definitions.return_value = []
     tools.execute = AsyncMock(return_value="tool result")
 
     runner = AgentRunner(provider)
-    result = await runner.run(AgentRunSpec(
-        initial_messages=[],
-        tools=tools,
-        model="test-model",
-        max_iterations=2,
-    ))
+    result = await runner.run(
+        AgentRunSpec(
+            initial_messages=[],
+            tools=tools,
+            model="test-model",
+            max_iterations=2,
+        )
+    )
 
     assert result.stop_reason == "max_iterations"
     assert result.final_content == (
@@ -234,43 +249,49 @@ async def test_runner_returns_structured_tool_error():
     from nanobot.agent.runner import AgentRunner, AgentRunSpec
 
     provider = MagicMock()
-    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
-    ))
+    provider.chat_with_retry = AsyncMock(
+        return_value=LLMResponse(
+            content="working",
+            tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
+        )
+    )
     tools = MagicMock()
     tools.get_definitions.return_value = []
     tools.execute = AsyncMock(side_effect=RuntimeError("boom"))
 
     runner = AgentRunner(provider)
 
-    result = await runner.run(AgentRunSpec(
-        initial_messages=[],
-        tools=tools,
-        model="test-model",
-        max_iterations=2,
-        fail_on_tool_error=True,
-    ))
+    result = await runner.run(
+        AgentRunSpec(
+            initial_messages=[],
+            tools=tools,
+            model="test-model",
+            max_iterations=2,
+            fail_on_tool_error=True,
+        )
+    )
 
     assert result.stop_reason == "tool_error"
     assert result.error == "Error: RuntimeError: boom"
-    assert result.tool_events == [
-        {"name": "list_dir", "status": "error", "detail": "boom"}
-    ]
+    assert result.tool_events == [{"name": "list_dir", "status": "error", "detail": "boom"}]
 
 
 @pytest.mark.asyncio
 async def test_loop_max_iterations_message_stays_stable(tmp_path):
     loop = _make_loop(tmp_path)
-    loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
-    ))
+    loop.provider.chat_with_retry = AsyncMock(
+        return_value=LLMResponse(
+            content="working",
+            tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
+        )
+    )
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.tools.execute = AsyncMock(return_value="ok")
     loop.max_iterations = 2
 
-    final_content, _, _ = await loop._run_agent_loop([], address=Address(channel="test", segments=("test",)))
+    final_content, _, _ = await loop._run_agent_loop(
+        [], address=Address(channel="test", segments=("test",))
+    )
 
     assert final_content == (
         "I reached the maximum number of tool call iterations (2) "
@@ -317,11 +338,14 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
-    ))
+    provider.chat_with_retry = AsyncMock(
+        return_value=LLMResponse(
+            content="working",
+            tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
+        )
+    )
     from nanobot.config.schema import Config
+
     mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
     mgr._announce_result = AsyncMock()
 

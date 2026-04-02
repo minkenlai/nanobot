@@ -1,4 +1,5 @@
 """Tests for modular channel aliases in ChannelManager."""
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,6 +13,7 @@ from nanobot.config.schema import Config
 
 class AliasChannel(BaseChannel):
     """Mock channel with aliases."""
+
     name = "aliased"
     display_name = "Aliased Channel"
     aliases = ["al", "shortcut"]
@@ -32,6 +34,7 @@ class AliasChannel(BaseChannel):
 
 class CollisionChannel(BaseChannel):
     """Mock channel with colliding alias."""
+
     name = "collider"
     display_name = "Collider Channel"
     aliases = ["al"]  # Collides with AliasChannel
@@ -93,12 +96,15 @@ def test_alias_collision_warning(bus, config, monkeypatch):
 
     try:
         # Mock discovery for colliding names
-        monkeypatch.setattr("nanobot.channels.registry.discover_channel_names", lambda: ["aliased", "collider"])
+        monkeypatch.setattr(
+            "nanobot.channels.registry.discover_channel_names", lambda: ["aliased", "collider"]
+        )
         monkeypatch.setattr("nanobot.channels.registry.discover_plugins", lambda: {})
 
         # Mock loading for both
         def mock_load(name):
             return AliasChannel if name == "aliased" else CollisionChannel
+
         monkeypatch.setattr("nanobot.channels.registry.load_channel_class", mock_load)
 
         config.channels.aliased = {"enabled": True}
@@ -130,10 +136,7 @@ async def test_outbound_dispatch_with_alias(bus, config, monkeypatch):
     channel = manager.get_channel("aliased")
 
     # Send message using alias 'al'
-    msg = OutboundMessage(
-        address=Address(channel="al", segments=("123",)),
-        content="test content"
-    )
+    msg = OutboundMessage(address=Address(channel="al", segments=("123",)), content="test content")
 
     # We manually trigger the dispatch logic for testing
     channel_name = manager._aliases.get(msg.channel, msg.channel)

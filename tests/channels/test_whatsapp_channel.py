@@ -20,7 +20,9 @@ def _make_channel() -> WhatsAppChannel:
 @pytest.mark.asyncio
 async def test_send_text_only():
     ch = _make_channel()
-    msg = OutboundMessage(address=Address(channel="whatsapp", segments=("123@s.whatsapp.net",)), content="hello")
+    msg = OutboundMessage(
+        address=Address(channel="whatsapp", segments=("123@s.whatsapp.net",)), content="hello"
+    )
 
     await ch.send(msg)
 

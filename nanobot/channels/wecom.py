@@ -17,6 +17,7 @@ from nanobot.config.schema import Base
 
 WECOM_AVAILABLE = importlib.util.find_spec("wecom_aibot_sdk") is not None
 
+
 class WecomConfig(Base):
     """WeCom (Enterprise WeChat) AI Bot channel configuration."""
 
@@ -83,13 +84,15 @@ class WecomChannel(BaseChannel):
         self._generate_req_id = generate_req_id
 
         # Create WebSocket client
-        self._client = WSClient({
-            "bot_id": self.config.bot_id,
-            "secret": self.config.secret,
-            "reconnect_interval": 1000,
-            "max_reconnect_attempts": -1,  # Infinite reconnect
-            "heartbeat_interval": 30000,
-        })
+        self._client = WSClient(
+            {
+                "bot_id": self.config.bot_id,
+                "secret": self.config.secret,
+                "reconnect_interval": 1000,
+                "max_reconnect_attempts": -1,  # Infinite reconnect
+                "heartbeat_interval": 30000,
+            }
+        )
 
         # Register event handlers
         self._client.on("connected", self._on_connected)
@@ -130,7 +133,7 @@ class WecomChannel(BaseChannel):
 
     async def _on_disconnected(self, frame: Any) -> None:
         """Handle WebSocket disconnected event."""
-        reason = frame.body if hasattr(frame, 'body') else str(frame)
+        reason = frame.body if hasattr(frame, "body") else str(frame)
         logger.warning("WeCom WebSocket disconnected: {}", reason)
 
     async def _on_error(self, frame: Any) -> None:
@@ -161,7 +164,7 @@ class WecomChannel(BaseChannel):
         """Handle enter_chat event (user opens chat with bot)."""
         try:
             # Extract body from WsFrame dataclass or dict
-            if hasattr(frame, 'body'):
+            if hasattr(frame, "body"):
                 body = frame.body or {}
             elif isinstance(frame, dict):
                 body = frame.get("body", frame)
@@ -171,10 +174,13 @@ class WecomChannel(BaseChannel):
             chat_id = body.get("chatid", "") if isinstance(body, dict) else ""
 
             if chat_id and self.config.welcome_message:
-                await self._client.reply_welcome(frame, {
-                    "msgtype": "text",
-                    "text": {"content": self.config.welcome_message},
-                })
+                await self._client.reply_welcome(
+                    frame,
+                    {
+                        "msgtype": "text",
+                        "text": {"content": self.config.welcome_message},
+                    },
+                )
         except Exception as e:
             logger.error("Error handling enter_chat: {}", e)
 
@@ -182,7 +188,7 @@ class WecomChannel(BaseChannel):
         """Process incoming message and forward to bus."""
         try:
             # Extract body from WsFrame dataclass or dict
-            if hasattr(frame, 'body'):
+            if hasattr(frame, "body"):
                 body = frame.body or {}
             elif isinstance(frame, dict):
                 body = frame.get("body", frame)
@@ -210,7 +216,9 @@ class WecomChannel(BaseChannel):
 
             # Extract sender info from "from" field (SDK format)
             from_info = body.get("from", {})
-            sender_id = from_info.get("userid", "unknown") if isinstance(from_info, dict) else "unknown"
+            sender_id = (
+                from_info.get("userid", "unknown") if isinstance(from_info, dict) else "unknown"
+            )
 
             # For single chat, chatid is the sender's userid
             # For group chat, chatid is provided in body
@@ -255,7 +263,9 @@ class WecomChannel(BaseChannel):
                 file_name = file_info.get("name", "unknown")
 
                 if file_url and aes_key:
-                    file_path = await self._download_and_save_media(file_url, aes_key, "file", file_name)
+                    file_path = await self._download_and_save_media(
+                        file_url, aes_key, "file", file_name
+                    )
                     if file_path:
                         content_parts.append(f"[file: {file_name}]\n[File: source: {file_path}]")
                     else:
@@ -297,7 +307,7 @@ class WecomChannel(BaseChannel):
                     "message_id": msg_id,
                     "msg_type": msg_type,
                     "chat_type": chat_type,
-                }
+                },
             )
 
         except Exception as e:

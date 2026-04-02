@@ -6,6 +6,7 @@ import pytest
 # Check optional dingtalk dependencies before running tests
 try:
     from nanobot.channels import dingtalk
+
     DINGTALK_AVAILABLE = getattr(dingtalk, "DINGTALK_AVAILABLE", False)
 except ImportError:
     DINGTALK_AVAILABLE = False
@@ -197,10 +198,12 @@ async def test_download_dingtalk_file(tmp_path, monkeypatch) -> None:
 
     # Mock HTTP: first POST returns downloadUrl, then GET returns file bytes
     file_content = b"fake file content"
-    channel._http = _FakeHttp(responses=[
-        _FakeResponse(200, {"downloadUrl": "https://example.com/tmpfile"}),
-        _FakeResponse(200),
-    ])
+    channel._http = _FakeHttp(
+        responses=[
+            _FakeResponse(200, {"downloadUrl": "https://example.com/tmpfile"}),
+            _FakeResponse(200),
+        ]
+    )
     channel._http._responses[1].content = file_content
 
     # Redirect media dir to tmp_path

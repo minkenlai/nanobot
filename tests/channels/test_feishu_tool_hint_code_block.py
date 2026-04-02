@@ -9,6 +9,7 @@ from pytest import mark
 # Check optional Feishu dependencies before running tests
 try:
     from nanobot.channels import feishu
+
     FEISHU_AVAILABLE = getattr(feishu, "FEISHU_AVAILABLE", False)
 except ImportError:
     FEISHU_AVAILABLE = False
@@ -40,10 +41,10 @@ async def test_tool_hint_sends_code_message(mock_feishu_channel):
     msg = OutboundMessage(
         address=Address(channel="feishu", segments=("oc_123456",)),
         content='web_search("test query")',
-        metadata={"_tool_hint": True}
+        metadata={"_tool_hint": True},
     )
 
-    with patch.object(mock_feishu_channel, '_send_message_sync') as mock_send:
+    with patch.object(mock_feishu_channel, "_send_message_sync") as mock_send:
         await mock_feishu_channel.send(msg)
 
         # Verify interactive message with card was sent
@@ -61,7 +62,7 @@ async def test_tool_hint_sends_code_message(mock_feishu_channel):
         assert len(card["elements"]) == 1
         assert card["elements"][0]["tag"] == "markdown"
         # Check that code block is properly formatted with language hint
-        expected_md = "**Tool Calls**\n\n```text\nweb_search(\"test query\")\n```"
+        expected_md = '**Tool Calls**\n\n```text\nweb_search("test query")\n```'
         assert card["elements"][0]["content"] == expected_md
 
 
@@ -71,10 +72,10 @@ async def test_tool_hint_empty_content_does_not_send(mock_feishu_channel):
     msg = OutboundMessage(
         address=Address(channel="feishu", segments=("oc_123456",)),
         content="   ",  # whitespace only
-        metadata={"_tool_hint": True}
+        metadata={"_tool_hint": True},
     )
 
-    with patch.object(mock_feishu_channel, '_send_message_sync') as mock_send:
+    with patch.object(mock_feishu_channel, "_send_message_sync") as mock_send:
         await mock_feishu_channel.send(msg)
 
         # Should not send any message
@@ -87,10 +88,10 @@ async def test_tool_hint_without_metadata_sends_as_normal(mock_feishu_channel):
     msg = OutboundMessage(
         address=Address(channel="feishu", segments=("oc_123456",)),
         content="Hello, world!",
-        metadata={}
+        metadata={},
     )
 
-    with patch.object(mock_feishu_channel, '_send_message_sync') as mock_send:
+    with patch.object(mock_feishu_channel, "_send_message_sync") as mock_send:
         await mock_feishu_channel.send(msg)
 
         # Should send as text message (detected format)
@@ -107,10 +108,10 @@ async def test_tool_hint_multiple_tools_in_one_message(mock_feishu_channel):
     msg = OutboundMessage(
         address=Address(channel="feishu", segments=("oc_123456",)),
         content='web_search("query"), read_file("/path/to/file")',
-        metadata={"_tool_hint": True}
+        metadata={"_tool_hint": True},
     )
 
-    with patch.object(mock_feishu_channel, '_send_message_sync') as mock_send:
+    with patch.object(mock_feishu_channel, "_send_message_sync") as mock_send:
         await mock_feishu_channel.send(msg)
 
         call_args = mock_send.call_args[0]
@@ -118,7 +119,9 @@ async def test_tool_hint_multiple_tools_in_one_message(mock_feishu_channel):
         content = json.loads(call_args[3])
         assert msg_type == "interactive"
         # Each tool call should be on its own line
-        expected_md = "**Tool Calls**\n\n```text\nweb_search(\"query\"),\nread_file(\"/path/to/file\")\n```"
+        expected_md = (
+            '**Tool Calls**\n\n```text\nweb_search("query"),\nread_file("/path/to/file")\n```'
+        )
         assert content["elements"][0]["content"] == expected_md
 
 
@@ -128,16 +131,14 @@ async def test_tool_hint_keeps_commas_inside_arguments(mock_feishu_channel):
     msg = OutboundMessage(
         address=Address(channel="feishu", segments=("oc_123456",)),
         content='web_search("foo, bar"), read_file("/path/to/file")',
-        metadata={"_tool_hint": True}
+        metadata={"_tool_hint": True},
     )
 
-    with patch.object(mock_feishu_channel, '_send_message_sync') as mock_send:
+    with patch.object(mock_feishu_channel, "_send_message_sync") as mock_send:
         await mock_feishu_channel.send(msg)
 
         content = json.loads(mock_send.call_args[0][3])
         expected_md = (
-            "**Tool Calls**\n\n```text\n"
-            "web_search(\"foo, bar\"),\n"
-            "read_file(\"/path/to/file\")\n```"
+            '**Tool Calls**\n\n```text\nweb_search("foo, bar"),\nread_file("/path/to/file")\n```'
         )
         assert content["elements"][0]["content"] == expected_md

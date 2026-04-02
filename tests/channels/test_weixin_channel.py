@@ -115,7 +115,16 @@ async def test_process_message_caches_context_token_and_send_uses_it() -> None:
     )
 
     await channel.send(
-        type("Msg", (), {"address": type("Addr", (), {"segments": ["wx-user"]})(), "content": "pong", "media": [], "metadata": {}})()
+        type(
+            "Msg",
+            (),
+            {
+                "address": type("Addr", (), {"segments": ["wx-user"]})(),
+                "content": "pong",
+                "media": [],
+                "metadata": {},
+            },
+        )()
     )
 
     channel._send_text.assert_awaited_once_with("wx-user", "pong", "ctx-2")
@@ -177,7 +186,16 @@ async def test_send_without_context_token_does_not_send_text() -> None:
     channel._send_text = AsyncMock()
 
     await channel.send(
-        type("Msg", (), {"address": type("Addr", (), {"segments": ["unknown-user"]})(), "content": "pong", "media": [], "metadata": {}})()
+        type(
+            "Msg",
+            (),
+            {
+                "address": type("Addr", (), {"segments": ["unknown-user"]})(),
+                "content": "pong",
+                "media": [],
+                "metadata": {},
+            },
+        )()
     )
 
     channel._send_text.assert_not_awaited()
@@ -193,7 +211,16 @@ async def test_send_does_not_send_when_session_is_paused() -> None:
     channel._send_text = AsyncMock()
 
     await channel.send(
-        type("Msg", (), {"address": type("Addr", (), {"segments": ["wx-user"]})(), "content": "pong", "media": [], "metadata": {}})()
+        type(
+            "Msg",
+            (),
+            {
+                "address": type("Addr", (), {"segments": ["wx-user"]})(),
+                "content": "pong",
+                "media": [],
+                "metadata": {},
+            },
+        )()
     )
 
     channel._send_text.assert_not_awaited()

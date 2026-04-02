@@ -7,6 +7,7 @@ import pytest
 # Check optional QQ dependencies before running tests
 try:
     from nanobot.channels import qq
+
     QQ_AVAILABLE = getattr(qq, "QQ_AVAILABLE", False)
 except ImportError:
     QQ_AVAILABLE = False
@@ -63,8 +64,8 @@ async def test_send_group_message_uses_plain_text_group_api_with_msg_seq() -> No
 
     await channel.send(
         OutboundMessage(
-        address=Address(channel="qq", segments=("group123",)),
-        content="hello",
+            address=Address(channel="qq", segments=("group123",)),
+            content="hello",
             metadata={"message_id": "msg1"},
         )
     )
@@ -88,8 +89,8 @@ async def test_send_c2c_message_uses_plain_text_c2c_api_with_msg_seq() -> None:
 
     await channel.send(
         OutboundMessage(
-        address=Address(channel="qq", segments=("user123",)),
-        content="hello",
+            address=Address(channel="qq", segments=("user123",)),
+            content="hello",
             metadata={"message_id": "msg1"},
         )
     )
@@ -117,8 +118,8 @@ async def test_send_group_message_uses_markdown_when_configured() -> None:
 
     await channel.send(
         OutboundMessage(
-        address=Address(channel="qq", segments=("group123",)),
-        content="**hello**",
+            address=Address(channel="qq", segments=("group123",)),
+            content="**hello**",
             metadata={"message_id": "msg1"},
         )
     )

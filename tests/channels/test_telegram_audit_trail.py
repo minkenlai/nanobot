@@ -23,6 +23,7 @@ class _FakeBot:
         self.edited_messages.append(kwargs)
         return True
 
+
 @pytest.mark.asyncio
 async def test_telegram_audit_trail_cumulative():
     config = TelegramConfig(enabled=True, token="fake:token", allow_from=["*"])
@@ -39,7 +40,7 @@ async def test_telegram_audit_trail_cumulative():
     msg1 = OutboundMessage(
         address=Address(channel="telegram", segments=(chat_id,)),
         content="Step 1: Searching",
-        metadata={"_progress": True, "_tool_hint": True}
+        metadata={"_progress": True, "_tool_hint": True},
     )
     await channel.send(msg1)
 
@@ -51,9 +52,8 @@ async def test_telegram_audit_trail_cumulative():
     # Step 2: Second progress update (should edit the existing message)
     msg2 = OutboundMessage(
         address=Address(channel="telegram", segments=(chat_id,)),
-
         content="Step 2: Reading",
-        metadata={"_progress": True, "_tool_hint": True}
+        metadata={"_progress": True, "_tool_hint": True},
     )
     await channel.send(msg2)
 
@@ -66,9 +66,8 @@ async def test_telegram_audit_trail_cumulative():
     # Step 3: Final response (should finalize the audit trail)
     final_msg = OutboundMessage(
         address=Address(channel="telegram", segments=(chat_id,)),
-
         content="Final Answer",
-        metadata={}
+        metadata={},
     )
     await channel.send(final_msg)
 

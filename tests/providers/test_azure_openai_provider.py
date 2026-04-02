@@ -43,9 +43,18 @@ def test_build_chat_url():
 
     # Test various deployment names
     test_cases = [
-        ("gpt-4o-deployment", "https://test-resource.openai.azure.com/openai/deployments/gpt-4o-deployment/chat/completions?api-version=2024-10-21"),
-        ("gpt-35-turbo", "https://test-resource.openai.azure.com/openai/deployments/gpt-35-turbo/chat/completions?api-version=2024-10-21"),
-        ("custom-model", "https://test-resource.openai.azure.com/openai/deployments/custom-model/chat/completions?api-version=2024-10-21"),
+        (
+            "gpt-4o-deployment",
+            "https://test-resource.openai.azure.com/openai/deployments/gpt-4o-deployment/chat/completions?api-version=2024-10-21",
+        ),
+        (
+            "gpt-35-turbo",
+            "https://test-resource.openai.azure.com/openai/deployments/gpt-35-turbo/chat/completions?api-version=2024-10-21",
+        ),
+        (
+            "custom-model",
+            "https://test-resource.openai.azure.com/openai/deployments/custom-model/chat/completions?api-version=2024-10-21",
+        ),
     ]
 
     for deployment_name, expected_url in test_cases:
@@ -89,10 +98,14 @@ def test_prepare_request_payload():
     )
 
     messages = [{"role": "user", "content": "Hello"}]
-    payload = provider._prepare_request_payload("gpt-4o", messages, max_tokens=1500, temperature=0.8)
+    payload = provider._prepare_request_payload(
+        "gpt-4o", messages, max_tokens=1500, temperature=0.8
+    )
 
     assert payload["messages"] == messages
-    assert payload["max_completion_tokens"] == 1500  # Azure API 2024-10-21 uses max_completion_tokens
+    assert (
+        payload["max_completion_tokens"] == 1500
+    )  # Azure API 2024-10-21 uses max_completion_tokens
     assert payload["temperature"] == 0.8
     assert "tools" not in payload
 
@@ -161,18 +174,13 @@ async def test_chat_success():
 
     # Mock response data
     mock_response_data = {
-        "choices": [{
-            "message": {
-                "content": "Hello! How can I help you today?",
-                "role": "assistant"
-            },
-            "finish_reason": "stop"
-        }],
-        "usage": {
-            "prompt_tokens": 12,
-            "completion_tokens": 18,
-            "total_tokens": 30
-        }
+        "choices": [
+            {
+                "message": {"content": "Hello! How can I help you today?", "role": "assistant"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 18, "total_tokens": 30},
     }
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -211,11 +219,10 @@ async def test_chat_uses_default_model_when_no_model_provided():
     )
 
     mock_response_data = {
-        "choices": [{
-            "message": {"content": "Response", "role": "assistant"},
-            "finish_reason": "stop"
-        }],
-        "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10}
+        "choices": [
+            {"message": {"content": "Response", "role": "assistant"}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
     }
 
     with patch("httpx.AsyncClient") as mock_client:
@@ -247,25 +254,25 @@ async def test_chat_with_tool_calls():
 
     # Mock response with tool calls
     mock_response_data = {
-        "choices": [{
-            "message": {
-                "content": None,
-                "role": "assistant",
-                "tool_calls": [{
-                    "id": "call_12345",
-                    "function": {
-                        "name": "get_weather",
-                        "arguments": '{"location": "San Francisco"}'
-                    }
-                }]
-            },
-            "finish_reason": "tool_calls"
-        }],
-        "usage": {
-            "prompt_tokens": 20,
-            "completion_tokens": 15,
-            "total_tokens": 35
-        }
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_12345",
+                            "function": {
+                                "name": "get_weather",
+                                "arguments": '{"location": "San Francisco"}',
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 15, "total_tokens": 35},
     }
 
     with patch("httpx.AsyncClient") as mock_client:

@@ -67,6 +67,7 @@ class TestHandleStop:
         loop._active_tasks["test://c1"] = [task]
 
         from nanobot.bus.events import Address
+
         msg = InboundMessage(
             address=Address(channel="test", segments=("c1",)),
             sender_id="u1",
@@ -100,6 +101,7 @@ class TestHandleStop:
         loop._active_tasks["test://c1"] = tasks
 
         from nanobot.bus.events import Address
+
         msg = InboundMessage(
             address=Address(channel="test", segments=("c1",)),
             sender_id="u1",
@@ -151,11 +153,17 @@ class TestDispatch:
             order.append(f"start-{m.content}")
             await asyncio.sleep(0.05)
             order.append(f"end-{m.content}")
-            return OutboundMessage(address=Address(channel="test", segments=("c1",)), content=m.content)
+            return OutboundMessage(
+                address=Address(channel="test", segments=("c1",)), content=m.content
+            )
 
         loop._process_message = mock_process
-        msg1 = InboundMessage(address=Address(channel="test", segments=("c1",)), sender_id="u1", content="a")
-        msg2 = InboundMessage(address=Address(channel="test", segments=("c1",)), sender_id="u1", content="b")
+        msg1 = InboundMessage(
+            address=Address(channel="test", segments=("c1",)), sender_id="u1", content="a"
+        )
+        msg2 = InboundMessage(
+            address=Address(channel="test", segments=("c1",)), sender_id="u1", content="b"
+        )
 
         t1 = asyncio.create_task(loop._dispatch(msg1))
         t2 = asyncio.create_task(loop._dispatch(msg2))

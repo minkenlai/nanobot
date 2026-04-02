@@ -39,7 +39,11 @@ class TestRestartCommand:
 
         loop, bus = _make_loop()
         loop.workspace = tmp_path
-        msg = InboundMessage(address=Address(channel="cli", segments=("direct",)), sender_id="user", content="/restart")
+        msg = InboundMessage(
+            address=Address(channel="cli", segments=("direct",)),
+            sender_id="user",
+            content="/restart",
+        )
         ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/restart", loop=loop)
 
         with patch("nanobot.command.builtin.os.execv") as mock_execv:
@@ -82,4 +86,3 @@ class TestRestartCommand:
 
         await loop._run_agent_loop([], address=Address(channel="cli", segments=("direct",)))
         assert loop._last_usage == {"prompt_tokens": 0, "completion_tokens": 0}
-

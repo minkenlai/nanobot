@@ -1,4 +1,5 @@
 """Tests for Feishu streaming (send_delta) via CardKit streaming API."""
+
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -137,7 +138,11 @@ class TestSendDelta:
         ch._client.im.v1.message.create.return_value = _mock_send_response("om_new")
         ch._client.cardkit.v1.card_element.content.return_value = _mock_content_response()
 
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="Hello "))
+        await ch.send_delta(
+            OutboundMessage(
+                address=Address(channel="feishu", segments=("oc_chat1",)), content="Hello "
+            )
+        )
 
         assert "feishu://oc_chat1" in ch._stream_bufs
         buf = ch._stream_bufs["feishu://oc_chat1"]
@@ -151,10 +156,16 @@ class TestSendDelta:
     @pytest.mark.asyncio
     async def test_second_delta_within_interval_skips_update(self):
         ch = _make_channel()
-        buf = _FeishuStreamBuf(text="Hello ", card_id="card_1", sequence=1, last_edit=time.monotonic())
+        buf = _FeishuStreamBuf(
+            text="Hello ", card_id="card_1", sequence=1, last_edit=time.monotonic()
+        )
         ch._stream_bufs["feishu://oc_chat1"] = buf
 
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="world"))
+        await ch.send_delta(
+            OutboundMessage(
+                address=Address(channel="feishu", segments=("oc_chat1",)), content="world"
+            )
+        )
 
         assert buf.text == "Hello world"
         ch._client.cardkit.v1.card_element.content.assert_not_called()
@@ -162,11 +173,17 @@ class TestSendDelta:
     @pytest.mark.asyncio
     async def test_delta_after_interval_updates_text(self):
         ch = _make_channel()
-        buf = _FeishuStreamBuf(text="Hello ", card_id="card_1", sequence=1, last_edit=time.monotonic() - 1.0)
+        buf = _FeishuStreamBuf(
+            text="Hello ", card_id="card_1", sequence=1, last_edit=time.monotonic() - 1.0
+        )
         ch._stream_bufs["feishu://oc_chat1"] = buf
 
         ch._client.cardkit.v1.card_element.content.return_value = _mock_content_response()
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="world"))
+        await ch.send_delta(
+            OutboundMessage(
+                address=Address(channel="feishu", segments=("oc_chat1",)), content="world"
+            )
+        )
 
         assert buf.text == "Hello world"
         assert buf.sequence == 2
@@ -176,12 +193,21 @@ class TestSendDelta:
     async def test_stream_end_sends_final_update(self):
         ch = _make_channel()
         ch._stream_bufs["feishu://oc_chat1"] = _FeishuStreamBuf(
-            text="Final content", card_id="card_1", sequence=3, last_edit=0.0,
+            text="Final content",
+            card_id="card_1",
+            sequence=3,
+            last_edit=0.0,
         )
         ch._client.cardkit.v1.card_element.content.return_value = _mock_content_response()
         ch._client.cardkit.v1.card.settings.return_value = _mock_content_response()
 
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="", metadata={"_stream_end": True}))
+        await ch.send_delta(
+            OutboundMessage(
+                address=Address(channel="feishu", segments=("oc_chat1",)),
+                content="",
+                metadata={"_stream_end": True},
+            )
+        )
 
         assert "feishu://oc_chat1" not in ch._stream_bufs
         ch._client.cardkit.v1.card_element.content.assert_called_once()
@@ -194,11 +220,20 @@ class TestSendDelta:
         """If card creation failed, stream_end falls back to a plain card message."""
         ch = _make_channel()
         ch._stream_bufs["feishu://oc_chat1"] = _FeishuStreamBuf(
-            text="Fallback content", card_id=None, sequence=0, last_edit=0.0,
+            text="Fallback content",
+            card_id=None,
+            sequence=0,
+            last_edit=0.0,
         )
         ch._client.im.v1.message.create.return_value = _mock_send_response("om_fb")
 
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="", metadata={"_stream_end": True}))
+        await ch.send_delta(
+            OutboundMessage(
+                address=Address(channel="feishu", segments=("oc_chat1",)),
+                content="",
+                metadata={"_stream_end": True},
+            )
+        )
 
         assert "feishu://oc_chat1" not in ch._stream_bufs
         ch._client.cardkit.v1.card_element.content.assert_not_called()
@@ -207,13 +242,23 @@ class TestSendDelta:
     @pytest.mark.asyncio
     async def test_stream_end_without_buf_is_noop(self):
         ch = _make_channel()
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="", metadata={"_stream_end": True}))
+        await ch.send_delta(
+            OutboundMessage(
+                address=Address(channel="feishu", segments=("oc_chat1",)),
+                content="",
+                metadata={"_stream_end": True},
+            )
+        )
         ch._client.cardkit.v1.card_element.content.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_empty_delta_skips_send(self):
         ch = _make_channel()
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="   "))
+        await ch.send_delta(
+            OutboundMessage(
+                address=Address(channel="feishu", segments=("oc_chat1",)), content="   "
+            )
+        )
 
         assert "feishu://oc_chat1" in ch._stream_bufs
         ch._client.cardkit.v1.card.create.assert_not_called()
@@ -222,7 +267,11 @@ class TestSendDelta:
     async def test_no_client_returns_early(self):
         ch = _make_channel()
         ch._client = None
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="text"))
+        await ch.send_delta(
+            OutboundMessage(
+                address=Address(channel="feishu", segments=("oc_chat1",)), content="text"
+            )
+        )
         assert "feishu://oc_chat1" not in ch._stream_bufs
 
     @pytest.mark.asyncio
@@ -232,11 +281,15 @@ class TestSendDelta:
         ch._stream_bufs["feishu://oc_chat1"] = buf
 
         ch._client.cardkit.v1.card_element.content.return_value = _mock_content_response()
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="b"))
+        await ch.send_delta(
+            OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="b")
+        )
         assert buf.sequence == 6
 
         buf.last_edit = 0.0  # reset to bypass throttle
-        await ch.send_delta(OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="c"))
+        await ch.send_delta(
+            OutboundMessage(address=Address(channel="feishu", segments=("oc_chat1",)), content="c")
+        )
         assert buf.sequence == 7
 
 

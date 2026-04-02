@@ -69,7 +69,10 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Stop all active tasks in the current session."""
     from loguru import logger
-    logger.error(f"CMD STOP session_key: {ctx.msg.session_key}, active_tasks keys: {list(ctx.loop._active_tasks.keys())}")
+
+    logger.error(
+        f"CMD STOP session_key: {ctx.msg.session_key}, active_tasks keys: {list(ctx.loop._active_tasks.keys())}"
+    )
     msg = ctx.msg
     loop = ctx.loop
     cancelled = await loop.stop_tasks_by_session(msg.session_key)
@@ -244,7 +247,7 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
     try:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         with log_file.open("a", encoding="utf-8") as f:
-            f.write(f"[{now}] REPL {target}\nIN:  {code}\nOUT: {output}\n{'-'*40}\n")
+            f.write(f"[{now}] REPL {target}\nIN:  {code}\nOUT: {output}\n{'-' * 40}\n")
     except Exception:
         pass
 
