@@ -74,7 +74,7 @@ Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped 
 
 ### Command System
 
-Built-in slash commands are registered in `nanobot/command/builtin.py`. The `/status` command is a consolidated dashboard providing system uptime, token usage, context estimation, and active background tasks. Commands like `/new`, `/repl`, and `/restart` manage session lifecycle and development operations.
+Built-in slash commands are registered in `nanobot/command/builtin.py`. The `/status` command is a consolidated dashboard providing system uptime, token usage, context estimation, and active background tasks. Commands like `/new`, `/repl`, and `/restart` manage session lifecycle and development operations. The `/repl` command allows executing arbitrary Python code for debugging and system management, but it is **disabled by default** for security and must be explicitly enabled in `config.json` via `agents.enableRepl: true`.
 
 ## Configuration
 

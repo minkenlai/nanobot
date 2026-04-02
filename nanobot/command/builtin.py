@@ -203,6 +203,12 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
     loop = ctx.loop
     code = ctx.raw or ""
 
+    if not loop.config.agents.enable_repl:
+        return OutboundMessage(
+            address=msg.address,
+            content="🛑 **REPL is disabled.** Enable it in `config.json` via `agents.enableRepl: true` to use this command.",
+        )
+
     if not code.strip():
         return OutboundMessage(address=msg.address, content="Usage: `/repl <python statement>`")
 
@@ -221,28 +227,35 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
         "sys": sys,
     }
 
+    import io
+    from contextlib import redirect_stdout
+
     output = ""
+    stdout_buf = io.StringIO()
     try:
-        # Try to evaluate as an expression first
-        try:
-            result = eval(code, env)
-            if asyncio.iscoroutine(result):
-                result = await result
-            output = repr(result)
-        except SyntaxError:
-            # If eval fails, it might be a statement
-            # We use a trick to capture stdout if needed, but for now just exec
-            # and look for a local 'result' variable or just return 'Done'
-            exec(code, env)
-            if "result" in env:
-                result = env["result"]
+        with redirect_stdout(stdout_buf):
+            # Try to evaluate as an expression first
+            try:
+                result = eval(code, env)
                 if asyncio.iscoroutine(result):
                     result = await result
                 output = repr(result)
-            else:
-                output = "Done (no result variable set)"
+            except SyntaxError:
+                # If eval fails, it might be a statement
+                exec(code, env)
+                if "result" in env:
+                    result = env["result"]
+                    if asyncio.iscoroutine(result):
+                        result = await result
+                    output = repr(result)
+                else:
+                    output = "Done (no result variable set)"
     except Exception:
         output = traceback.format_exc()
+
+    stdout_val = stdout_buf.getvalue()
+    if stdout_val:
+        output = f"--- stdout ---\n{stdout_val}\n--- return ---\n{output}"
 
     # Log to repl.log
     try:
