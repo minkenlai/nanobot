@@ -3,6 +3,10 @@ import sys
 import zipfile
 from pathlib import Path
 
+# Ensure nanobot-dev is on sys.path for package imports
+if str(Path(__file__).parents[2].resolve()) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parents[2].resolve()))
+
 SCRIPT_DIR = Path("nanobot/skills/skill-creator/scripts").resolve()
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))

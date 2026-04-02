@@ -42,7 +42,7 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
         )
 
     # Build one provider per slot.
-    slots: list[tuple[LLMProvider, str]] = []
+    slots: list[tuple[LLMProvider, str, str, str]] = []
     for key in fallback_keys:
         mc = config.models[key]
         slot_provider = _build_single_provider(config, agent_name, mc.model, mc.provider)
@@ -81,7 +81,15 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
         if mc.prefill is not None and hasattr(slot_provider, "prefill"):
             slot_provider.prefill = mc.prefill
 
-        slots.append((slot_provider, mc.model))
+        # Determine the provider name for this slot to get its reset timezone
+        slot_provider_name = config.get_provider_name(mc.model, agent_name=agent_name)
+        slot_reset_timezone = (
+            getattr(config.providers, slot_provider_name).quota_reset_timezone
+            if slot_provider_name
+            else "UTC"  # Fallback to UTC if provider name can't be resolved
+        )
+
+        slots.append((slot_provider, mc.model, key, slot_reset_timezone))
 
     if len(slots) == 1:
         # Single-entry chain — no wrapper needed.
@@ -89,14 +97,7 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
 
     from nanobot.providers.fallback import FallbackProvider
 
-    # Determine reset timezone from the primary slot (fallback_keys[0])
-    reset_tz = agent_config.quota_reset_timezone
-    if fallback_keys:
-        primary_key = fallback_keys[0]
-        if primary_key in config.models:
-            reset_tz = config.models[primary_key].quota_reset_timezone
-
-    return FallbackProvider(slots, reset_timezone=reset_tz)
+    return FallbackProvider(slots)
 
 
 def _build_single_provider(

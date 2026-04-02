@@ -23,11 +23,11 @@ class FallbackProvider(LLMProvider):
     Resets to slot 0 at UTC midnight after the first fallback.
 
     Args:
-        slots: Ordered list of ``(provider, model_string)`` pairs.
+        slots: Ordered list of ``(provider, model_string, identifier)`` pairs.
                The first entry is the primary; subsequent entries are fallbacks.
     """
 
-    def __init__(self, slots: list[tuple[LLMProvider, str]], reset_timezone: str = "UTC") -> None:
+    def __init__(self, slots: list[tuple[LLMProvider, str, str, str]]) -> None:
         if not slots:
             raise ValueError("FallbackProvider requires at least one slot")
         # Don't call super().__init__() with api_key/api_base — we delegate to slots.
@@ -35,10 +35,9 @@ class FallbackProvider(LLMProvider):
         self.api_base = None
         self._slots = slots
         self._active_index = 0
-        self._reset_at: datetime | None = (
-            None  # next midnight in reset_timezone after first fallback
-        )
-        self._reset_timezone = reset_timezone
+        self._slot_reset_timezones = [s[3] for s in slots]
+        self._reset_at: datetime | None = None
+        self._failed_slot_reset_times: dict[int, datetime] = {}
         # Inherit generation settings from the primary slot's provider.
         self.generation: GenerationSettings = slots[0][0].generation
 
@@ -61,7 +60,7 @@ class FallbackProvider(LLMProvider):
         current_max_tokens = max_tokens
 
         while True:
-            provider, slot_model = self._slots[self._active_index]
+            provider, slot_model, slot_id, _ = self._slots[self._active_index]
             try:
                 response = await provider.chat(
                     messages=messages,
@@ -105,23 +104,35 @@ class FallbackProvider(LLMProvider):
                         # BEFORE giving up on the current slot or moving to next.
                         current_max_tokens //= 2
                         logger.warning(
-                            f"FallbackProvider: Reducing max_tokens to {current_max_tokens} for {slot_model}"
+                            f"FallbackProvider: Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
                         )
                         continue
 
                     if self._active_index < len(self._slots) - 1:
                         # Only advance if another concurrent request hasn't already advanced it.
                         if self._slots[self._active_index][1] == slot_model:
-                            old_model = slot_model
+                            old_active_index = self._active_index  # Store before incrementing
+                            old_id = slot_id
                             self._active_index += 1
-                            if self._reset_at is None:
-                                self._reset_at = self._next_reset_midnight(self._reset_timezone)
+
+                            # Calculate and store reset time for the just-failed slot
+                            failed_slot_tz = self._slot_reset_timezones[old_active_index]
+                            self._failed_slot_reset_times[old_active_index] = (
+                                self._next_reset_midnight(failed_slot_tz)
+                            )
+
+                            # Update _reset_at to the earliest pending reset
+                            self._reset_at = (
+                                min(self._failed_slot_reset_times.values())
+                                if self._failed_slot_reset_times
+                                else None
+                            )
+
                             # Update generation settings to the new active slot's provider.
                             self.generation = self._slots[self._active_index][0].generation
-                            new_model = self._slots[self._active_index][1]
+                            new_id = self._slots[self._active_index][2]
                             fallback_msg = (
-                                f"⚠️ Model quota hit on {old_model}. "
-                                f"Switching to fallback: {new_model}."
+                                f"⚠️ Model quota hit on {old_id}. Switching to fallback: {new_id}."
                             )
                             notification = (
                                 (notification + "\n" + fallback_msg)
@@ -147,7 +158,7 @@ class FallbackProvider(LLMProvider):
         current_max_tokens = max_tokens
 
         while True:
-            provider, slot_model = self._slots[self._active_index]
+            provider, slot_model, slot_id, _ = self._slots[self._active_index]
             try:
                 # Deliver any pending notification as a leading delta.
                 if notification and on_content_delta:
@@ -178,23 +189,70 @@ class FallbackProvider(LLMProvider):
                         # BEFORE giving up on the current slot or moving to next.
                         current_max_tokens //= 2
                         logger.warning(
-                            f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_model}"
+                            f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
                         )
                         continue
 
                     if self._active_index < len(self._slots) - 1:
                         # Only advance if another concurrent request hasn't already advanced it.
                         if self._slots[self._active_index][1] == slot_model:
-                            old_model = slot_model
+                            old_active_index = self._active_index  # Store before incrementing
+                            old_id = slot_id
+                            self._active_index += 1
+
+                            # Calculate and store reset time for the just-failed slot
+                            failed_slot_tz = self._slot_reset_timezones[old_active_index]
+                            self._failed_slot_reset_times[old_active_index] = (
+                                self._next_reset_midnight(failed_slot_tz)
+                            )
+
+                            # Update _reset_at to the earliest pending reset
+                            self._reset_at = (
+                                min(self._failed_slot_reset_times.values())
+                                if self._failed_slot_reset_times
+                                else None
+                            )
+
+                            # Update generation settings to the new active slot's provider.
+                            self.generation = self._slots[self._active_index][0].generation
+                            new_id = self._slots[self._active_index][2]
+                            fallback_msg = (
+                                f"⚠️ Model quota hit on {old_id}. Switching to fallback: {new_id}."
+                            )
+                            notification = (
+                                (notification + "\n" + fallback_msg)
+                                if notification
+                                else fallback_msg
+                            )
+                        continue
+                raise
+            except Exception as exc:
+                msg = str(exc).lower()
+                is_max_tokens_issue = "max_tokens" in msg or "max tokens" in msg
+
+                # If we hit a 402/quota error, try next slot or reduce max_tokens
+                if self._is_quota_error(exc):
+                    if is_max_tokens_issue and current_max_tokens > 1024:
+                        # Optimization: if we hit a max_tokens issue, try again with reduced tokens
+                        # BEFORE giving up on the current slot or moving to next.
+                        current_max_tokens //= 2
+                        logger.warning(
+                            f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
+                        )
+                        continue
+
+                    if self._active_index < len(self._slots) - 1:
+                        # Only advance if another concurrent request hasn't already advanced it.
+                        if self._slots[self._active_index][1] == slot_model:
+                            old_id = slot_id
                             self._active_index += 1
                             if self._reset_at is None:
                                 self._reset_at = self._next_reset_midnight(self._reset_timezone)
                             # Update generation settings to the new active slot's provider.
                             self.generation = self._slots[self._active_index][0].generation
-                            new_model = self._slots[self._active_index][1]
+                            new_id = self._slots[self._active_index][2]
                             fallback_msg = (
-                                f"⚠️ Model quota hit on {old_model}. "
-                                f"Switching to fallback: {new_model}."
+                                f"⚠️ Model quota hit on {old_id}. Switching to fallback: {new_id}."
                             )
                             notification = (
                                 (notification + "\n" + fallback_msg)
@@ -218,6 +276,16 @@ class FallbackProvider(LLMProvider):
         return self._slots[self._active_index][1]
 
     @property
+    def active_identifier(self) -> str:
+        """The config identifier of the currently active slot."""
+        return self._slots[self._active_index][2]
+
+    @property
+    def fallback_identifiers(self) -> list[str]:
+        """The config identifiers of all slots in the chain."""
+        return [s[2] for s in self._slots]
+
+    @property
     def memory_provider(self) -> LLMProvider:
         """The last (cheapest/most stable) slot's provider, for memory consolidation."""
         return self._slots[-1][0]
@@ -232,9 +300,10 @@ class FallbackProvider(LLMProvider):
         if self._reset_at and datetime.now(timezone.utc) >= self._reset_at:
             self._active_index = 0
             self._reset_at = None
+            self._failed_slot_reset_times = {}  # Clear all failed slots on reset to primary
             # Restore generation settings to the primary slot.
             self.generation = self._slots[0][0].generation
-            return f"✅ Quota window reset. Switching back to primary: {self.active_model}."
+            return f"✅ Quota window reset. Switching back to primary: {self.active_identifier}."
         return None
 
     @staticmethod

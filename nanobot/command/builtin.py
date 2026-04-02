@@ -82,13 +82,44 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     # Tasks
     running_tasks = getattr(loop.subagents, "get_running_count", lambda: 0)()
 
+    # Agent / Model info
+    agent_id = session.metadata.get("agent", "defaults")
+
+    from nanobot.providers.fallback import FallbackProvider
+
+    if isinstance(loop.provider, FallbackProvider):
+        model_id = loop.provider.active_identifier
+        model_name = loop.provider.active_model
+        fallbacks = loop.provider.fallback_identifiers
+        if len(fallbacks) > 1:
+            # Highlight current position in chain
+            chain = []
+            for fid in fallbacks:
+                if fid == model_id:
+                    chain.append(f"**{fid}**")
+                else:
+                    chain.append(fid)
+            model_info = f"`{model_name}` ({' → '.join(chain)})"
+        else:
+            model_info = f"`{model_name}` (`{model_id}`)"
+    else:
+        model_name = getattr(loop.provider, "get_default_model", lambda: loop.model)()
+        # Try to find if this model corresponds to a named model config
+        model_id = "unknown"
+        if loop.config and loop.config.models:
+            for k, v in loop.config.models.items():
+                if v.model == model_name:
+                    model_id = k
+                    break
+        model_info = f"`{model_name}` (`{model_id}`)"
+
     content = f"**System Status:** {status}\n"
     content += f"**Branch:** `{branch}`\n"
     content += f"**Commit:** `{sha}`\n"
     content += f"**PID:** `{os.getpid()}`\n\n"
 
-    model = getattr(loop.provider, "get_default_model", lambda: "unknown")()
-    content += f"**Model:** `{model}`\n"
+    content += f"**Agent:** `{agent_id}`\n"
+    content += f"**Model:** {model_info}\n"
     content += (
         f"**Tokens:** {usage.get('input_tokens', 0):,} in / {usage.get('output_tokens', 0):,} out\n"
     )

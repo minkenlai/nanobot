@@ -16,7 +16,9 @@ from nanobot.providers.fallback import FallbackProvider
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_provider(model: str, response: LLMResponse | None = None, side_effect=None):
+def _make_mock_provider(
+    model: str, response: LLMResponse | None = None, side_effect=None, reset_timezone: str = "UTC"
+):
     """Return a mock LLMProvider that returns *response* or raises *side_effect*."""
     provider = MagicMock()
     provider.get_default_model.return_value = model
@@ -52,7 +54,12 @@ async def test_chat_switches_to_next_slot_on_quota_error():
     primary = _make_mock_provider("primary-model", side_effect=_quota_error())
     fallback = _make_mock_provider("fallback-model")
 
-    fp = FallbackProvider([(primary, "primary-model"), (fallback, "fallback-model")])
+    fp = FallbackProvider(
+        [
+            (primary, "primary-model", "primary-model", "UTC"),
+            (fallback, "fallback-model", "fallback-model", "UTC"),
+        ]
+    )
 
     response = await fp.chat(messages=[{"role": "user", "content": "hi"}])
 
@@ -82,7 +89,12 @@ async def test_chat_reraises_non_quota_error_without_switching():
     primary = _make_mock_provider("primary-model", side_effect=_server_error())
     fallback = _make_mock_provider("fallback-model")
 
-    fp = FallbackProvider([(primary, "primary-model"), (fallback, "fallback-model")])
+    fp = FallbackProvider(
+        [
+            (primary, "primary-model", "primary-model", "UTC"),
+            (fallback, "fallback-model", "fallback-model", "UTC"),
+        ]
+    )
 
     with pytest.raises(RuntimeError, match="500"):
         await fp.chat(messages=[{"role": "user", "content": "hi"}])
@@ -104,7 +116,12 @@ async def test_chat_resets_to_primary_after_quota_window_expires():
     primary_first = _make_mock_provider("primary-model", side_effect=_quota_error())
     fallback = _make_mock_provider("fallback-model")
 
-    fp = FallbackProvider([(primary_first, "primary-model"), (fallback, "fallback-model")])
+    fp = FallbackProvider(
+        [
+            (primary_first, "primary-model", "primary-model", "UTC"),
+            (fallback, "fallback-model", "fallback-model", "UTC"),
+        ]
+    )
 
     # Trigger a fallback so _reset_at is set.
     await fp.chat(messages=[{"role": "user", "content": "first"}])
@@ -116,7 +133,7 @@ async def test_chat_resets_to_primary_after_quota_window_expires():
 
     # Now replace primary with a working provider for the reset test.
     primary_second = _make_mock_provider("primary-model")
-    fp._slots[0] = (primary_second, "primary-model")
+    fp._slots[0] = (primary_second, "primary-model", "primary-model", "UTC")
 
     response = await fp.chat(messages=[{"role": "user", "content": "second"}])
 
@@ -142,19 +159,27 @@ async def test_chat_resets_at_pacific_midnight():
     """FallbackProvider correctly calculates reset time for non-UTC timezones."""
     from zoneinfo import ZoneInfo
 
-    primary = _make_mock_provider("primary-model", side_effect=_quota_error())
-    fallback = _make_mock_provider("fallback-model")
+    primary = _make_mock_provider(
+        "primary-model", side_effect=_quota_error(), reset_timezone="America/Los_Angeles"
+    )
+    fallback = _make_mock_provider("fallback-model", reset_timezone="America/Los_Angeles")
 
     # Reset in America/Los_Angeles
     fp = FallbackProvider(
-        [(primary, "primary-model"), (fallback, "fallback-model")],
-        reset_timezone="America/Los_Angeles",
+        [
+            (primary, "primary-model", "primary-model", "America/Los_Angeles"),
+            (fallback, "fallback-model", "fallback-model", "America/Los_Angeles"),
+        ]
     )
 
     await fp.chat(messages=[{"role": "user", "content": "hi"}])
 
     assert fp._active_index == 1
+    # _reset_at should reflect the primary's (failed) timezone, which is America/Los_Angeles.
     assert fp._reset_at is not None
+    assert len(fp._failed_slot_reset_times) == 1
+    assert 0 in fp._failed_slot_reset_times
+    assert fp._failed_slot_reset_times[0] == fp._reset_at
 
     # Verify _reset_at is indeed midnight in LA.
     # Convert UTC _reset_at to LA time.
@@ -191,7 +216,12 @@ async def test_chat_stream_yields_notification_before_response():
     fallback.generation = GenerationSettings()
     fallback.chat_stream = _fallback_stream
 
-    fp = FallbackProvider([(primary, "primary-model"), (fallback, "fallback-model")])
+    fp = FallbackProvider(
+        [
+            (primary, "primary-model", "primary-model", "UTC"),
+            (fallback, "fallback-model", "fallback-model", "UTC"),
+        ]
+    )
 
     deltas: list[str] = []
 
@@ -222,7 +252,7 @@ async def test_chat_reraises_quota_error_when_no_next_slot():
     """With a single slot, a quota error must be re-raised (no fallback available)."""
     primary = _make_mock_provider("only-model", side_effect=_quota_error())
 
-    fp = FallbackProvider([(primary, "only-model")])
+    fp = FallbackProvider([(primary, "only-model", "only-model", "UTC")])
 
     with pytest.raises(RuntimeError, match="429"):
         await fp.chat(messages=[{"role": "user", "content": "hi"}])
@@ -285,7 +315,13 @@ def test_memory_provider_returns_last_slot():
     p2 = _make_mock_provider("model-b")
     p3 = _make_mock_provider("model-c")
 
-    fp = FallbackProvider([(p1, "model-a"), (p2, "model-b"), (p3, "model-c")])
+    fp = FallbackProvider(
+        [
+            (p1, "model-a", "model-a", "UTC"),
+            (p2, "model-b", "model-b", "UTC"),
+            (p3, "model-c", "model-c", "UTC"),
+        ]
+    )
 
     assert fp.memory_provider is p3
     assert fp.memory_model == "model-c"
@@ -303,7 +339,13 @@ async def test_chat_advances_through_multiple_quota_errors():
     p2 = _make_mock_provider("model-b", side_effect=_quota_error("resource_exhausted"))
     p3 = _make_mock_provider("model-c")
 
-    fp = FallbackProvider([(p1, "model-a"), (p2, "model-b"), (p3, "model-c")])
+    fp = FallbackProvider(
+        [
+            (p1, "model-a", "model-a", "UTC"),
+            (p2, "model-b", "model-b", "UTC"),
+            (p3, "model-c", "model-c", "UTC"),
+        ]
+    )
 
     response = await fp.chat(messages=[{"role": "user", "content": "hi"}])
 
@@ -336,9 +378,9 @@ async def test_chat_concurrent_requests_dont_skip_slots():
 
     fp = FallbackProvider(
         [
-            (p1, "model-a"),
-            (p2, "model-b"),
-            (p3, "model-c"),
+            (p1, "model-a", "model-a", "UTC"),
+            (p2, "model-b", "model-b", "UTC"),
+            (p3, "model-c", "model-c", "UTC"),
         ]
     )
 

@@ -40,7 +40,6 @@ class ModelConfig(Base):
     max_tokens: int | None = None
     reasoning_effort: str | None = None
     prefill: bool | None = None
-    quota_reset_timezone: str = "UTC"
 
 
 class AgentDefaults(Base):
@@ -58,7 +57,7 @@ class AgentDefaults(Base):
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     grounding: str | None = None  # e.g. "google_search"
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
-    quota_reset_timezone: str = "UTC"  # e.g. "America/Los_Angeles" for Gemini
+
     fallback_models: list[str] = Field(
         default_factory=list
     )  # ordered keys into top-level models dict
@@ -100,6 +99,7 @@ class ProviderConfig(Base):
     """LLM provider configuration."""
 
     api_key: str = ""
+    quota_reset_timezone: str = "UTC"
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
 

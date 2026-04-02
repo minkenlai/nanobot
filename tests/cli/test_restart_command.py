@@ -26,6 +26,7 @@ def _make_loop():
         patch("nanobot.agent.loop.ContextBuilder"),
         patch("nanobot.agent.loop.SessionManager"),
         patch("nanobot.agent.loop.SubagentManager"),
+        patch("nanobot.agent.loop.MemoryConsolidator"),
     ):
         loop = AgentLoop(bus=bus, provider=provider, workspace=workspace)
     return loop, bus
@@ -97,14 +98,15 @@ class TestRestartCommand:
         loop, _bus = _make_loop()
         session = MagicMock()
         session.messages = [{"role": "user"}] * 3
+        session.metadata.get.return_value = "defaults"
         loop.sessions.get_or_create.return_value = session
         loop._start_time = time.time() - 125
+        loop.context_window_tokens = (
+            64000  # Explicitly set context window for consistent calculation
+        )
         loop.provider.get_default_model = lambda: "test-model"
         loop.subagents.get_running_count = lambda: 0
         loop.get_usage = MagicMock(return_value={"input_tokens": 100, "output_tokens": 50})
-        loop.memory_consolidator.estimate_session_prompt_tokens = MagicMock(
-            return_value=(20500, "tiktoken")
-        )
 
         msg = InboundMessage(
             address=Address(channel="telegram", segments=("c1",)),
@@ -115,13 +117,23 @@ class TestRestartCommand:
             msg=msg, session=session, key=msg.session_key, raw="/status", loop=loop
         )
 
-        response = await cmd_status(ctx)
+        with patch.object(
+            loop.memory_consolidator,
+            "estimate_session_prompt_tokens",
+            return_value=(20500, "tiktoken"),
+        ):
+            response = await cmd_status(ctx)
 
         assert response is not None
         assert "System Status" in response.content
-        assert "**Model:** `test-model`" in response.content
+        assert "**Branch:** `unknown`" in response.content
+        assert "**Commit:** `unknown`" in response.content
+        assert "**PID:**" in response.content  # PID is dynamic, just check for existence
+        assert "\n\n**Agent:** `defaults`" in response.content
+        assert "**Model:** `test-model` (`unknown`)" in response.content
         assert "Tokens:** 100 in / 50 out" in response.content
-        assert "Context:** 20k/65k (31%)" in response.content
+        assert "Context:** 20k/64k (32%)" in response.content
         assert "Session:** 3 messages" in response.content
+        assert "**Tasks:** 0 active" in response.content
         assert "Uptime:** 2m 5s" in response.content
         assert response.metadata == {"render_as": "text"}
