@@ -66,7 +66,6 @@ class AgentsConfig(Base):
     """Agent configuration."""
 
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
-    enable_repl: bool = False  # Enable /repl command for arbitrary code execution
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="allow")
 
@@ -85,6 +84,13 @@ class AgentsConfig(Base):
         if isinstance(data, AgentDefaults):
             return data
         raise ValueError(f"Agent '{name}' configuration is invalid type: {type(data)}")
+
+
+class ReplConfig(Base):
+    """Configuration for /repl command."""
+
+    enable: bool = False
+    allow_users: list[str] = Field(default_factory=list)  # ["tg:user_id", "cli:username"]
 
 
 class ProviderConfig(Base):
@@ -214,6 +220,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    repl: ReplConfig = Field(default_factory=ReplConfig)
 
     @property
     def workspace_path(self) -> Path:

@@ -203,11 +203,24 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
     loop = ctx.loop
     code = ctx.raw or ""
 
-    if not loop.config.agents.enable_repl:
+    repl_cfg = loop.config.repl
+    if not repl_cfg.enable:
         return OutboundMessage(
             address=msg.address,
-            content="🛑 **REPL is disabled.** Enable it in `config.json` via `agents.enableRepl: true` to use this command.",
+            content="🛑 **REPL is disabled.** Enable it in `config.json` via `repl.enable: true` to use this command.",
         )
+
+    # Check user-based ACL
+    if repl_cfg.allow_users:
+        user_key = f"{msg.channel}:{msg.sender_id}"
+        if user_key not in repl_cfg.allow_users:
+            from loguru import logger
+
+            logger.warning("REPL access denied for user: {}", user_key)
+            return OutboundMessage(
+                address=msg.address,
+                content="🛑 **Access Denied:** You are not authorized to use the REPL command.",
+            )
 
     if not code.strip():
         return OutboundMessage(address=msg.address, content="Usage: `/repl <python statement>`")
