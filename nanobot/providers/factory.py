@@ -89,7 +89,14 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
 
     from nanobot.providers.fallback import FallbackProvider
 
-    return FallbackProvider(slots)
+    # Determine reset timezone from the primary slot (fallback_keys[0])
+    reset_tz = agent_config.quota_reset_timezone
+    if fallback_keys:
+        primary_key = fallback_keys[0]
+        if primary_key in config.models:
+            reset_tz = config.models[primary_key].quota_reset_timezone
+
+    return FallbackProvider(slots, reset_timezone=reset_tz)
 
 
 def _build_single_provider(

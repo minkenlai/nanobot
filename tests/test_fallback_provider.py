@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -129,6 +130,42 @@ async def test_chat_resets_to_primary_after_quota_window_expires():
     assert "primary-model" in response.content
 
     primary_second.chat.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Test 3b: Custom reset timezone (e.g. Pacific Time for Gemini)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chat_resets_at_pacific_midnight():
+    """FallbackProvider correctly calculates reset time for non-UTC timezones."""
+    from zoneinfo import ZoneInfo
+
+    primary = _make_mock_provider("primary-model", side_effect=_quota_error())
+    fallback = _make_mock_provider("fallback-model")
+
+    # Reset in America/Los_Angeles
+    fp = FallbackProvider(
+        [(primary, "primary-model"), (fallback, "fallback-model")],
+        reset_timezone="America/Los_Angeles",
+    )
+
+    await fp.chat(messages=[{"role": "user", "content": "hi"}])
+
+    assert fp._active_index == 1
+    assert fp._reset_at is not None
+
+    # Verify _reset_at is indeed midnight in LA.
+    # Convert UTC _reset_at to LA time.
+    reset_la = fp._reset_at.astimezone(ZoneInfo("America/Los_Angeles"))
+
+    assert reset_la.hour == 0
+    assert reset_la.minute == 0
+    assert reset_la.second == 0
+    # It should be tomorrow relative to "now" in LA.
+    now_la = datetime.now(ZoneInfo("America/Los_Angeles"))
+    assert reset_la.date() > now_la.date()
 
 
 # ---------------------------------------------------------------------------
@@ -277,3 +314,44 @@ async def test_chat_advances_through_multiple_quota_errors():
     assert "model-a" in response.content
     assert "model-b" in response.content
     assert "model-c" in response.content
+
+
+# ---------------------------------------------------------------------------
+# Additional: concurrent requests don't skip slots
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chat_concurrent_requests_dont_skip_slots():
+    """Concurrent requests both failing on the same slot should only advance once."""
+    p1 = MagicMock()
+    p1.get_default_model.return_value = "model-a"
+    p1.generation = GenerationSettings()
+
+    # p1 fails twice then succeeds (though we only need it to fail to trigger fallback)
+    p1.chat = AsyncMock(side_effect=_quota_error("429"))
+
+    p2 = _make_mock_provider("model-b")
+    p3 = _make_mock_provider("model-c")
+
+    fp = FallbackProvider(
+        [
+            (p1, "model-a"),
+            (p2, "model-b"),
+            (p3, "model-c"),
+        ]
+    )
+
+    # Run two requests concurrently
+    results = await asyncio.gather(
+        fp.chat(messages=[{"role": "user", "content": "r1"}]),
+        fp.chat(messages=[{"role": "user", "content": "r2"}]),
+    )
+
+    # Both should have succeeded on model-b
+    assert "model-b" in results[0].content
+    assert "model-b" in results[1].content
+
+    # Active index should be 1 (model-b), NOT 2 (model-c)
+    assert fp._active_index == 1
+    assert fp.active_model == "model-b"

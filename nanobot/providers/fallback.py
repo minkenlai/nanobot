@@ -27,7 +27,7 @@ class FallbackProvider(LLMProvider):
                The first entry is the primary; subsequent entries are fallbacks.
     """
 
-    def __init__(self, slots: list[tuple[LLMProvider, str]]) -> None:
+    def __init__(self, slots: list[tuple[LLMProvider, str]], reset_timezone: str = "UTC") -> None:
         if not slots:
             raise ValueError("FallbackProvider requires at least one slot")
         # Don't call super().__init__() with api_key/api_base — we delegate to slots.
@@ -35,7 +35,10 @@ class FallbackProvider(LLMProvider):
         self.api_base = None
         self._slots = slots
         self._active_index = 0
-        self._reset_at: datetime | None = None  # next UTC midnight (tz-aware) after first fallback
+        self._reset_at: datetime | None = (
+            None  # next midnight in reset_timezone after first fallback
+        )
+        self._reset_timezone = reset_timezone
         # Inherit generation settings from the primary slot's provider.
         self.generation: GenerationSettings = slots[0][0].generation
 
@@ -101,24 +104,30 @@ class FallbackProvider(LLMProvider):
                         # Optimization: if we hit a max_tokens issue, try again with reduced tokens
                         # BEFORE giving up on the current slot or moving to next.
                         current_max_tokens //= 2
-                        logger.warning(f"FallbackProvider: Reducing max_tokens to {current_max_tokens} for {slot_model}")
+                        logger.warning(
+                            f"FallbackProvider: Reducing max_tokens to {current_max_tokens} for {slot_model}"
+                        )
                         continue
 
                     if self._active_index < len(self._slots) - 1:
-                        old_model = slot_model
-                        self._active_index += 1
-                        if self._reset_at is None:
-                            self._reset_at = self._next_reset_midnight()
-                        # Update generation settings to the new active slot's provider.
-                        self.generation = self._slots[self._active_index][0].generation
-                        new_model = self._slots[self._active_index][1]
-                        fallback_msg = (
-                            f"⚠️ Model quota hit on {old_model}. "
-                            f"Switching to fallback: {new_model}."
-                        )
-                        notification = (
-                            (notification + "\n" + fallback_msg) if notification else fallback_msg
-                        )
+                        # Only advance if another concurrent request hasn't already advanced it.
+                        if self._slots[self._active_index][1] == slot_model:
+                            old_model = slot_model
+                            self._active_index += 1
+                            if self._reset_at is None:
+                                self._reset_at = self._next_reset_midnight(self._reset_timezone)
+                            # Update generation settings to the new active slot's provider.
+                            self.generation = self._slots[self._active_index][0].generation
+                            new_model = self._slots[self._active_index][1]
+                            fallback_msg = (
+                                f"⚠️ Model quota hit on {old_model}. "
+                                f"Switching to fallback: {new_model}."
+                            )
+                            notification = (
+                                (notification + "\n" + fallback_msg)
+                                if notification
+                                else fallback_msg
+                            )
                         continue
                 raise
 
@@ -168,24 +177,30 @@ class FallbackProvider(LLMProvider):
                         # Optimization: if we hit a max_tokens issue, try again with reduced tokens
                         # BEFORE giving up on the current slot or moving to next.
                         current_max_tokens //= 2
-                        logger.warning(f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_model}")
+                        logger.warning(
+                            f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_model}"
+                        )
                         continue
 
                     if self._active_index < len(self._slots) - 1:
-                        old_model = slot_model
-                        self._active_index += 1
-                        if self._reset_at is None:
-                            self._reset_at = self._next_reset_midnight()
-                        # Update generation settings to the new active slot's provider.
-                        self.generation = self._slots[self._active_index][0].generation
-                        new_model = self._slots[self._active_index][1]
-                        fallback_msg = (
-                            f"⚠️ Model quota hit on {old_model}. "
-                            f"Switching to fallback: {new_model}."
-                        )
-                        notification = (
-                            (notification + "\n" + fallback_msg) if notification else fallback_msg
-                        )
+                        # Only advance if another concurrent request hasn't already advanced it.
+                        if self._slots[self._active_index][1] == slot_model:
+                            old_model = slot_model
+                            self._active_index += 1
+                            if self._reset_at is None:
+                                self._reset_at = self._next_reset_midnight(self._reset_timezone)
+                            # Update generation settings to the new active slot's provider.
+                            self.generation = self._slots[self._active_index][0].generation
+                            new_model = self._slots[self._active_index][1]
+                            fallback_msg = (
+                                f"⚠️ Model quota hit on {old_model}. "
+                                f"Switching to fallback: {new_model}."
+                            )
+                            notification = (
+                                (notification + "\n" + fallback_msg)
+                                if notification
+                                else fallback_msg
+                            )
                         continue
                 raise
 
@@ -219,17 +234,28 @@ class FallbackProvider(LLMProvider):
             self._reset_at = None
             # Restore generation settings to the primary slot.
             self.generation = self._slots[0][0].generation
-            return (
-                f"✅ Quota window reset. Switching back to primary: {self.active_model}."
-            )
+            return f"✅ Quota window reset. Switching back to primary: {self.active_model}."
         return None
 
     @staticmethod
-    def _next_reset_midnight() -> datetime:
-        """Return the next UTC midnight as a timezone-aware datetime."""
-        now = datetime.now(timezone.utc)
-        tomorrow = now.date() + timedelta(days=1)
-        return datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, 0, tzinfo=timezone.utc)
+    def _next_reset_midnight(tz_name: str = "UTC") -> datetime:
+        """Return the next midnight in the given timezone as a timezone-aware UTC datetime."""
+        from zoneinfo import ZoneInfo
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            logger.warning(f"Invalid reset_timezone '{tz_name}', falling back to UTC")
+            tz = timezone.utc
+
+        now_tz = datetime.now(tz)
+        tomorrow_tz = now_tz.date() + timedelta(days=1)
+        # Create midnight in local zone
+        midnight_tz = datetime(
+            tomorrow_tz.year, tomorrow_tz.month, tomorrow_tz.day, 0, 0, 0, tzinfo=tz
+        )
+        # Convert back to UTC for internal storage
+        return midnight_tz.astimezone(timezone.utc)
 
     @staticmethod
     def _is_quota_error(exc: Exception) -> bool:
@@ -237,5 +263,13 @@ class FallbackProvider(LLMProvider):
         msg = str(exc).lower()
         return any(
             k in msg
-            for k in ["429", "402", "quota", "rate limit", "daily limit", "resource_exhausted", "payment required"]
+            for k in [
+                "429",
+                "402",
+                "quota",
+                "rate limit",
+                "daily limit",
+                "resource_exhausted",
+                "payment required",
+            ]
         )
