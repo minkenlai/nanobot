@@ -41,7 +41,11 @@ from nanobot.utils.helpers import sync_workspace_templates
 app = typer.Typer(
     name="nanobot",
     context_settings={"help_option_names": ["-h", "--help"]},
-    help=f"{__logo__} nanobot - Personal AI Assistant",
+    help=f"""{__logo__} nanobot - Your Personal AI Assistant
+
+nanobot is an extensible AI agent framework that allows you to interact with large language models and tools.
+It can be used for various tasks including code generation, research, and automating workflows.
+""",
     no_args_is_help=True,
 )
 
@@ -235,10 +239,22 @@ def version_callback(value: bool):
 
 
 @app.callback()
-def main(
-    version: bool = typer.Option(None, "--version", "-v", callback=version_callback, is_eager=True),
+    def main(
+    version: bool = typer.Option(
+        None,
+        "--version",
+        "-v",
+        callback=version_callback,
+        is_eager=True,
+        help="Show the application version and exit.",
+    ),
 ):
-    """nanobot - Personal AI Assistant."""
+    """
+    nanobot - Your Personal AI Assistant.
+
+    This is the main entry point for the nanobot CLI.
+    Use it to manage your AI agent, configure channels, and interact with LLM providers.
+    """
     pass
 
 
@@ -248,12 +264,33 @@ def main(
 
 
 @app.command()
-def onboard(
-    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
-    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
-    wizard: bool = typer.Option(False, "--wizard", help="Use interactive wizard"),
+    def onboard(
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Specify the workspace directory. If not provided, the default (~/.nanobot/workspace) is used.",
+    ),
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Specify the path to the configuration file. If not provided, the default (~/.nanobot/config.json) is used.",
+    ),
+    wizard: bool = typer.Option(
+        False,
+        "--wizard",
+        help="Run an interactive setup wizard to guide you through initial configuration. "
+        "This is recommended for first-time users.",
+    ),
 ):
-    """Initialize nanobot configuration and workspace."""
+    """
+    Initialize nanobot's configuration and workspace.
+
+    This command helps you set up nanobot for the first time or reconfigure an existing installation.
+    It creates the necessary configuration file (config.json) and workspace directory,
+    and can optionally guide you through an interactive wizard.
+    """
     from nanobot.config.loader import get_config_path, load_config, save_config, set_config_path
     from nanobot.config.schema import Config
 
@@ -463,18 +500,40 @@ def _migrate_cron_store(config: "Config") -> None:
 
 
 @app.command()
-def gateway(
-    port: int | None = typer.Option(None, "--port", "-p", help="Gateway port"),
-    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
-    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    def gateway(
+    port: int | None = typer.Option(
+        None,
+        "--port",
+        "-p",
+        help="Port to run the gateway server on. Overrides the value in config.gateway.port.",
+    ),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Specify the workspace directory. Overrides config.agents.defaults.workspace.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging for debugging."),
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to the main configuration file. Overrides the default config path.",
+    ),
     config_overlay: str | None = typer.Option(
         None,
         "--config-overlay",
-        help="Path to config overlay file (merges over base config sections)",
+        help="Path to a JSON file that merges additional settings over the base configuration. "
+        "Useful for temporary or environment-specific overrides.",
     ),
 ):
-    """Start the nanobot gateway."""
+    """
+    Start the nanobot gateway server.
+
+    The gateway runs the core agent loop, manages channels (like Telegram, WhatsApp),
+    and handles scheduled tasks. This command keeps the nanobot agent running in the background
+    to process messages and execute tasks.
+    """
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.manager import ChannelManager
@@ -711,24 +770,57 @@ def gateway(
 
 
 @app.command()
-def agent(
-    message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
-    session_id: str = typer.Option("cli:direct", "--session", "-s", help="Session ID"),
-    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
-    config: str | None = typer.Option(None, "--config", "-c", help="Config file path"),
+    def agent(
+    message: str = typer.Option(
+        None,
+        "--message",
+        "-m",
+        help="Provide a single message to send to the agent for a one-off response. "
+        "If not provided, nanobot starts in interactive chat mode.",
+    ),
+    session_id: str = typer.Option(
+        "cli:direct",
+        "--session",
+        "-s",
+        help="Unique identifier for the chat session (e.g., 'myuser:project1'). "
+        "This determines where session history and memory are stored.",
+    ),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        "-w",
+        help="Specify the workspace directory. Overrides config.agents.defaults.workspace.",
+    ),
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to the main configuration file. Overrides the default config path.",
+    ),
     config_overlay: str | None = typer.Option(
         None,
         "--config-overlay",
-        help="Path to config overlay file (merges over base config sections)",
+        help="Path to a JSON file that merges additional settings over the base configuration. "
+        "Useful for temporary or environment-specific overrides.",
     ),
     markdown: bool = typer.Option(
-        True, "--markdown/--no-markdown", help="Render assistant output as Markdown"
+        True,
+        "--markdown/--no-markdown",
+        help="Enable or disable Markdown rendering for agent output. "
+        "Use --no-markdown for plain text output.",
     ),
     logs: bool = typer.Option(
-        False, "--logs/--no-logs", help="Show nanobot runtime logs during chat"
+        False,
+        "--logs/--no-logs",
+        help="Show detailed nanobot runtime logs (INFO and DEBUG level) during chat for debugging.",
     ),
 ):
-    """Interact with the agent directly."""
+    """
+    Interact with the nanobot agent directly via the command line.
+
+    By default, this command starts an interactive chat session with the agent.
+    You can also provide a single --message for a one-off interaction.
+    """
     from loguru import logger
 
     from nanobot.agent.loop import AgentLoop
@@ -959,13 +1051,16 @@ def agent(
 # ============================================================================
 
 
-channels_app = typer.Typer(help="Manage channels")
+channels_app = typer.Typer(help="Manage and configure external chat channels (e.g., Telegram, WhatsApp).")
 app.add_typer(channels_app, name="channels")
 
 
 @channels_app.command("status")
 def channels_status():
-    """Show channel status."""
+    """Display the status of all configured chat channels.
+
+    Shows whether each channel is enabled and available for use, based on your `config.json` settings.
+    """
     from nanobot.channels.registry import discover_all
     from nanobot.config.loader import load_config
 
@@ -1132,8 +1227,16 @@ def plugins_list():
 
 
 @app.command()
-def status():
-    """Show nanobot status."""
+    def status():
+    """
+    Display the current status and configuration of your nanobot instance.
+
+    This command provides an overview of your nanobot setup, including:
+    - Configuration file path and existence
+    - Workspace directory path and existence
+    - Currently active LLM model
+    - Authentication status for all configured LLM providers (API keys or OAuth)
+    """
     from nanobot.config.loader import get_config_path, load_config
 
     config_path = get_config_path()
@@ -1178,7 +1281,7 @@ def status():
 # OAuth Login
 # ============================================================================
 
-provider_app = typer.Typer(help="Manage providers")
+provider_app = typer.Typer(help="Manage LLM providers and OAuth authentications.")
 app.add_typer(provider_app, name="provider")
 
 
@@ -1196,10 +1299,16 @@ def _register_login(name: str):
 @provider_app.command("login")
 def provider_login(
     provider: str = typer.Argument(
-        ..., help="OAuth provider (e.g. 'openai-codex', 'github-copilot')"
+        ...,
+        help="Name of the OAuth provider to authenticate with (e.g., 'openai-codex', 'github-copilot')."
+        "Run `nanobot provider status` to see available providers.",
     ),
 ):
-    """Authenticate with an OAuth provider."""
+    """Authenticate with an OAuth-enabled LLM provider.
+
+    This command guides you through the process of logging into providers like OpenAI Codex or GitHub Copilot,
+    which require OAuth authentication to obtain API tokens.
+    """
     from nanobot.providers.registry import PROVIDERS
 
     key = provider.replace("-", "_")
