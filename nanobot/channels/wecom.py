@@ -348,10 +348,11 @@ class WecomChannel(BaseChannel):
             if not content:
                 return
 
+            chat_id = msg.address.segments[0]
             # Get the stored frame for this chat
-            frame = self._chat_frames.get(msg.chat_id)
+            frame = self._chat_frames.get(chat_id)
             if not frame:
-                logger.warning("No frame found for chat {}, cannot reply", msg.chat_id)
+                logger.warning("No frame found for chat {}, cannot reply", chat_id)
                 return
 
             # Use streaming reply for better UX
@@ -365,7 +366,7 @@ class WecomChannel(BaseChannel):
                 finish=True,
             )
 
-            logger.debug("WeCom message sent to {}", msg.chat_id)
+            logger.debug("WeCom message sent to {}", chat_id)
 
         except Exception as e:
             logger.error("Error sending WeCom message: {}", e)

@@ -32,12 +32,16 @@ def _make_loop(*, exec_config=None):
 class TestHandleStop:
     @pytest.mark.asyncio
     async def test_stop_no_active_task(self):
-        from nanobot.bus.events import InboundMessage
+        from nanobot.bus.events import Address, InboundMessage
         from nanobot.command.builtin import cmd_stop
         from nanobot.command.router import CommandContext
 
         loop, bus = _make_loop()
-        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
+        msg = InboundMessage(
+            address=Address(channel="test", segments=("c1",)),
+            sender_id="u1",
+            content="/stop",
+        )
         ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/stop", loop=loop)
         out = await cmd_stop(ctx)
         assert "No active task" in out.content
@@ -60,11 +64,17 @@ class TestHandleStop:
 
         task = asyncio.create_task(slow_task())
         await asyncio.sleep(0)
-        loop._active_tasks["test:c1"] = [task]
+        loop._active_tasks["test://c1"] = [task]
 
-        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
+        from nanobot.bus.events import Address
+        msg = InboundMessage(
+            address=Address(channel="test", segments=("c1",)),
+            sender_id="u1",
+            content="/stop",
+        )
         ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/stop", loop=loop)
         out = await cmd_stop(ctx)
+        await asyncio.sleep(0.01)
 
         assert cancelled.is_set()
         assert "stopped" in out.content.lower()
@@ -87,11 +97,17 @@ class TestHandleStop:
 
         tasks = [asyncio.create_task(slow(i)) for i in range(2)]
         await asyncio.sleep(0)
-        loop._active_tasks["test:c1"] = tasks
+        loop._active_tasks["test://c1"] = tasks
 
-        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="/stop")
+        from nanobot.bus.events import Address
+        msg = InboundMessage(
+            address=Address(channel="test", segments=("c1",)),
+            sender_id="u1",
+            content="/stop",
+        )
         ctx = CommandContext(msg=msg, session=None, key=msg.session_key, raw="/stop", loop=loop)
         out = await cmd_stop(ctx)
+        await asyncio.sleep(0.01)
 
         assert all(e.is_set() for e in events)
         assert "2 task" in out.content
@@ -107,12 +123,18 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_dispatch_processes_and_publishes(self):
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from nanobot.bus.events import Address, InboundMessage, OutboundMessage
 
         loop, bus = _make_loop()
-        msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="hello")
+        msg = InboundMessage(
+            address=Address(channel="test", segments=("c1",)),
+            sender_id="u1",
+            content="hello",
+        )
         loop._process_message = AsyncMock(
-            return_value=OutboundMessage(channel="test", chat_id="c1", content="hi")
+            return_value=OutboundMessage(
+                address=Address(channel="test", segments=("c1",)), content="hi"
+            )
         )
         await loop._dispatch(msg)
         out = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
@@ -120,7 +142,7 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_processing_lock_serializes(self):
-        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from nanobot.bus.events import Address, InboundMessage, OutboundMessage
 
         loop, bus = _make_loop()
         order = []
@@ -129,11 +151,11 @@ class TestDispatch:
             order.append(f"start-{m.content}")
             await asyncio.sleep(0.05)
             order.append(f"end-{m.content}")
-            return OutboundMessage(channel="test", chat_id="c1", content=m.content)
+            return OutboundMessage(address=Address(channel="test", segments=("c1",)), content=m.content)
 
         loop._process_message = mock_process
-        msg1 = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="a")
-        msg2 = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="b")
+        msg1 = InboundMessage(address=Address(channel="test", segments=("c1",)), sender_id="u1", content="a")
+        msg2 = InboundMessage(address=Address(channel="test", segments=("c1",)), sender_id="u1", content="b")
 
         t1 = asyncio.create_task(loop._dispatch(msg1))
         t2 = asyncio.create_task(loop._dispatch(msg2))

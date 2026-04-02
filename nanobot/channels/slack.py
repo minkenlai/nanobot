@@ -112,17 +112,15 @@ class SlackChannel(BaseChannel):
             logger.warning("Slack client not running")
             return
         try:
-            slack_meta = msg.metadata.get("slack", {}) if msg.metadata else {}
-            thread_ts = slack_meta.get("thread_ts")
-            channel_type = slack_meta.get("channel_type")
-            # Slack DMs don't use threads; channel/group replies may keep thread_ts.
-            thread_ts_param = thread_ts if thread_ts and channel_type != "im" else None
+            # Address segments: 0=channel_id, 1=thread_ts (optional)
+            chat_id = msg.address.segments[0]
+            thread_ts_param = msg.address.segments[1] if len(msg.address.segments) > 1 else None
 
             # Slack rejects empty text payloads. Keep media-only messages media-only,
             # but send a single blank message when the bot has no text or files to send.
             if msg.content or not (msg.media or []):
                 await self._web_client.chat_postMessage(
-                    channel=msg.chat_id,
+                    channel=chat_id,
                     text=self._to_mrkdwn(msg.content) if msg.content else " ",
                     thread_ts=thread_ts_param,
                 )
@@ -130,7 +128,7 @@ class SlackChannel(BaseChannel):
             for media_path in msg.media or []:
                 try:
                     await self._web_client.files_upload_v2(
-                        channel=msg.chat_id,
+                        channel=chat_id,
                         file=media_path,
                         thread_ts=thread_ts_param,
                     )
@@ -139,8 +137,9 @@ class SlackChannel(BaseChannel):
 
             # Update reaction emoji when the final (non-progress) response is sent
             if not (msg.metadata or {}).get("_progress"):
+                slack_meta = msg.metadata.get("slack", {}) if msg.metadata else {}
                 event = slack_meta.get("event", {})
-                await self._update_react_emoji(msg.chat_id, event.get("ts"))
+                await self._update_react_emoji(chat_id, event.get("ts"))
 
         except Exception as e:
             logger.error("Error sending Slack message: {}", e)

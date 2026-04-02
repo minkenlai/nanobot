@@ -1,10 +1,10 @@
 """Tests for ChannelManager delta coalescing to reduce streaming latency."""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.channels.manager import ChannelManager
@@ -64,8 +64,7 @@ class TestDeltaCoalescing:
     async def test_single_delta_not_coalesced(self, manager, bus):
         """A single delta should be sent as-is."""
         msg = OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="Hello",
             metadata={"_stream_delta": True},
         )
@@ -98,8 +97,7 @@ class TestDeltaCoalescing:
         # Put multiple deltas in queue
         for text in ["Hello", " ", "world", "!"]:
             await bus.publish_outbound(OutboundMessage(
-                channel="mock",
-                chat_id="chat1",
+                address=Address(channel="mock", segments=("chat1",)),
                 content=text,
                 metadata={"_stream_delta": True},
             ))
@@ -119,14 +117,12 @@ class TestDeltaCoalescing:
         """Deltas for different chats should not be merged."""
         # Put deltas for different chats
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="Hello",
             metadata={"_stream_delta": True},
         ))
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat2",
+            address=Address(channel="mock", segments=("chat2",)),
             content="World",
             metadata={"_stream_delta": True},
         ))
@@ -147,14 +143,12 @@ class TestDeltaCoalescing:
         """_stream_end should stop coalescing and be included in final message."""
         # Put deltas with stream_end at the end
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="Hello",
             metadata={"_stream_delta": True},
         ))
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content=" world",
             metadata={"_stream_delta": True, "_stream_end": True},
         ))
@@ -173,20 +167,17 @@ class TestDeltaCoalescing:
     async def test_coalescing_stops_at_first_non_matching_boundary(self, manager, bus):
         """Only consecutive deltas should be merged; later deltas stay queued."""
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="Hello",
             metadata={"_stream_delta": True, "_stream_id": "seg-1"},
         ))
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="",
             metadata={"_stream_end": True, "_stream_id": "seg-1"},
         ))
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="world",
             metadata={"_stream_delta": True, "_stream_id": "seg-2"},
         ))
@@ -209,14 +200,12 @@ class TestDeltaCoalescing:
     async def test_non_delta_message_preserved(self, manager, bus):
         """Non-delta messages should be preserved in pending list."""
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="Delta",
             metadata={"_stream_delta": True},
         ))
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="Final message",
             metadata={},  # Not a delta
         ))
@@ -233,8 +222,7 @@ class TestDeltaCoalescing:
     async def test_empty_queue_stops_coalescing(self, manager, bus):
         """Coalescing should stop when queue is empty."""
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="Only message",
             metadata={"_stream_delta": True},
         ))
@@ -254,20 +242,17 @@ class TestDispatchOutboundWithCoalescing:
         """_dispatch_outbound should coalesce deltas and process pending messages."""
         # Put multiple deltas followed by a regular message
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="A",
             metadata={"_stream_delta": True},
         ))
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="B",
             metadata={"_stream_delta": True},
         ))
         await bus.publish_outbound(OutboundMessage(
-            channel="mock",
-            chat_id="chat1",
+            address=Address(channel="mock", segments=("chat1",)),
             content="Final",
             metadata={},  # Regular message
         ))

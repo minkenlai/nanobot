@@ -487,11 +487,13 @@ class DingTalkChannel(BaseChannel):
         if not token:
             return
 
+        chat_id = msg.address.segments[0]
+
         if msg.content and msg.content.strip():
-            await self._send_markdown_text(token, msg.chat_id, msg.content.strip())
+            await self._send_markdown_text(token, chat_id, msg.content.strip())
 
         for media_ref in msg.media or []:
-            ok = await self._send_media_ref(token, msg.chat_id, media_ref)
+            ok = await self._send_media_ref(token, chat_id, media_ref)
             if ok:
                 continue
             logger.error("DingTalk media send failed for {}", media_ref)
@@ -499,7 +501,7 @@ class DingTalkChannel(BaseChannel):
             filename = self._guess_filename(media_ref, self._guess_upload_type(media_ref))
             await self._send_markdown_text(
                 token,
-                msg.chat_id,
+                chat_id,
                 f"[Attachment send failed: {filename}]",
             )
 

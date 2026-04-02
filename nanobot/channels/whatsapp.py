@@ -139,7 +139,7 @@ class WhatsAppChannel(BaseChannel):
             logger.warning("WhatsApp bridge not connected")
             return
 
-        chat_id = msg.chat_id
+        chat_id = msg.address.segments[0]
 
         if msg.content:
             try:

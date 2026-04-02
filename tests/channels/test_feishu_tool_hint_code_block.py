@@ -16,7 +16,7 @@ except ImportError:
 if not FEISHU_AVAILABLE:
     pytest.skip("Feishu dependencies not installed (lark-oapi)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.channels.feishu import FeishuChannel
 
 
@@ -38,8 +38,7 @@ def mock_feishu_channel():
 async def test_tool_hint_sends_code_message(mock_feishu_channel):
     """Tool hint messages should be sent as interactive cards with code blocks."""
     msg = OutboundMessage(
-        channel="feishu",
-        chat_id="oc_123456",
+        address=Address(channel="feishu", segments=("oc_123456",)),
         content='web_search("test query")',
         metadata={"_tool_hint": True}
     )
@@ -70,8 +69,7 @@ async def test_tool_hint_sends_code_message(mock_feishu_channel):
 async def test_tool_hint_empty_content_does_not_send(mock_feishu_channel):
     """Empty tool hint messages should not be sent."""
     msg = OutboundMessage(
-        channel="feishu",
-        chat_id="oc_123456",
+        address=Address(channel="feishu", segments=("oc_123456",)),
         content="   ",  # whitespace only
         metadata={"_tool_hint": True}
     )
@@ -87,8 +85,7 @@ async def test_tool_hint_empty_content_does_not_send(mock_feishu_channel):
 async def test_tool_hint_without_metadata_sends_as_normal(mock_feishu_channel):
     """Regular messages without _tool_hint should use normal formatting."""
     msg = OutboundMessage(
-        channel="feishu",
-        chat_id="oc_123456",
+        address=Address(channel="feishu", segments=("oc_123456",)),
         content="Hello, world!",
         metadata={}
     )
@@ -108,8 +105,7 @@ async def test_tool_hint_without_metadata_sends_as_normal(mock_feishu_channel):
 async def test_tool_hint_multiple_tools_in_one_message(mock_feishu_channel):
     """Multiple tool calls should be displayed each on its own line in a code block."""
     msg = OutboundMessage(
-        channel="feishu",
-        chat_id="oc_123456",
+        address=Address(channel="feishu", segments=("oc_123456",)),
         content='web_search("query"), read_file("/path/to/file")',
         metadata={"_tool_hint": True}
     )
@@ -130,8 +126,7 @@ async def test_tool_hint_multiple_tools_in_one_message(mock_feishu_channel):
 async def test_tool_hint_keeps_commas_inside_arguments(mock_feishu_channel):
     """Commas inside a single tool argument must not be split onto a new line."""
     msg = OutboundMessage(
-        channel="feishu",
-        chat_id="oc_123456",
+        address=Address(channel="feishu", segments=("oc_123456",)),
         content='web_search("foo, bar"), read_file("/path/to/file")',
         metadata={"_tool_hint": True}
     )

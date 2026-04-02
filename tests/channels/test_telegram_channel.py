@@ -1,5 +1,3 @@
-import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,10 +9,14 @@ try:
 except ImportError:
     pytest.skip("Telegram dependencies not installed (python-telegram-bot)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.channels.telegram import TELEGRAM_REPLY_CONTEXT_MAX_LEN, TelegramChannel, _StreamBuf
-from nanobot.channels.telegram import TelegramConfig
+from nanobot.channels.telegram import (
+    TELEGRAM_REPLY_CONTEXT_MAX_LEN,
+    TelegramChannel,
+    TelegramConfig,
+    _StreamBuf,
+)
 
 
 class _FakeHTTPXRequest:
@@ -334,12 +336,12 @@ async def test_send_delta_stream_end_raises_and_keeps_buffer_on_failure() -> Non
     )
     channel._app = _FakeApp(lambda: None)
     channel._app.bot.edit_message_text = AsyncMock(side_effect=RuntimeError("boom"))
-    channel._stream_bufs["123"] = _StreamBuf(text="hello", message_id=7, last_edit=0.0)
+    channel._stream_bufs["telegram://123"] = _StreamBuf(text="hello", message_id=7, last_edit=0.0)
 
     with pytest.raises(RuntimeError, match="boom"):
-        await channel.send_delta("123", "", {"_stream_end": True})
+        await channel.send_delta(OutboundMessage(address=Address(channel="telegram", segments=("123",)), content="", metadata={"_stream_end": True}))
 
-    assert "123" in channel._stream_bufs
+    assert "telegram://123" in channel._stream_bufs
 
 
 @pytest.mark.asyncio
@@ -352,11 +354,11 @@ async def test_send_delta_stream_end_treats_not_modified_as_success() -> None:
     )
     channel._app = _FakeApp(lambda: None)
     channel._app.bot.edit_message_text = AsyncMock(side_effect=BadRequest("Message is not modified"))
-    channel._stream_bufs["123"] = _StreamBuf(text="hello", message_id=7, last_edit=0.0, stream_id="s:0")
+    channel._stream_bufs["telegram://123"] = _StreamBuf(text="hello", message_id=7, last_edit=0.0, stream_id="s:0")
 
-    await channel.send_delta("123", "", {"_stream_end": True, "_stream_id": "s:0"})
+    await channel.send_delta(OutboundMessage(address=Address(channel="telegram", segments=("123",)), content="", metadata={"_stream_end": True, "_stream_id": "s:0"}))
 
-    assert "123" not in channel._stream_bufs
+    assert "telegram://123" not in channel._stream_bufs
 
 
 @pytest.mark.asyncio
@@ -366,16 +368,16 @@ async def test_send_delta_new_stream_id_replaces_stale_buffer() -> None:
         MessageBus(),
     )
     channel._app = _FakeApp(lambda: None)
-    channel._stream_bufs["123"] = _StreamBuf(
+    channel._stream_bufs["telegram://123"] = _StreamBuf(
         text="hello",
         message_id=7,
         last_edit=0.0,
         stream_id="old:0",
     )
 
-    await channel.send_delta("123", "world", {"_stream_delta": True, "_stream_id": "new:0"})
+    await channel.send_delta(OutboundMessage(address=Address(channel="telegram", segments=("123",)), content="world", metadata={"_stream_delta": True, "_stream_id": "new:0"}))
 
-    buf = channel._stream_bufs["123"]
+    buf = channel._stream_bufs["telegram://123"]
     assert buf.text == "world"
     assert buf.stream_id == "new:0"
     assert buf.message_id == 1
@@ -390,12 +392,12 @@ async def test_send_delta_incremental_edit_treats_not_modified_as_success() -> N
         MessageBus(),
     )
     channel._app = _FakeApp(lambda: None)
-    channel._stream_bufs["123"] = _StreamBuf(text="hello", message_id=7, last_edit=0.0, stream_id="s:0")
+    channel._stream_bufs["telegram://123"] = _StreamBuf(text="hello", message_id=7, last_edit=0.0, stream_id="s:0")
     channel._app.bot.edit_message_text = AsyncMock(side_effect=BadRequest("Message is not modified"))
 
-    await channel.send_delta("123", "", {"_stream_delta": True, "_stream_id": "s:0"})
+    await channel.send_delta(OutboundMessage(address=Address(channel="telegram", segments=("123",)), content="", metadata={"_stream_delta": True, "_stream_id": "s:0"}))
 
-    assert channel._stream_bufs["123"].last_edit > 0.0
+    assert channel._stream_bufs["telegram://123"].last_edit > 0.0
 
 
 def test_derive_topic_session_key_uses_thread_id() -> None:
@@ -442,10 +444,9 @@ async def test_send_progress_keeps_message_in_topic() -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="telegram",
-            chat_id="123",
+            address=Address(channel="tg", segments=("123", "42")),
             content="hello",
-            metadata={"_progress": True, "message_thread_id": 42},
+            metadata={"_progress": True, "_tool_hint": True},
         )
     )
 
@@ -461,8 +462,7 @@ async def test_send_reply_infers_topic_from_message_id_cache() -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="telegram",
-            chat_id="123",
+            address=Address(channel="tg", segments=("123",)),
             content="hello",
             metadata={"message_id": 10},
         )
@@ -483,8 +483,7 @@ async def test_send_remote_media_url_after_security_validation(monkeypatch) -> N
 
     await channel.send(
         OutboundMessage(
-            channel="telegram",
-            chat_id="123",
+            address=Address(channel="tg", segments=("123",)),
             content="",
             media=["https://example.com/cat.jpg"],
         )
@@ -514,8 +513,7 @@ async def test_send_blocks_unsafe_remote_media_url(monkeypatch) -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="telegram",
-            chat_id="123",
+            address=Address(channel="tg", segments=("123",)),
             content="",
             media=["http://example.com/internal.jpg"],
         )

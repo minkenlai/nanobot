@@ -8,12 +8,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.channels.manager import ChannelManager
 from nanobot.config.schema import ChannelsConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -178,7 +177,7 @@ async def test_manager_loads_plugin_from_dict_config():
     )
 
     with patch(
-        "nanobot.channels.registry.discover_all",
+        "nanobot.channels.registry.discover_plugins",
         return_value={"fakeplugin": _FakePlugin},
     ):
         mgr = ChannelManager.__new__(ChannelManager)
@@ -193,9 +192,10 @@ async def test_manager_loads_plugin_from_dict_config():
 
 
 def test_channels_login_uses_discovered_plugin_class(monkeypatch):
+    from typer.testing import CliRunner
+
     from nanobot.cli.commands import app
     from nanobot.config.schema import Config
-    from typer.testing import CliRunner
 
     runner = CliRunner()
     seen: dict[str, object] = {}
@@ -210,7 +210,7 @@ def test_channels_login_uses_discovered_plugin_class(monkeypatch):
 
     monkeypatch.setattr("nanobot.config.loader.load_config", lambda: Config())
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_all",
+        "nanobot.channels.registry.discover_plugins",
         lambda: {"fakeplugin": _LoginPlugin},
     )
 
@@ -230,7 +230,7 @@ async def test_manager_skips_disabled_plugin():
     )
 
     with patch(
-        "nanobot.channels.registry.discover_all",
+        "nanobot.channels.registry.discover_plugins",
         return_value={"fakeplugin": _FakePlugin},
     ):
         mgr = ChannelManager.__new__(ChannelManager)
@@ -331,7 +331,7 @@ async def test_send_with_retry_succeeds_first_try():
     mgr.channels = {"failing": _FailingChannel(fake_config, mgr.bus)}
     mgr._dispatch_task = None
 
-    msg = OutboundMessage(channel="failing", chat_id="123", content="test")
+    msg = OutboundMessage(address=Address(channel="failing", segments=("123",)), content="test")
     await mgr._send_with_retry(mgr.channels["failing"], msg)
 
     assert call_count == 1
@@ -368,7 +368,7 @@ async def test_send_with_retry_retries_on_failure():
     mgr.channels = {"failing": _FailingChannel(fake_config, mgr.bus)}
     mgr._dispatch_task = None
 
-    msg = OutboundMessage(channel="failing", chat_id="123", content="test")
+    msg = OutboundMessage(address=Address(channel="failing", segments=("123",)), content="test")
 
     # Patch asyncio.sleep to avoid actual delays
     with patch("nanobot.channels.manager.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
@@ -409,7 +409,7 @@ async def test_send_with_retry_no_retry_when_max_is_zero():
     mgr.channels = {"failing": _FailingChannel(fake_config, mgr.bus)}
     mgr._dispatch_task = None
 
-    msg = OutboundMessage(channel="failing", chat_id="123", content="test")
+    msg = OutboundMessage(address=Address(channel="failing", segments=("123",)), content="test")
 
     with patch("nanobot.channels.manager.asyncio.sleep", new_callable=AsyncMock):
         await mgr._send_with_retry(mgr.channels["failing"], msg)
@@ -435,74 +435,77 @@ async def test_send_with_retry_calls_send_delta():
         async def send(self, msg: OutboundMessage) -> None:
             pass  # Should not be called
 
-        async def send_delta(self, chat_id: str, delta: str, metadata: dict | None = None) -> None:
+        async def send_delta(self, msg: OutboundMessage) -> None:
             nonlocal send_delta_called
             send_delta_called = True
 
     fake_config = SimpleNamespace(
         channels=ChannelsConfig(send_max_retries=3),
         providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
+        )
 
     mgr = ChannelManager.__new__(ChannelManager)
     mgr.config = fake_config
     mgr.bus = MessageBus()
     mgr.channels = {"streaming": _StreamingChannel(fake_config, mgr.bus)}
+    mgr._aliases = {"streaming": "streaming"}
     mgr._dispatch_task = None
 
     msg = OutboundMessage(
-        channel="streaming", chat_id="123", content="test delta",
-        metadata={"_stream_delta": True}
-    )
+        address=Address(channel="streaming", segments=("123",)),
+        content="test delta",
+        metadata={"_stream_delta": True},
+        )
     await mgr._send_with_retry(mgr.channels["streaming"], msg)
 
     assert send_delta_called is True
 
 
-@pytest.mark.asyncio
-async def test_send_with_retry_skips_send_when_streamed():
-    """_send_with_retry should not call send when metadata has _streamed flag."""
-    send_called = False
-    send_delta_called = False
+    @pytest.mark.asyncio
+    async def test_send_with_retry_skips_send_when_streamed():
+        """_send_with_retry should not call send when metadata has _streamed flag."""
+        send_called = False
+        send_delta_called = False
 
-    class _StreamedChannel(BaseChannel):
-        name = "streamed"
-        display_name = "Streamed"
+        class _StreamedChannel(BaseChannel):
+            name = "streamed"
+            display_name = "Streamed"
 
-        async def start(self) -> None:
-            pass
+            async def start(self) -> None:
+                pass
 
-        async def stop(self) -> None:
-            pass
+            async def stop(self) -> None:
+                pass
 
-        async def send(self, msg: OutboundMessage) -> None:
-            nonlocal send_called
-            send_called = True
+            async def send(self, msg: OutboundMessage) -> None:
+                nonlocal send_called
+                send_called = True
 
-        async def send_delta(self, chat_id: str, delta: str, metadata: dict | None = None) -> None:
-            nonlocal send_delta_called
-            send_delta_called = True
+            async def send_delta(self, msg: OutboundMessage) -> None:
+                nonlocal send_delta_called
+                send_delta_called = True
 
-    fake_config = SimpleNamespace(
-        channels=ChannelsConfig(send_max_retries=3),
-        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
+        fake_config = SimpleNamespace(
+            channels=ChannelsConfig(send_max_retries=3),
+            providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
+        )
 
-    mgr = ChannelManager.__new__(ChannelManager)
-    mgr.config = fake_config
-    mgr.bus = MessageBus()
-    mgr.channels = {"streamed": _StreamedChannel(fake_config, mgr.bus)}
-    mgr._dispatch_task = None
+        mgr = ChannelManager.__new__(ChannelManager)
+        mgr.config = fake_config
+        mgr.bus = MessageBus()
+        mgr.channels = {"streamed": _StreamedChannel(fake_config, mgr.bus)}
+        mgr._dispatch_task = None
 
-    # _streamed means message was already sent via send_delta, so skip send
-    msg = OutboundMessage(
-        channel="streamed", chat_id="123", content="test",
-        metadata={"_streamed": True}
-    )
-    await mgr._send_with_retry(mgr.channels["streamed"], msg)
+        # _streamed means message was already sent via send_delta, so skip send
+        msg = OutboundMessage(
+            address=Address(channel="streamed", segments=("123",)),
+            content="test",
+            metadata={"_streamed": True},
+        )
+        await mgr._send_with_retry(mgr.channels["streamed"], msg)
 
-    assert send_called is False
-    assert send_delta_called is False
+        assert send_called is False
+        assert send_delta_called is False
 
 
 @pytest.mark.asyncio
@@ -532,7 +535,7 @@ async def test_send_with_retry_propagates_cancelled_error():
     mgr.channels = {"cancelling": _CancellingChannel(fake_config, mgr.bus)}
     mgr._dispatch_task = None
 
-    msg = OutboundMessage(channel="cancelling", chat_id="123", content="test")
+    msg = OutboundMessage(address=Address(channel="cancelling", segments=("123",)), content="test")
 
     with pytest.raises(asyncio.CancelledError):
         await mgr._send_with_retry(mgr.channels["cancelling"], msg)
@@ -569,7 +572,7 @@ async def test_send_with_retry_propagates_cancelled_error_during_sleep():
     mgr.channels = {"failing": _FailingChannel(fake_config, mgr.bus)}
     mgr._dispatch_task = None
 
-    msg = OutboundMessage(channel="failing", chat_id="123", content="test")
+    msg = OutboundMessage(address=Address(channel="failing", segments=("123",)), content="test")
 
     # Mock sleep to raise CancelledError
     async def cancel_during_sleep(_):
@@ -674,6 +677,7 @@ async def test_get_channel_returns_channel_if_exists():
     mgr.config = fake_config
     mgr.bus = MessageBus()
     mgr.channels = {"telegram": _StartableChannel(fake_config, mgr.bus)}
+    mgr._aliases = {"telegram": "telegram"}
     mgr._dispatch_task = None
 
     assert mgr.get_channel("telegram") is not None

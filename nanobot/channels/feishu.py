@@ -1043,17 +1043,19 @@ class FeishuChannel(BaseChannel):
             logger.warning("Error closing streaming on card {}: {}", card_id, e)
             return False
 
-    async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(self, msg: OutboundMessage) -> None:
         """Progressive streaming via CardKit: create card on first delta, stream-update on subsequent."""
         if not self._client:
             return
-        meta = metadata or {}
+
+        address_uri = msg.address.to_uri()
+        chat_id = msg.address.segments[0]
         loop = asyncio.get_running_loop()
         rid_type = "chat_id" if chat_id.startswith("oc_") else "open_id"
 
         # --- stream end: final update or fallback ---
-        if meta.get("_stream_end"):
-            buf = self._stream_bufs.pop(chat_id, None)
+        if msg.metadata.get("_stream_end"):
+            buf = self._stream_bufs.pop(address_uri, None)
             if not buf or not buf.text:
                 return
             if buf.card_id:
@@ -1073,11 +1075,11 @@ class FeishuChannel(BaseChannel):
             return
 
         # --- accumulate delta ---
-        buf = self._stream_bufs.get(chat_id)
+        buf = self._stream_bufs.get(address_uri)
         if buf is None:
             buf = _FeishuStreamBuf()
-            self._stream_bufs[chat_id] = buf
-        buf.text += delta
+            self._stream_bufs[address_uri] = buf
+        buf.text += msg.content
         if not buf.text.strip():
             return
 
@@ -1101,7 +1103,7 @@ class FeishuChannel(BaseChannel):
             return
 
         try:
-            receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
+            receive_id_type = "chat_id" if msg.address.segments[0].startswith("oc_") else "open_id"
             loop = asyncio.get_running_loop()
 
             # Handle tool hint messages as code blocks in interactive cards.
@@ -1109,7 +1111,7 @@ class FeishuChannel(BaseChannel):
             if msg.metadata.get("_tool_hint"):
                 if msg.content and msg.content.strip():
                     await self._send_tool_hint_card(
-                        receive_id_type, msg.chat_id, msg.content.strip()
+                        receive_id_type, msg.address.segments[0], msg.content.strip()
                     )
                 return
 
@@ -1133,11 +1135,10 @@ class FeishuChannel(BaseChannel):
                 nonlocal first_send
                 if reply_message_id and first_send:
                     first_send = False
-                    ok = self._reply_message_sync(reply_message_id, m_type, content)
-                    if ok:
+                    if self._reply_message_sync(reply_message_id, m_type, content):
                         return
-                    # Fall back to regular send if reply fails
-                self._send_message_sync(receive_id_type, msg.chat_id, m_type, content)
+                # Fall back to regular send if reply fails
+                self._send_message_sync(receive_id_type, msg.address.segments[0], m_type, content)
 
             for file_path in msg.media:
                 if not os.path.isfile(file_path):

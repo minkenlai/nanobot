@@ -720,25 +720,26 @@ class WeixinChannel(BaseChannel):
             logger.warning("WeChat send blocked: {}", e)
             return
 
+        chat_id = msg.address.segments[0]
         content = msg.content.strip()
-        ctx_token = self._context_tokens.get(msg.chat_id, "")
+        ctx_token = self._context_tokens.get(chat_id, "")
         if not ctx_token:
             logger.warning(
                 "WeChat: no context_token for chat_id={}, cannot send",
-                msg.chat_id,
+                chat_id,
             )
             return
 
         # --- Send media files first (following Telegram channel pattern) ---
         for media_path in (msg.media or []):
             try:
-                await self._send_media_file(msg.chat_id, media_path, ctx_token)
+                await self._send_media_file(chat_id, media_path, ctx_token)
             except Exception as e:
                 filename = Path(media_path).name
                 logger.error("Failed to send WeChat media {}: {}", media_path, e)
                 # Notify user about failure via text
                 await self._send_text(
-                    msg.chat_id, f"[Failed to send: {filename}]", ctx_token,
+                    chat_id, f"[Failed to send: {filename}]", ctx_token,
                 )
 
         # --- Send text content ---
@@ -748,7 +749,7 @@ class WeixinChannel(BaseChannel):
         try:
             chunks = split_message(content, WEIXIN_MAX_MESSAGE_LEN)
             for chunk in chunks:
-                await self._send_text(msg.chat_id, chunk, ctx_token)
+                await self._send_text(chat_id, chunk, ctx_token)
         except Exception as e:
             logger.error("Error sending WeChat message: {}", e)
             raise

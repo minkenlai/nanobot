@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nanobot.bus.events import Address
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 
 
@@ -27,7 +28,7 @@ def _make_loop(tmp_path):
 
 @pytest.mark.asyncio
 async def test_runner_preserves_reasoning_fields_and_tool_results():
-    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+    from nanobot.agent.runner import AgentRunner, AgentRunSpec
 
     provider = MagicMock()
     captured_second_call: list[dict] = []
@@ -84,7 +85,7 @@ async def test_runner_preserves_reasoning_fields_and_tool_results():
 @pytest.mark.asyncio
 async def test_runner_calls_hooks_in_order():
     from nanobot.agent.hook import AgentHook, AgentHookContext
-    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+    from nanobot.agent.runner import AgentRunner, AgentRunSpec
 
     provider = MagicMock()
     call_count = {"n": 0}
@@ -159,7 +160,7 @@ async def test_runner_calls_hooks_in_order():
 @pytest.mark.asyncio
 async def test_runner_streaming_hook_receives_deltas_and_end_signal():
     from nanobot.agent.hook import AgentHook, AgentHookContext
-    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+    from nanobot.agent.runner import AgentRunner, AgentRunSpec
 
     provider = MagicMock()
     streamed: list[str] = []
@@ -202,7 +203,7 @@ async def test_runner_streaming_hook_receives_deltas_and_end_signal():
 
 @pytest.mark.asyncio
 async def test_runner_returns_max_iterations_fallback():
-    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+    from nanobot.agent.runner import AgentRunner, AgentRunSpec
 
     provider = MagicMock()
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -230,7 +231,7 @@ async def test_runner_returns_max_iterations_fallback():
 
 @pytest.mark.asyncio
 async def test_runner_returns_structured_tool_error():
-    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+    from nanobot.agent.runner import AgentRunner, AgentRunSpec
 
     provider = MagicMock()
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
@@ -269,7 +270,7 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
     loop.tools.execute = AsyncMock(return_value="ok")
     loop.max_iterations = 2
 
-    final_content, _, _ = await loop._run_agent_loop([])
+    final_content, _, _ = await loop._run_agent_loop([], address=Address(channel="test", segments=("test",)))
 
     assert final_content == (
         "I reached the maximum number of tool call iterations (2) "
@@ -298,6 +299,7 @@ async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp
 
     final_content, _, _ = await loop._run_agent_loop(
         [],
+        address=Address(channel="test", segments=("test",)),
         on_stream=on_stream,
         on_stream_end=on_stream_end,
     )

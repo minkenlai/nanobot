@@ -465,14 +465,15 @@ class TelegramChannel(BaseChannel):
             return
 
         # Unpack the Address
-        chat_id_str = msg.chat_id
+        address = msg.address
+        chat_id_str = address.segments[0]
         try:
             chat_id = int(chat_id_str)
         except ValueError:
             logger.error("Invalid chat_id: {}", chat_id_str)
             return
 
-        message_thread_id = msg.message_thread_id
+        message_thread_id = address.segments[1] if len(address.segments) > 1 else None
         reply_to_message_id = msg.metadata.get("message_id")
 
         # Final response: Finalize audit trail and clear state
@@ -600,23 +601,22 @@ class TelegramChannel(BaseChannel):
     def _is_not_modified_error(exc: Exception) -> bool:
         return isinstance(exc, BadRequest) and "message is not modified" in str(exc).lower()
 
-    async def send_delta(
-        self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None
-    ) -> None:
+    async def send_delta(self, msg: OutboundMessage) -> None:
         """Progressive message editing: send on first delta, edit on subsequent ones."""
         if not self._app:
             return
-        meta = metadata or {}
-        int_chat_id = int(chat_id)
-        stream_id = meta.get("_stream_id")
 
-        if meta.get("_stream_end"):
-            buf = self._stream_bufs.get(chat_id)
+        address_uri = msg.address.to_uri()
+        int_chat_id = int(msg.address.segments[0])
+        stream_id = msg.metadata.get("_stream_id")
+
+        if msg.metadata.get("_stream_end"):
+            buf = self._stream_bufs.get(address_uri)
             if not buf or not buf.message_id or not buf.text:
                 return
             if stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id:
                 return
-            self._stop_typing(chat_id)
+            self._stop_typing(address_uri)
             try:
                 html = _markdown_to_telegram_html(buf.text)
                 await self._call_with_retry(
@@ -628,8 +628,8 @@ class TelegramChannel(BaseChannel):
                 )
             except Exception as e:
                 if self._is_not_modified_error(e):
-                    logger.debug("Final stream edit already applied for {}", chat_id)
-                    self._stream_bufs.pop(chat_id, None)
+                    logger.debug("Final stream edit already applied for {}", address_uri)
+                    self._stream_bufs.pop(address_uri, None)
                     return
                 logger.debug("Final stream edit failed (HTML), trying plain: {}", e)
                 try:
@@ -641,30 +641,30 @@ class TelegramChannel(BaseChannel):
                     )
                 except Exception as e2:
                     if self._is_not_modified_error(e2):
-                        logger.debug("Final stream plain edit already applied for {}", chat_id)
-                        self._stream_bufs.pop(chat_id, None)
+                        logger.debug("Final stream plain edit already applied for {}", address_uri)
+                        self._stream_bufs.pop(address_uri, None)
                         return
                     logger.warning("Final stream edit failed: {}", e2)
                     raise  # Let ChannelManager handle retry
-            self._stream_bufs.pop(chat_id, None)
+            self._stream_bufs.pop(address_uri, None)
             return
 
-        buf = self._stream_bufs.get(chat_id)
+        buf = self._stream_bufs.get(address_uri)
         if buf is None or (
             stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id
         ):
             buf = _StreamBuf(stream_id=stream_id)
-            self._stream_bufs[chat_id] = buf
+            self._stream_bufs[address_uri] = buf
         elif buf.stream_id is None:
             buf.stream_id = stream_id
-        buf.text += delta
+        buf.text += msg.content
 
         if not buf.text.strip():
             return
 
         now = time.monotonic()
         if buf.message_id is None:
-            message_thread_id = meta.get("message_thread_id")
+            message_thread_id = msg.metadata.get("message_thread_id")
             thread_kwargs = {"message_thread_id": message_thread_id} if message_thread_id else {}
             try:
                 sent = await self._call_with_retry(

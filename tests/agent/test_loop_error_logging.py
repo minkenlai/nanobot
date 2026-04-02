@@ -1,10 +1,11 @@
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock
+
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.events import Address, InboundMessage
 from nanobot.providers.base import LLMResponse
 
 
@@ -12,7 +13,11 @@ from nanobot.providers.base import LLMResponse
 async def test_loop_error_logging_on_exception(tmp_path: Path):
     bus = AsyncMock()
     # Create an inbound message that will throw an error when processed
-    inbound = InboundMessage(channel="cli", chat_id="test", content="hello", sender_id="user")
+    inbound = InboundMessage(
+        address=Address(channel="cli", segments=("test",)),
+        content="hello",
+        sender_id="user",
+    )
 
     # Let it run once, then we stop the loop to break out
     async def mock_consume():
@@ -57,7 +62,11 @@ async def test_loop_error_logging_on_exception(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_loop_error_logging_on_llm_error(tmp_path: Path):
     bus = AsyncMock()
-    inbound = InboundMessage(channel="cli", chat_id="test", content="hello", sender_id="user")
+    inbound = InboundMessage(
+        address=Address(channel="cli", segments=("test",)),
+        content="hello",
+        sender_id="user",
+    )
 
     async def mock_consume():
         loop._running = False

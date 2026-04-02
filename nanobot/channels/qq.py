@@ -245,14 +245,15 @@ class QQChannel(BaseChannel):
             logger.warning("QQ client not initialized")
             return
 
-        msg_id = msg.metadata.get("message_id")
-        chat_type = self._chat_type_cache.get(msg.chat_id, "c2c")
+        chat_id = msg.address.segments[0]
+        msg_id = msg.metadata.get("message_id") if msg.metadata else None
+        chat_type = self._chat_type_cache.get(chat_id, "c2c")
         is_group = chat_type == "group"
 
         # 1) Send media
         for media_ref in msg.media or []:
             ok = await self._send_media(
-                chat_id=msg.chat_id,
+                chat_id=chat_id,
                 media_ref=media_ref,
                 msg_id=msg_id,
                 is_group=is_group,
@@ -264,7 +265,7 @@ class QQChannel(BaseChannel):
                     or "file"
                 )
                 await self._send_text_only(
-                    chat_id=msg.chat_id,
+                    chat_id=chat_id,
                     is_group=is_group,
                     msg_id=msg_id,
                     content=f"[Attachment send failed: {filename}]",
@@ -273,7 +274,7 @@ class QQChannel(BaseChannel):
         # 2) Send text
         if msg.content and msg.content.strip():
             await self._send_text_only(
-                chat_id=msg.chat_id,
+                chat_id=chat_id,
                 is_group=is_group,
                 msg_id=msg_id,
                 content=msg.content.strip(),

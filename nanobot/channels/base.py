@@ -92,7 +92,7 @@ class BaseChannel(ABC):
         """
         pass
 
-    async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
+    async def send_delta(self, msg: OutboundMessage) -> None:
         """Deliver a streaming text chunk.
 
         Override in subclasses to enable streaming. Implementations should
@@ -100,7 +100,7 @@ class BaseChannel(ABC):
 
         Streaming contract: ``_stream_delta`` is a chunk, ``_stream_end`` ends
         the current segment, and stateful implementations must key buffers by
-        ``_stream_id`` rather than only by ``chat_id``.
+        ``msg.address.to_uri()`` rather than only by ``chat_id``.
         """
         pass
 

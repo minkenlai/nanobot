@@ -14,7 +14,7 @@ except ImportError:
 if not QQ_AVAILABLE:
     pytest.skip("QQ dependencies not installed (qq-botpy)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.qq import QQChannel, QQConfig
 
@@ -63,9 +63,8 @@ async def test_send_group_message_uses_plain_text_group_api_with_msg_seq() -> No
 
     await channel.send(
         OutboundMessage(
-            channel="qq",
-            chat_id="group123",
-            content="hello",
+        address=Address(channel="qq", segments=("group123",)),
+        content="hello",
             metadata={"message_id": "msg1"},
         )
     )
@@ -89,9 +88,8 @@ async def test_send_c2c_message_uses_plain_text_c2c_api_with_msg_seq() -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="qq",
-            chat_id="user123",
-            content="hello",
+        address=Address(channel="qq", segments=("user123",)),
+        content="hello",
             metadata={"message_id": "msg1"},
         )
     )
@@ -119,9 +117,8 @@ async def test_send_group_message_uses_markdown_when_configured() -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="qq",
-            chat_id="group123",
-            content="**hello**",
+        address=Address(channel="qq", segments=("group123",)),
+        content="**hello**",
             metadata={"message_id": "msg1"},
         )
     )

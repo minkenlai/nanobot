@@ -1,13 +1,12 @@
-from email.message import EmailMessage
-from datetime import date
 import imaplib
+from datetime import date
+from email.message import EmailMessage
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.channels.email import EmailChannel
-from nanobot.channels.email import EmailConfig
+from nanobot.channels.email import EmailChannel, EmailConfig
 
 
 def _make_config(**overrides) -> EmailConfig:
@@ -274,8 +273,7 @@ async def test_send_uses_smtp_and_reply_subject(monkeypatch) -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="email",
-            chat_id="alice@example.com",
+            address=Address(channel="email", segments=("alice@example.com",)),
             content="Acknowledged.",
         )
     )
@@ -332,8 +330,7 @@ async def test_send_skips_reply_when_auto_reply_disabled(monkeypatch) -> None:
     # Reply should be skipped (auto_reply_enabled=False)
     await channel.send(
         OutboundMessage(
-            channel="email",
-            chat_id="alice@example.com",
+            address=Address(channel="email", segments=("alice@example.com",)),
             content="Should not send.",
         )
     )
@@ -342,8 +339,7 @@ async def test_send_skips_reply_when_auto_reply_disabled(monkeypatch) -> None:
     # Reply with force_send=True should be sent
     await channel.send(
         OutboundMessage(
-            channel="email",
-            chat_id="alice@example.com",
+            address=Address(channel="email", segments=("alice@example.com",)),
             content="Force send.",
             metadata={"force_send": True},
         )
@@ -391,8 +387,7 @@ async def test_send_proactive_email_when_auto_reply_disabled(monkeypatch) -> Non
     # This should be sent even with auto_reply_enabled=False
     await channel.send(
         OutboundMessage(
-            channel="email",
-            chat_id="bob@example.com",
+            address=Address(channel="email", segments=("bob@example.com",)),
             content="Hello, this is a proactive email.",
         )
     )
@@ -436,8 +431,7 @@ async def test_send_skips_when_consent_not_granted(monkeypatch) -> None:
     channel = EmailChannel(cfg, MessageBus())
     await channel.send(
         OutboundMessage(
-            channel="email",
-            chat_id="alice@example.com",
+            address=Address(channel="email", segments=("alice@example.com",)),
             content="Should not send.",
             metadata={"force_send": True},
         )
@@ -603,8 +597,8 @@ def test_email_content_tagged_with_email_context(monkeypatch) -> None:
 
 def test_check_authentication_results_method() -> None:
     """Unit test for the _check_authentication_results static method."""
-    from email.parser import BytesParser
     from email import policy
+    from email.parser import BytesParser
 
     # No Authentication-Results header
     msg_no_auth = EmailMessage()

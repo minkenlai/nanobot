@@ -7,7 +7,7 @@ import pytest
 
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.message import MessageTool
-from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.events import Address, InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 
@@ -41,7 +41,7 @@ class TestMessageToolSuppressLogic:
         if isinstance(mt, MessageTool):
             mt.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
 
-        msg = InboundMessage(channel="feishu", sender_id="user1", chat_id="chat123", content="Send")
+        msg = InboundMessage(address=Address(channel="feishu", segments=("chat123",)), sender_id="user1", content="Send")
         result = await loop._process_message(msg)
 
         assert len(sent) == 1
@@ -66,7 +66,7 @@ class TestMessageToolSuppressLogic:
         if isinstance(mt, MessageTool):
             mt.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
 
-        msg = InboundMessage(channel="feishu", sender_id="user1", chat_id="chat123", content="Send email")
+        msg = InboundMessage(address=Address(channel="feishu", segments=("chat123",)), sender_id="user1", content="Send email")
         result = await loop._process_message(msg)
 
         assert len(sent) == 1
@@ -80,7 +80,7 @@ class TestMessageToolSuppressLogic:
         loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="Hello!", tool_calls=[]))
         loop.tools.get_definitions = MagicMock(return_value=[])
 
-        msg = InboundMessage(channel="feishu", sender_id="user1", chat_id="chat123", content="Hi")
+        msg = InboundMessage(address=Address(channel="feishu", segments=("chat123",)), sender_id="user1", content="Hi")
         result = await loop._process_message(msg)
 
         assert result is not None
@@ -107,7 +107,7 @@ class TestMessageToolSuppressLogic:
         async def on_progress(content: str, *, tool_hint: bool = False) -> None:
             progress.append((content, tool_hint))
 
-        final_content, _, _ = await loop._run_agent_loop([], on_progress=on_progress)
+        final_content, _, _ = await loop._run_agent_loop([], address=Address(channel="cli", segments=("direct",)), on_progress=on_progress)
 
         assert final_content == "Done"
         assert progress == [

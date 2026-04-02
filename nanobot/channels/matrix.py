@@ -388,6 +388,8 @@ class MatrixChannel(BaseChannel):
         """Send outbound content; clear typing for non-progress messages."""
         if not self.client:
             return
+
+        room_id = msg.address.segments[0]
         text = msg.content or ""
         candidates = self._collect_outbound_media_candidates(msg.media)
         relates_to = self._build_thread_relates_to(msg.metadata)
@@ -398,7 +400,7 @@ class MatrixChannel(BaseChannel):
                 limit_bytes = await self._effective_media_limit_bytes()
                 for path in candidates:
                     if fail := await self._upload_and_send_attachment(
-                        room_id=msg.chat_id,
+                        room_id=room_id,
                         path=path,
                         limit_bytes=limit_bytes,
                         relates_to=relates_to,
@@ -410,10 +412,10 @@ class MatrixChannel(BaseChannel):
                 content = _build_matrix_text_content(text)
                 if relates_to:
                     content["m.relates_to"] = relates_to
-                await self._send_room_content(msg.chat_id, content)
+                await self._send_room_content(room_id, content)
         finally:
             if not is_progress:
-                await self._stop_typing_keepalive(msg.chat_id, clear_typing=True)
+                await self._stop_typing_keepalive(room_id, clear_typing=True)
 
     def _register_event_callbacks(self) -> None:
         self.client.add_event_callback(self._on_message, RoomMessageText)

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.cli.commands import _make_provider, app
 from nanobot.config.schema import Config
 from nanobot.providers.openai_codex_provider import _strip_model_prefix
@@ -20,8 +20,6 @@ class _StopGatewayError(RuntimeError):
 
 
 import shutil
-
-import pytest
 
 
 @pytest.fixture
@@ -368,7 +366,7 @@ def mock_agent_runtime(tmp_path):
         agent_loop = MagicMock()
         agent_loop.channels_config = None
         agent_loop.process_direct = AsyncMock(
-            return_value=OutboundMessage(channel="cli", chat_id="direct", content="mock-response"),
+            return_value=OutboundMessage(address=Address(channel="cli", segments=("direct",)), content="mock-response"),
         )
         agent_loop.close_mcp = AsyncMock(return_value=None)
         mock_agent_loop_cls.return_value = agent_loop
@@ -446,7 +444,7 @@ def test_agent_config_sets_active_path(monkeypatch, tmp_path: Path) -> None:
             pass
 
         async def process_direct(self, *_args, **_kwargs):
-            return OutboundMessage(channel="cli", chat_id="direct", content="ok")
+            return OutboundMessage(address=Address(channel="cli", segments=("direct",)), content="ok")
 
         async def close_mcp(self) -> None:
             return None
@@ -486,7 +484,7 @@ def test_agent_uses_workspace_directory_for_cron_store(monkeypatch, tmp_path: Pa
             pass
 
         async def process_direct(self, *_args, **_kwargs):
-            return OutboundMessage(channel="cli", chat_id="direct", content="ok")
+            return OutboundMessage(address=Address(channel="cli", segments=("direct",)), content="ok")
 
         async def close_mcp(self) -> None:
             return None
@@ -533,7 +531,7 @@ def test_agent_workspace_override_does_not_migrate_legacy_cron(monkeypatch, tmp_
             pass
 
         async def process_direct(self, *_args, **_kwargs):
-            return OutboundMessage(channel="cli", chat_id="direct", content="ok")
+            return OutboundMessage(address=Address(channel="cli", segments=("direct",)), content="ok")
 
         async def close_mcp(self) -> None:
             return None
@@ -588,7 +586,7 @@ def test_agent_custom_config_workspace_does_not_migrate_legacy_cron(
             pass
 
         async def process_direct(self, *_args, **_kwargs):
-            return OutboundMessage(channel="cli", chat_id="direct", content="ok")
+            return OutboundMessage(address=Address(channel="cli", segments=("direct",)), content="ok")
 
         async def close_mcp(self) -> None:
             return None

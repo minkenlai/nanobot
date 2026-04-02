@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import traceback
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from nanobot.bus.events import OutboundMessage
@@ -21,6 +23,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     content += "- `/tasks`: List current and recent background tasks\n"
     content += "- `/usage`: Show token usage for the current session\n"
     content += "- `/stop`: Cancel all active tasks in this session\n"
+    content += "- `/repl`: Execute Python code in the current environment\n"
     content += "- `/restart`: Refresh code in-place (preserves PID)\n"
     content += "- `/restart --full`: Graceful full reboot (requires systemd)\n"
     content += "- `/halt`: Stop the gateway process (Manual mode only)\n"
@@ -65,6 +68,8 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Stop all active tasks in the current session."""
+    from loguru import logger
+    logger.error(f"CMD STOP session_key: {ctx.msg.session_key}, active_tasks keys: {list(ctx.loop._active_tasks.keys())}")
     msg = ctx.msg
     loop = ctx.loop
     cancelled = await loop.stop_tasks_by_session(msg.session_key)
@@ -188,6 +193,67 @@ async def cmd_tasks(ctx: CommandContext) -> OutboundMessage:
     return OutboundMessage(address=msg.address, content=content)
 
 
+async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
+    """Execute Python code in the current environment."""
+    msg = ctx.msg
+    loop = ctx.loop
+    code = ctx.raw or ""
+
+    if not code.strip():
+        return OutboundMessage(address=msg.address, content="Usage: `/repl <python statement>`")
+
+    log_file = loop.workspace / "logs" / "repl.log"
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    target = msg.address.to_uri()
+
+    # Prepare environment for execution
+    env = {
+        "ctx": ctx,
+        "loop": loop,
+        "session": ctx.session,
+        "msg": msg,
+        "asyncio": asyncio,
+        "os": os,
+        "sys": sys,
+    }
+
+    output = ""
+    try:
+        # Try to evaluate as an expression first
+        try:
+            result = eval(code, env)
+            if asyncio.iscoroutine(result):
+                result = await result
+            output = repr(result)
+        except SyntaxError:
+            # If eval fails, it might be a statement
+            # We use a trick to capture stdout if needed, but for now just exec
+            # and look for a local 'result' variable or just return 'Done'
+            exec(code, env)
+            if "result" in env:
+                result = env["result"]
+                if asyncio.iscoroutine(result):
+                    result = await result
+                output = repr(result)
+            else:
+                output = "Done (no result variable set)"
+    except Exception:
+        output = traceback.format_exc()
+
+    # Log to repl.log
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        with log_file.open("a", encoding="utf-8") as f:
+            f.write(f"[{now}] REPL {target}\nIN:  {code}\nOUT: {output}\n{'-'*40}\n")
+    except Exception:
+        pass
+
+    return OutboundMessage(
+        address=msg.address,
+        content=f"**REPL Output:**\n```python\n{output}\n```",
+    )
+
+
 def register_builtin_commands(router: CommandRouter) -> None:
     """Register all builtin commands."""
     router.exact("/new", cmd_new)
@@ -196,6 +262,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/tasks", cmd_tasks)
     router.exact("/usage", cmd_usage)
     router.priority("/stop", cmd_stop)
+    router.priority("/repl", cmd_repl)
     router.priority("/restart", cmd_restart)
     router.priority("/halt", cmd_halt)
     router.priority("/RIP", cmd_halt)

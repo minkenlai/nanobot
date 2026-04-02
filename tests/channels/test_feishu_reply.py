@@ -1,5 +1,4 @@
 """Tests for Feishu message reply (quote) feature."""
-import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +16,9 @@ except ImportError:
 if not FEISHU_AVAILABLE:
     pytest.skip("Feishu dependencies not installed (lark-oapi)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.feishu import FeishuChannel, FeishuConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -223,8 +221,7 @@ async def test_send_uses_expected_feishu_msg_type_for_uploaded_files(
     ):
         await channel.send(
             OutboundMessage(
-                channel="feishu",
-                chat_id="oc_test",
+                address=Address(channel="feishu", segments=("oc_test",)),
                 content="",
                 media=[str(file_path)],
                 metadata={},
@@ -252,8 +249,7 @@ async def test_send_uses_reply_api_when_configured() -> None:
     channel._client.im.v1.message.reply.return_value = reply_resp
 
     await channel.send(OutboundMessage(
-        channel="feishu",
-        chat_id="oc_abc",
+        address=Address(channel="feishu", segments=("oc_abc",)),
         content="hello",
         metadata={"message_id": "om_001"},
     ))
@@ -271,8 +267,7 @@ async def test_send_uses_create_api_when_reply_disabled() -> None:
     channel._client.im.v1.message.create.return_value = create_resp
 
     await channel.send(OutboundMessage(
-        channel="feishu",
-        chat_id="oc_abc",
+        address=Address(channel="feishu", segments=("oc_abc",)),
         content="hello",
         metadata={"message_id": "om_001"},
     ))
@@ -290,8 +285,7 @@ async def test_send_uses_create_api_when_no_message_id() -> None:
     channel._client.im.v1.message.create.return_value = create_resp
 
     await channel.send(OutboundMessage(
-        channel="feishu",
-        chat_id="oc_abc",
+        address=Address(channel="feishu", segments=("oc_abc",)),
         content="hello",
         metadata={},
     ))
@@ -309,8 +303,7 @@ async def test_send_skips_reply_for_progress_messages() -> None:
     channel._client.im.v1.message.create.return_value = create_resp
 
     await channel.send(OutboundMessage(
-        channel="feishu",
-        chat_id="oc_abc",
+        address=Address(channel="feishu", segments=("oc_abc",)),
         content="thinking...",
         metadata={"message_id": "om_001", "_progress": True},
     ))
@@ -335,8 +328,7 @@ async def test_send_fallback_to_create_when_reply_fails() -> None:
     channel._client.im.v1.message.create.return_value = create_resp
 
     await channel.send(OutboundMessage(
-        channel="feishu",
-        chat_id="oc_abc",
+        address=Address(channel="feishu", segments=("oc_abc",)),
         content="hello",
         metadata={"message_id": "om_001"},
     ))

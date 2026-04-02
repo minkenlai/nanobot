@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nanobot.providers.base import GenerationSettings, LLMResponse
 from nanobot.providers.fallback import FallbackProvider
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -100,16 +100,18 @@ class DiscordChannel(BaseChannel):
             logger.warning("Discord HTTP client not initialized")
             return
 
-        url = f"{DISCORD_API_BASE}/channels/{msg.chat_id}/messages"
+        chat_id = msg.address.segments[0]
+        url = f"{DISCORD_API_BASE}/channels/{chat_id}/messages"
         headers = {"Authorization": f"Bot {self.config.token}"}
 
         try:
             sent_media = False
             failed_media: list[str] = []
+            reply_to = (msg.metadata or {}).get("reply_to")
 
             # Send file attachments first
             for media_path in msg.media or []:
-                if await self._send_file(url, headers, media_path, reply_to=msg.reply_to):
+                if await self._send_file(url, headers, media_path, reply_to=reply_to):
                     sent_media = True
                 else:
                     failed_media.append(Path(media_path).name)
@@ -128,14 +130,14 @@ class DiscordChannel(BaseChannel):
                 payload: dict[str, Any] = {"content": chunk}
 
                 # Let the first successful attachment carry the reply if present.
-                if i == 0 and msg.reply_to and not sent_media:
-                    payload["message_reference"] = {"message_id": msg.reply_to}
+                if i == 0 and reply_to and not sent_media:
+                    payload["message_reference"] = {"message_id": reply_to}
                     payload["allowed_mentions"] = {"replied_user": False}
 
                 if not await self._send_payload(url, headers, payload):
                     break  # Abort remaining chunks on failure
         finally:
-            await self._stop_typing(msg.chat_id)
+            await self._stop_typing(chat_id)
 
     async def _send_payload(
         self, url: str, headers: dict[str, str], payload: dict[str, Any]

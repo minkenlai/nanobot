@@ -359,19 +359,20 @@ class MochatChannel(BaseChannel):
         if not content:
             return
 
-        target = resolve_mochat_target(msg.chat_id)
+        target = resolve_mochat_target(msg.address.segments[0])
         if not target.id:
             logger.warning("Mochat outbound target is empty")
             return
 
         is_panel = (target.is_panel or target.id in self._panel_set) and not target.id.startswith("session_")
         try:
+            reply_to = msg.metadata.get("message_id") if msg.metadata else None
             if is_panel:
                 await self._api_send("/api/claw/groups/panels/send", "panelId", target.id,
-                                     content, msg.reply_to, self._read_group_id(msg.metadata))
+                                     content, reply_to, self._read_group_id(msg.metadata))
             else:
                 await self._api_send("/api/claw/sessions/send", "sessionId", target.id,
-                                     content, msg.reply_to)
+                                     content, reply_to)
         except Exception as e:
             logger.error("Failed to send Mochat message: {}", e)
             raise

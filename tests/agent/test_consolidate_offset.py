@@ -1,10 +1,11 @@
 """Test session management with cache-friendly message handling."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pathlib import Path
+
 from nanobot.session.manager import Session, SessionManager
 
 # Test constants
@@ -488,6 +489,7 @@ class TestNewCommandArchival:
         from nanobot.agent.loop import AgentLoop
         from nanobot.bus.queue import MessageBus
         from nanobot.providers.base import LLMResponse
+        from nanobot.session.manager import SessionManager
 
         bus = MessageBus()
         provider = MagicMock()
@@ -497,6 +499,7 @@ class TestNewCommandArchival:
             bus=bus,
             provider=provider,
             workspace=tmp_path,
+            session_manager=SessionManager(tmp_path),
             model="test-model",
             context_window_tokens=1,
         )
@@ -507,10 +510,11 @@ class TestNewCommandArchival:
     @pytest.mark.asyncio
     async def test_new_clears_session_immediately_even_if_archive_fails(self, tmp_path: Path) -> None:
         """/new clears session immediately; archive_messages retries until raw dump."""
-        from nanobot.bus.events import InboundMessage
+        from nanobot.bus.events import Address, InboundMessage
 
         loop = self._make_loop(tmp_path)
-        session = loop.sessions.get_or_create("cli:test")
+        address = Address(channel="cli", segments=("test",))
+        session = loop.sessions.get_or_create(address.to_uri())
         for i in range(5):
             session.add_message("user", f"msg{i}")
             session.add_message("assistant", f"resp{i}")
@@ -525,13 +529,13 @@ class TestNewCommandArchival:
 
         loop.memory_consolidator.consolidate_messages = _failing_consolidate  # type: ignore[method-assign]
 
-        new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
+        new_msg = InboundMessage(address=address, sender_id="user", content="/new")
         response = await loop._process_message(new_msg)
 
         assert response is not None
         assert "new session started" in response.content.lower()
 
-        session_after = loop.sessions.get_or_create("cli:test")
+        session_after = loop.sessions.get_or_create(address.to_uri())
         assert len(session_after.messages) == 0
 
         await loop.close_mcp()
@@ -539,10 +543,11 @@ class TestNewCommandArchival:
 
     @pytest.mark.asyncio
     async def test_new_archives_only_unconsolidated_messages(self, tmp_path: Path) -> None:
-        from nanobot.bus.events import InboundMessage
+        from nanobot.bus.events import Address, InboundMessage
 
         loop = self._make_loop(tmp_path)
-        session = loop.sessions.get_or_create("cli:test")
+        address = Address(channel="cli", segments=("test",))
+        session = loop.sessions.get_or_create(address.to_uri())
         for i in range(15):
             session.add_message("user", f"msg{i}")
             session.add_message("assistant", f"resp{i}")
@@ -558,7 +563,7 @@ class TestNewCommandArchival:
 
         loop.memory_consolidator.consolidate_messages = _fake_consolidate  # type: ignore[method-assign]
 
-        new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
+        new_msg = InboundMessage(address=address, sender_id="user", content="/new")
         response = await loop._process_message(new_msg)
 
         assert response is not None
@@ -569,10 +574,11 @@ class TestNewCommandArchival:
 
     @pytest.mark.asyncio
     async def test_new_clears_session_and_responds(self, tmp_path: Path) -> None:
-        from nanobot.bus.events import InboundMessage
+        from nanobot.bus.events import Address, InboundMessage
 
         loop = self._make_loop(tmp_path)
-        session = loop.sessions.get_or_create("cli:test")
+        address = Address(channel="cli", segments=("test",))
+        session = loop.sessions.get_or_create(address.to_uri())
         for i in range(3):
             session.add_message("user", f"msg{i}")
             session.add_message("assistant", f"resp{i}")
@@ -583,20 +589,21 @@ class TestNewCommandArchival:
 
         loop.memory_consolidator.consolidate_messages = _ok_consolidate  # type: ignore[method-assign]
 
-        new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
+        new_msg = InboundMessage(address=address, sender_id="user", content="/new")
         response = await loop._process_message(new_msg)
 
         assert response is not None
         assert "new session started" in response.content.lower()
-        assert loop.sessions.get_or_create("cli:test").messages == []
+        assert loop.sessions.get_or_create(address.to_uri()).messages == []
 
     @pytest.mark.asyncio
     async def test_close_mcp_drains_background_tasks(self, tmp_path: Path) -> None:
         """close_mcp waits for background tasks to complete."""
-        from nanobot.bus.events import InboundMessage
+        from nanobot.bus.events import Address, InboundMessage
 
         loop = self._make_loop(tmp_path)
-        session = loop.sessions.get_or_create("cli:test")
+        address = Address(channel="cli", segments=("test",))
+        session = loop.sessions.get_or_create(address.to_uri())
         for i in range(3):
             session.add_message("user", f"msg{i}")
             session.add_message("assistant", f"resp{i}")
@@ -611,7 +618,7 @@ class TestNewCommandArchival:
 
         loop.memory_consolidator.consolidate_messages = _slow_consolidate  # type: ignore[method-assign]
 
-        new_msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/new")
+        new_msg = InboundMessage(address=address, sender_id="user", content="/new")
         await loop._process_message(new_msg)
 
         assert not archived.is_set()

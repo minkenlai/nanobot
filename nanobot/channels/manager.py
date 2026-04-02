@@ -195,7 +195,7 @@ class ChannelManager:
     async def _send_once(channel: BaseChannel, msg: OutboundMessage) -> None:
         """Send one outbound message without retry policy."""
         if msg.metadata.get("_stream_delta") or msg.metadata.get("_stream_end"):
-            await channel.send_delta(msg.chat_id, msg.content, msg.metadata)
+            await channel.send_delta(msg)
         elif not msg.metadata.get("_streamed"):
             await channel.send(msg)
 

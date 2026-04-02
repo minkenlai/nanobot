@@ -11,14 +11,14 @@ except ImportError:
     pytest.skip("Matrix dependencies not installed (nh3)", allow_module_level=True)
 
 import nanobot.channels.matrix as matrix_module
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.matrix import (
     MATRIX_HTML_FORMAT,
     TYPING_NOTICE_TIMEOUT_MS,
     MatrixChannel,
+    MatrixConfig,
 )
-from nanobot.channels.matrix import MatrixConfig
 
 _ROOM_SEND_UNSET = object()
 
@@ -861,7 +861,7 @@ async def test_send_clears_typing_after_send() -> None:
     channel.client = client
 
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content="Hi")
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content="Hi")
     )
 
     assert len(client.room_send_calls) == 1
@@ -885,9 +885,8 @@ async def test_send_uploads_media_and_sends_file_event(tmp_path) -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content="Please review.",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content="Please review.",
             media=[str(file_path)],
         )
     )
@@ -915,9 +914,8 @@ async def test_send_adds_thread_relates_to_for_thread_metadata() -> None:
     }
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content="Hi",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content="Hi",
             metadata=metadata,
         )
     )
@@ -943,9 +941,8 @@ async def test_send_uses_encrypted_media_payload_in_encrypted_room(tmp_path) -> 
 
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!encrypted:matrix.org",
-            content="",
+        address=Address(channel="matrix", segments=("!encrypted:matrix.org",)),
+        content="",
             media=[str(file_path)],
         )
     )
@@ -970,9 +967,8 @@ async def test_send_does_not_parse_attachment_marker_without_media(tmp_path) -> 
     missing_path = tmp_path / "missing.txt"
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content=f"[attachment: {missing_path}]",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content=f"[attachment: {missing_path}]",
         )
     )
 
@@ -1009,9 +1005,8 @@ async def test_send_passes_thread_relates_to_to_attachment_upload(monkeypatch) -
     }
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content="Hi",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content="Hi",
             media=["/tmp/fake.txt"],
             metadata=metadata,
         )
@@ -1043,9 +1038,8 @@ async def test_send_workspace_restriction_blocks_external_attachment(tmp_path) -
 
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content="",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content="",
             media=[str(file_path)],
         )
     )
@@ -1067,9 +1061,8 @@ async def test_send_handles_upload_exception_and_reports_failure(tmp_path) -> No
 
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content="Please review.",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content="Please review.",
             media=[str(file_path)],
         )
     )
@@ -1094,9 +1087,8 @@ async def test_send_uses_server_upload_limit_when_smaller_than_local_limit(tmp_p
 
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content="",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content="",
             media=[str(file_path)],
         )
     )
@@ -1117,9 +1109,8 @@ async def test_send_blocks_all_outbound_media_when_limit_is_zero(tmp_path) -> No
 
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content="",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content="",
             media=[str(file_path)],
         )
     )
@@ -1136,7 +1127,7 @@ async def test_send_omits_ignore_unverified_devices_when_e2ee_disabled() -> None
     channel.client = client
 
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content="Hi")
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content="Hi")
     )
 
     assert len(client.room_send_calls) == 1
@@ -1154,7 +1145,7 @@ async def test_send_stops_typing_keepalive_task() -> None:
     assert "!room:matrix.org" in channel._typing_tasks
 
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content="Hi")
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content="Hi")
     )
 
     assert "!room:matrix.org" not in channel._typing_tasks
@@ -1173,9 +1164,8 @@ async def test_send_progress_keeps_typing_keepalive_running() -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="matrix",
-            chat_id="!room:matrix.org",
-            content="working...",
+        address=Address(channel="matrix", segments=("!room:matrix.org",)),
+        content="working...",
             metadata={"_progress": True, "_progress_kind": "reasoning"},
         )
     )
@@ -1195,7 +1185,7 @@ async def test_send_clears_typing_when_send_fails() -> None:
 
     with pytest.raises(RuntimeError, match="send failed"):
         await channel.send(
-            OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content="Hi")
+            OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content="Hi")
         )
 
     assert client.typing_calls[-1] == ("!room:matrix.org", False, TYPING_NOTICE_TIMEOUT_MS)
@@ -1209,7 +1199,7 @@ async def test_send_adds_formatted_body_for_markdown() -> None:
 
     markdown_text = "# Headline\n\n- [x] done\n\n| A | B |\n| - | - |\n| 1 | 2 |"
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content=markdown_text)
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content=markdown_text)
     )
 
     content = client.room_send_calls[0]["content"]
@@ -1230,7 +1220,7 @@ async def test_send_adds_formatted_body_for_inline_url_superscript_subscript() -
 
     markdown_text = "Visit https://example.com and x^2^ plus H~2~O."
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content=markdown_text)
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content=markdown_text)
     )
 
     content = client.room_send_calls[0]["content"]
@@ -1253,7 +1243,7 @@ async def test_send_sanitizes_disallowed_link_scheme() -> None:
 
     markdown_text = "[click](javascript:alert(1))"
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content=markdown_text)
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content=markdown_text)
     )
 
     formatted_body = str(client.room_send_calls[0]["content"]["formatted_body"])
@@ -1279,7 +1269,7 @@ async def test_send_keeps_only_mxc_image_sources() -> None:
 
     markdown_text = "![ok](mxc://example.org/mediaid) ![no](https://example.com/a.png)"
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content=markdown_text)
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content=markdown_text)
     )
 
     formatted_body = str(client.room_send_calls[0]["content"]["formatted_body"])
@@ -1299,7 +1289,7 @@ async def test_send_falls_back_to_plaintext_when_markdown_render_fails(monkeypat
     monkeypatch.setattr(matrix_module, "MATRIX_MARKDOWN", _raise)
     markdown_text = "# Headline"
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content=markdown_text)
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content=markdown_text)
     )
 
     content = client.room_send_calls[0]["content"]
@@ -1314,7 +1304,7 @@ async def test_send_keeps_plaintext_only_for_plain_text() -> None:
 
     text = "just a normal sentence without markdown markers"
     await channel.send(
-        OutboundMessage(channel="matrix", chat_id="!room:matrix.org", content=text)
+        OutboundMessage(address=Address(channel="matrix", segments=("!room:matrix.org",)), content=text)
     )
 
     assert client.room_send_calls[0]["content"] == {

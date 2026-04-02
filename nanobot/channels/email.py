@@ -174,7 +174,7 @@ class EmailChannel(BaseChannel):
             logger.warning("Email channel SMTP host not configured")
             return
 
-        to_addr = msg.chat_id.strip()
+        to_addr = msg.address.segments[0].strip()
         if not to_addr:
             logger.warning("Email channel missing recipient address")
             return

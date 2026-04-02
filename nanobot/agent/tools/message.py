@@ -84,7 +84,7 @@ class MessageTool(Tool):
         address = self._default_address
         if channel and chat_id:
             address = Address(channel=channel, segments=(str(chat_id),))
-        
+
         message_id = message_id or self._default_message_id
 
         if not address:

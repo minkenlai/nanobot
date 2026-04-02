@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.channels.whatsapp import WhatsAppChannel
 
 
@@ -20,7 +20,7 @@ def _make_channel() -> WhatsAppChannel:
 @pytest.mark.asyncio
 async def test_send_text_only():
     ch = _make_channel()
-    msg = OutboundMessage(channel="whatsapp", chat_id="123@s.whatsapp.net", content="hello")
+    msg = OutboundMessage(address=Address(channel="whatsapp", segments=("123@s.whatsapp.net",)), content="hello")
 
     await ch.send(msg)
 
@@ -34,8 +34,7 @@ async def test_send_text_only():
 async def test_send_media_dispatches_send_media_command():
     ch = _make_channel()
     msg = OutboundMessage(
-        channel="whatsapp",
-        chat_id="123@s.whatsapp.net",
+        address=Address(channel="whatsapp", segments=("123@s.whatsapp.net",)),
         content="check this out",
         media=["/tmp/photo.jpg"],
     )
@@ -59,8 +58,7 @@ async def test_send_media_dispatches_send_media_command():
 async def test_send_media_only_no_text():
     ch = _make_channel()
     msg = OutboundMessage(
-        channel="whatsapp",
-        chat_id="123@s.whatsapp.net",
+        address=Address(channel="whatsapp", segments=("123@s.whatsapp.net",)),
         content="",
         media=["/tmp/doc.pdf"],
     )
@@ -77,8 +75,7 @@ async def test_send_media_only_no_text():
 async def test_send_multiple_media():
     ch = _make_channel()
     msg = OutboundMessage(
-        channel="whatsapp",
-        chat_id="123@s.whatsapp.net",
+        address=Address(channel="whatsapp", segments=("123@s.whatsapp.net",)),
         content="",
         media=["/tmp/a.png", "/tmp/b.mp4"],
     )
@@ -98,8 +95,7 @@ async def test_send_when_disconnected_is_noop():
     ch._connected = False
 
     msg = OutboundMessage(
-        channel="whatsapp",
-        chat_id="123@s.whatsapp.net",
+        address=Address(channel="whatsapp", segments=("123@s.whatsapp.net",)),
         content="hello",
         media=["/tmp/x.jpg"],
     )

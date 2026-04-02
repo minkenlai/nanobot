@@ -8,10 +8,9 @@ try:
 except ImportError:
     pytest.skip("Slack dependencies not installed (slack-sdk)", allow_module_level=True)
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.channels.slack import SlackChannel
-from nanobot.channels.slack import SlackConfig
+from nanobot.channels.slack import SlackChannel, SlackConfig
 
 
 class _FakeAsyncWebClient:
@@ -90,8 +89,7 @@ async def test_send_uses_thread_for_channel_messages() -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="slack",
-            chat_id="C123",
+            address=Address(channel="slack", segments=("C123", "1700000000.000100")),
             content="hello",
             media=["/tmp/demo.txt"],
             metadata={"slack": {"thread_ts": "1700000000.000100", "channel_type": "channel"}},
@@ -113,8 +111,7 @@ async def test_send_omits_thread_for_dm_messages() -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="slack",
-            chat_id="D123",
+            address=Address(channel="slack", segments=("D123",)),
             content="hello",
             media=["/tmp/demo.txt"],
             metadata={"slack": {"thread_ts": "1700000000.000100", "channel_type": "im"}},
@@ -136,8 +133,7 @@ async def test_send_updates_reaction_when_final_response_sent() -> None:
 
     await channel.send(
         OutboundMessage(
-            channel="slack",
-            chat_id="C123",
+            address=Address(channel="slack", segments=("C123", "1700000000.000100")),
             content="done",
             metadata={
                 "slack": {"event": {"ts": "1700000000.000100"}, "channel_type": "channel"},
