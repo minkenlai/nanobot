@@ -5,7 +5,8 @@ from pathlib import Path
 
 
 def run_catchup():
-    jobs_file = Path('/home/mklai/.nanobot/workspace/cron/jobs.json')
+    # Use relative path for portability
+    jobs_file = Path("cron/jobs.json")
     if not jobs_file.exists():
         print("No jobs.json found.")
         return
@@ -64,22 +65,12 @@ def run_catchup():
             "id": str(uuid.uuid4())[:8],
             "name": "Missed Reminders Summary",
             "enabled": True,
-            "schedule": {
-                "kind": "at",
-                "atMs": now_ms
-            },
-            "payload": {
-                "kind": "agent_turn",
-                "message": summary_message,
-                "deliver": True
-            },
-            "state": {
-                "nextRunAtMs": now_ms,
-                "runHistory": []
-            },
+            "schedule": {"kind": "at", "atMs": now_ms},
+            "payload": {"kind": "agent_turn", "message": summary_message, "deliver": True},
+            "state": {"nextRunAtMs": now_ms, "runHistory": []},
             "createdAtMs": now_ms,
             "updatedAtMs": now_ms,
-            "deleteAfterRun": True
+            "deleteAfterRun": True,
         }
         data["jobs"].append(summary_job)
     else:
@@ -98,6 +89,7 @@ def run_catchup():
     # Save updated jobs
     jobs_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     print("Successfully updated jobs.json with anacron catch-up.")
+
 
 if __name__ == "__main__":
     run_catchup()
