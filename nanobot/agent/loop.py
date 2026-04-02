@@ -824,11 +824,9 @@ class AgentLoop:
             else:
                 address = Address.from_uri(session_key)
 
-        from nanobot.utils.helpers import get_cli_username
-
         msg = InboundMessage(
             address=address,
-            sender_id=get_cli_username(),
+            sender_id="user",
             content=content,
         )
         return await self._process_message(

@@ -9,9 +9,9 @@ from nanobot.command.router import CommandContext
 
 
 @pytest.mark.asyncio
-async def test_repl_disabled_by_default():
+async def test_repl_disabled_by_default_if_allow_users_empty():
     loop = MagicMock()
-    loop.config.repl.enable = False
+    loop.config.repl.allow_users = []
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),
         sender_id="u1",
@@ -20,14 +20,13 @@ async def test_repl_disabled_by_default():
     ctx = CommandContext(msg=msg, session=None, key="test:c1", raw="1 + 1", loop=loop)
 
     resp = await cmd_repl(ctx)
-    assert "REPL is disabled" in resp.content
+    assert "Access Denied" in resp.content
 
 
 @pytest.mark.asyncio
 async def test_repl_user_acl_denied():
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = ["tg:boss"]
+    loop.config.repl.allow_users = ["tg:boss", "cli:user"]
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),
         sender_id="intruder",
@@ -40,17 +39,16 @@ async def test_repl_user_acl_denied():
 
 
 @pytest.mark.asyncio
-async def test_repl_user_acl_allowed():
+async def test_repl_user_acl_allowed_cli_default():
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = ["test:boss"]
+    loop.config.repl.allow_users = ["cli:user"]
     loop.workspace = Path("/tmp")
     msg = InboundMessage(
-        address=Address(channel="test", segments=("c1",)),
-        sender_id="boss",
+        address=Address(channel="cli", segments=("direct",)),
+        sender_id="user",
         content="/repl 1 + 1",
     )
-    ctx = CommandContext(msg=msg, session=None, key="test:c1", raw="1 + 1", loop=loop)
+    ctx = CommandContext(msg=msg, session=None, key="cli:direct", raw="1 + 1", loop=loop)
 
     resp = await cmd_repl(ctx)
     assert "2" in resp.content
@@ -59,8 +57,7 @@ async def test_repl_user_acl_allowed():
 @pytest.mark.asyncio
 async def test_repl_eval_expression():
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = []
+    loop.config.repl.allow_users = ["test:u1"]
     loop.workspace = Path("/tmp")
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),
@@ -77,8 +74,7 @@ async def test_repl_eval_expression():
 @pytest.mark.asyncio
 async def test_repl_exec_statement():
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = []
+    loop.config.repl.allow_users = ["test:u1"]
     loop.workspace = Path("/tmp")
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),
@@ -94,8 +90,7 @@ async def test_repl_exec_statement():
 @pytest.mark.asyncio
 async def test_repl_stdout_capture():
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = []
+    loop.config.repl.allow_users = ["test:u1"]
     loop.workspace = Path("/tmp")
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),
@@ -114,8 +109,7 @@ async def test_repl_stdout_capture():
 @pytest.mark.asyncio
 async def test_repl_exec_with_result_variable():
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = []
+    loop.config.repl.allow_users = ["test:u1"]
     loop.workspace = Path("/tmp")
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),
@@ -131,8 +125,7 @@ async def test_repl_exec_with_result_variable():
 @pytest.mark.asyncio
 async def test_repl_async_code():
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = []
+    loop.config.repl.allow_users = ["test:u1"]
     loop.workspace = Path("/tmp")
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),
@@ -148,8 +141,7 @@ async def test_repl_async_code():
 @pytest.mark.asyncio
 async def test_repl_exception_handling():
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = []
+    loop.config.repl.allow_users = ["test:u1"]
     loop.workspace = Path("/tmp")
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),
@@ -165,8 +157,7 @@ async def test_repl_exception_handling():
 @pytest.mark.asyncio
 async def test_repl_logging(tmp_path):
     loop = MagicMock()
-    loop.config.repl.enable = True
-    loop.config.repl.allow_users = []
+    loop.config.repl.allow_users = ["test:u1"]
     loop.workspace = tmp_path
     msg = InboundMessage(
         address=Address(channel="test", segments=("c1",)),

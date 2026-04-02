@@ -278,14 +278,6 @@ def build_status_content(
     )
 
 
-def get_cli_username() -> str:
-    """Determine the current OS user, allowing environment override."""
-    import getpass
-    import os
-
-    return os.environ.get("NANOBOT_CLI_USER") or getpass.getuser()
-
-
 def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
     """Sync bundled templates to workspace. Only creates missing files."""
     from importlib.resources import files as pkg_files

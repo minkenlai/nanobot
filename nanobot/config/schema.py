@@ -89,8 +89,9 @@ class AgentsConfig(Base):
 class ReplConfig(Base):
     """Configuration for /repl command."""
 
-    enable: bool = False
-    allow_users: list[str] = Field(default_factory=list)  # ["tg:user_id", "cli:username"]
+    allow_users: list[str] = Field(
+        default_factory=lambda: ["cli:user"]
+    )  # ["tg:user_id", "cli:user"]
 
 
 class ProviderConfig(Base):

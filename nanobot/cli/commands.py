@@ -36,7 +36,7 @@ from nanobot.bus.events import Address, OutboundMessage
 from nanobot.cli.stream import StreamRenderer, ThinkingSpinner
 from nanobot.config.paths import get_workspace_path, is_default_workspace
 from nanobot.config.schema import Config
-from nanobot.utils.helpers import get_cli_username, sync_workspace_templates
+from nanobot.utils.helpers import sync_workspace_templates
 
 app = typer.Typer(
     name="nanobot",
@@ -917,7 +917,7 @@ def agent(
                         await bus.publish_inbound(
                             InboundMessage(
                                 address=address,
-                                sender_id=get_cli_username(),
+                                sender_id="user",
                                 content=user_input,
                                 metadata={"_wants_stream": True},
                             )
