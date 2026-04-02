@@ -33,8 +33,11 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
 
 async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     """Show system status and version."""
+    import time
+
     msg = ctx.msg
     loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
 
     # Get version/commit info if possible
     sha = "unknown"
@@ -59,11 +62,43 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     else:
         status += " (Manual)"
 
+    # Uptime
+    uptime_s = int(time.time() - getattr(loop, "_start_time", time.time()))
+    uptime_str = f"{uptime_s // 60}m {uptime_s % 60}s"
+
+    # Tokens
+    usage = loop.get_usage(msg.session_key)
+
+    # Context Estimation
+    try:
+        context_tokens, _ = loop.memory_consolidator.estimate_session_prompt_tokens(session)
+        # Assuming a default window for the stat
+        window = getattr(loop, "context_window_tokens", 64000)
+        pct = int(context_tokens / window * 100) if window else 0
+        context_str = f"{context_tokens // 1000}k/{window // 1000}k ({pct}%)"
+    except Exception:
+        context_str = "unknown"
+
+    # Tasks
+    running_tasks = getattr(loop.subagents, "get_running_count", lambda: 0)()
+
     content = f"**System Status:** {status}\n"
     content += f"**Branch:** `{branch}`\n"
     content += f"**Commit:** `{sha}`\n"
-    content += f"**PID:** `{os.getpid()}`"
-    return OutboundMessage(address=msg.address, content=content)
+    content += f"**PID:** `{os.getpid()}`\n\n"
+
+    model = getattr(loop.provider, "get_default_model", lambda: "unknown")()
+    content += f"**Model:** `{model}`\n"
+    content += (
+        f"**Tokens:** {usage.get('input_tokens', 0):,} in / {usage.get('output_tokens', 0):,} out\n"
+    )
+    content += f"**Context:** {context_str}\n"
+    content += f"**Session:** {len(session.messages)} messages\n"
+    content += f"**Tasks:** {running_tasks} active\n"
+    content += f"**Uptime:** {uptime_str}"
+
+    # Render as text so it looks nice
+    return OutboundMessage(address=msg.address, content=content, metadata={"render_as": "text"})
 
 
 async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
@@ -146,18 +181,6 @@ async def cmd_halt(ctx: CommandContext) -> OutboundMessage:
     return OutboundMessage(address=msg.address, content="👋 Goodbye! Halting...")
 
 
-async def cmd_usage(ctx: CommandContext) -> OutboundMessage:
-    """Show usage statistics for the current session."""
-    msg = ctx.msg
-    loop = ctx.loop
-    usage = loop.get_usage(msg.session_key)
-    content = "**Token Usage (Session):**\n"
-    content += f"- Input: {usage.get('input_tokens', 0):,}\n"
-    content += f"- Output: {usage.get('output_tokens', 0):,}\n"
-    content += f"- Total: {usage.get('total_tokens', 0):,}"
-    return OutboundMessage(address=msg.address, content=content)
-
-
 async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     """Start a fresh session."""
     loop = ctx.loop
@@ -172,28 +195,6 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
         address=ctx.msg.address,
         content="New session started.",
     )
-
-
-async def cmd_tasks(ctx: CommandContext) -> OutboundMessage:
-    """List current and recent background tasks."""
-    msg = ctx.msg
-    loop = ctx.loop
-    records = loop.subagents.get_all_records()
-
-    if not records:
-        return OutboundMessage(address=msg.address, content="No background tasks found.")
-
-    content = "**Background Tasks (Recent):**\n\n"
-    for r in records[:10]:  # Show last 10
-        status_emoji = {"running": "⚙️", "done": "✅", "error": "❌"}.get(r.status, "❓")
-        started = r.started_at.strftime("%H:%M:%S")
-        content += f"{status_emoji} **{r.label}** (`{r.task_id}`)\n"
-        content += f"  - Status: {r.status} (Started: {started})\n"
-        if r.result_summary:
-            content += f"  - Result: {r.result_summary}\n"
-        content += "\n"
-
-    return OutboundMessage(address=msg.address, content=content)
 
 
 async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
@@ -262,8 +263,6 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/new", cmd_new)
     router.exact("/help", cmd_help)
     router.exact("/status", cmd_status)
-    router.exact("/tasks", cmd_tasks)
-    router.exact("/usage", cmd_usage)
     router.priority("/stop", cmd_stop)
     router.priority("/repl", cmd_repl)
     router.priority("/restart", cmd_restart)

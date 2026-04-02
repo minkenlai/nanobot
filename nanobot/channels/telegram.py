@@ -204,9 +204,7 @@ class TelegramChannel(BaseChannel):
         BotCommand("stop", "Cancel active tasks in this session"),
         BotCommand("help", "Show available commands"),
         BotCommand("restart", "Refresh code in-place"),
-        BotCommand("status", "Show bot status"),
-        BotCommand("tasks", "List background tasks"),
-        BotCommand("usage", "Show token usage"),
+        BotCommand("status", "Show system status and usage"),
     ]
 
     @classmethod
@@ -295,8 +293,6 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("stop", self._forward_command))
         self._app.add_handler(CommandHandler("restart", self._forward_command))
         self._app.add_handler(CommandHandler("status", self._forward_command))
-        self._app.add_handler(CommandHandler("tasks", self._forward_command))
-        self._app.add_handler(CommandHandler("usage", self._forward_command))
         self._app.add_handler(CommandHandler("halt", self._forward_command))
         self._app.add_handler(CommandHandler("RIP", self._forward_command))
         self._app.add_handler(CommandHandler("help", self._forward_command))
@@ -713,9 +709,9 @@ class TelegramChannel(BaseChannel):
         await update.message.reply_text(
             "🐈 nanobot commands:\n"
             "/new — Start a new conversation\n"
-            "/stop — Stop the current task\n"
+            "/stop — Stop current tasks\n"
             "/restart — Restart the bot\n"
-            "/status — Show bot status\n"
+            "/status — Show system status and usage\n"
             "/help — Show available commands"
         )
 

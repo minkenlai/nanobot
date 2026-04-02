@@ -49,25 +49,37 @@ async def test_restart_command_parsing():
     )
     ctx = CommandContext(msg=msg, loop=mock_loop, raw="/restart", key="test", session=None)
 
-    with patch("nanobot.command.builtin.asyncio.create_task"):
+    with patch(
+        "nanobot.command.builtin.asyncio.create_task",
+        side_effect=lambda coro: coro.close() or MagicMock(),
+    ):
         resp = await cmd_restart(ctx)
         assert "in-place" in resp.content.lower()
 
     # 2. Full restart flag
     ctx.raw = "/restart --full"
-    with patch("nanobot.command.builtin.asyncio.create_task"):
+    with patch(
+        "nanobot.command.builtin.asyncio.create_task",
+        side_effect=lambda coro: coro.close() or MagicMock(),
+    ):
         resp = await cmd_restart(ctx)
         assert "full" in resp.content.lower()
 
     # 3. Short flag
     ctx.raw = "/restart -f"
-    with patch("nanobot.command.builtin.asyncio.create_task"):
+    with patch(
+        "nanobot.command.builtin.asyncio.create_task",
+        side_effect=lambda coro: coro.close() or MagicMock(),
+    ):
         resp = await cmd_restart(ctx)
         assert "full" in resp.content.lower()
 
     # 4. The "have-fun!" bug fix check
     ctx.raw = "/restart have-fun!"
-    with patch("nanobot.command.builtin.asyncio.create_task"):
+    with patch(
+        "nanobot.command.builtin.asyncio.create_task",
+        side_effect=lambda coro: coro.close() or MagicMock(),
+    ):
         resp = await cmd_restart(ctx)
         assert "in-place" in resp.content.lower()
         assert "full" not in resp.content.lower()

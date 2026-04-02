@@ -120,7 +120,13 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:.*datetime.datetime.utcfromtimestamp\\(\\) is deprecated.*:DeprecationWarning:lark_oapi.*",
+    "ignore:.*websockets\\.legacy is deprecated.*:DeprecationWarning:lark_oapi.*",
+    "ignore:.*unclosed.*:ResourceWarning",
+]
 
 [tool.coverage.run]
 source = ["nanobot"]

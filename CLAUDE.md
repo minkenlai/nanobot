@@ -33,7 +33,7 @@ ruff format nanobot/
 Chat Channel → MessageBus → AgentLoop → LLMProvider → ToolRegistry → MessageBus → Chat Channel
 ```
 
-`AgentLoop` (`nanobot/agent/loop.py`) is the core orchestrator. After each turn, `MemoryConsolidator` summarizes to `MEMORY.md` / `HISTORY.md` in the agent's workspace.
+Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (channel name + path segments). `BaseChannel.send_delta` accepts a full `OutboundMessage`. `AgentLoop` (`nanobot/agent/loop.py`) is the core orchestrator. After each turn, `MemoryConsolidator` summarizes to `MEMORY.md` / `HISTORY.md` in the agent's workspace.
 
 ### Key Packages
 
@@ -60,6 +60,10 @@ Three backend implementations: `AnthropicProvider`, `OpenAICompatProvider` (cove
 
 `nanobot/agent/tools/registry.py` holds `ToolRegistry`. Built-in tools: file operations, shell exec, web search/fetch, message sending, subagent spawn, cron scheduling, and MCP. File/shell tools respect `restrictToWorkspace` config to sandbox access.
 
+### Subagent System
+
+The `SubagentManager` (`nanobot/agent/subagent.py`) handles background task execution. Subagents are spawned via the `spawn` tool and run in a separate `AgentRunner` instance. They automatically inherit the workspace context (`SOUL.md`, `USER.md`, `SUBAGENT.md`) and report back to the main agent through the `MessageBus` upon completion.
+
 ### Memory System
 
 Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped searchable log). `MemoryConsolidator` calls the LLM after each agent turn to extract and update both files. Messages are never modified after writing (cache-friendly for Anthropic prompt caching).
@@ -67,6 +71,10 @@ Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped 
 ### Skill System
 
 `SkillsLoader` scans `~/.nanobot/workspace/skills/` for directories containing `SKILL.md`. Some skills are `always_skills` (always loaded into context); others are on-demand. Bundled skills live in `nanobot/skills/`.
+
+### Command System
+
+Built-in slash commands are registered in `nanobot/command/builtin.py`. The `/status` command is a consolidated dashboard providing system uptime, token usage, context estimation, and active background tasks. Commands like `/new`, `/repl`, and `/restart` manage session lifecycle and development operations.
 
 ## Configuration
 

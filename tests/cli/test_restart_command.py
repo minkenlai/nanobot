@@ -86,3 +86,42 @@ class TestRestartCommand:
 
         await loop._run_agent_loop([], address=Address(channel="cli", segments=("direct",)))
         assert loop._last_usage == {"prompt_tokens": 0, "completion_tokens": 0}
+
+    @pytest.mark.asyncio
+    async def test_status_reports_runtime_info(self):
+        import time
+
+        from nanobot.command.builtin import cmd_status
+        from nanobot.command.router import CommandContext
+
+        loop, _bus = _make_loop()
+        session = MagicMock()
+        session.messages = [{"role": "user"}] * 3
+        loop.sessions.get_or_create.return_value = session
+        loop._start_time = time.time() - 125
+        loop.provider.get_default_model = lambda: "test-model"
+        loop.subagents.get_running_count = lambda: 0
+        loop.get_usage = MagicMock(return_value={"input_tokens": 100, "output_tokens": 50})
+        loop.memory_consolidator.estimate_session_prompt_tokens = MagicMock(
+            return_value=(20500, "tiktoken")
+        )
+
+        msg = InboundMessage(
+            address=Address(channel="telegram", segments=("c1",)),
+            sender_id="u1",
+            content="/status",
+        )
+        ctx = CommandContext(
+            msg=msg, session=session, key=msg.session_key, raw="/status", loop=loop
+        )
+
+        response = await cmd_status(ctx)
+
+        assert response is not None
+        assert "System Status" in response.content
+        assert "**Model:** `test-model`" in response.content
+        assert "Tokens:** 100 in / 50 out" in response.content
+        assert "Context:** 20k/65k (31%)" in response.content
+        assert "Session:** 3 messages" in response.content
+        assert "Uptime:** 2m 5s" in response.content
+        assert response.metadata == {"render_as": "text"}
