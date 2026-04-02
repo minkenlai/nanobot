@@ -23,8 +23,10 @@ class TaskStatusTool(Tool):
         return (
             "Query the status of spawned background subagent tasks. "
             "Returns a summary table of all running and recently completed tasks, "
-            "including task ID, label, status, duration, and a brief result snippet. "
-            "Use when the user asks about task progress, what's running, or what completed."
+            "including task ID, label, status, duration, result snippet, and log file path. "
+            "Use when the user asks about task progress, what's running, or what completed. "
+            "If a task failed or seems incomplete, you can use 'read_file' on its log file "
+            "to understand the detailed execution history and decide on follow-up actions."
         )
 
     @property
@@ -51,8 +53,10 @@ class TaskStatusTool(Tool):
             if not records:
                 return f"No task found with ID '{task_id}'."
 
-        lines = ["| ID | Label | Status | Duration | Result |",
-                 "|----|-------|--------|----------|--------|"]
+        lines = [
+            "| ID | Label | Status | Duration | Log | Result |",
+            "|----|-------|--------|----------|-----|--------|",
+        ]
 
         for r in records:
             status_icon = {"running": "⏳", "done": "✅", "error": "❌"}.get(r.status, "?")
@@ -63,15 +67,20 @@ class TaskStatusTool(Tool):
                 duration = f"{secs}s"
             else:
                 from datetime import datetime, timezone
+
                 secs = int((datetime.now(timezone.utc) - r.started_at).total_seconds())
                 duration = f"{secs}s (running)"
 
             snippet = r.result_summary or "—"
             # Escape pipes in snippet so table doesn't break
             snippet = snippet.replace("|", "\\|").replace("\n", " ")
-            if len(snippet) > 80:
-                snippet = snippet[:77] + "…"
+            if len(snippet) > 60:
+                snippet = snippet[:57] + "…"
 
-            lines.append(f"| {r.task_id} | {r.label} | {status_str} | {duration} | {snippet} |")
+            log_path = f"logs/task-{r.task_id}.log"
+
+            lines.append(
+                f"| {r.task_id} | {r.label} | {status_str} | {duration} | `{log_path}` | {snippet} |"
+            )
 
         return "\n".join(lines)

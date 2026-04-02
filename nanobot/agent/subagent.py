@@ -154,6 +154,28 @@ class SubagentManager:
             target_model,
         )
 
+        log_file = self.workspace / "logs" / f"task-{task_id}.log"
+        try:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            with log_file.open("w", encoding="utf-8") as f:
+                f.write(f"Task ID: {task_id}\n")
+                f.write(f"Label: {label}\n")
+                f.write(f"Agent: {agent_name}\n")
+                f.write(f"Model: {target_model}\n")
+                f.write(f"Started: {datetime.now(timezone.utc).isoformat()}\n")
+                f.write("-" * 40 + "\n")
+                f.write(f"Task:\n{task}\n")
+                f.write("-" * 40 + "\n\n")
+        except Exception as e:
+            logger.warning("Failed to initialize task log {}: {}", log_file, e)
+
+        def _log_to_file(content: str):
+            try:
+                with log_file.open("a", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception:
+                pass
+
         try:
             # Build subagent tools (no message tool, no spawn tool)
             tools = ToolRegistry()
@@ -184,6 +206,8 @@ class SubagentManager:
                 {"role": "user", "content": task},
             ]
 
+            _log_to_file(f"System Prompt:\n{system_prompt}\n" + "=" * 40 + "\n\n")
+
             class _SubagentHook(AgentHook):
                 async def before_execute_tools(self, context: AgentHookContext) -> None:
                     for tool_call in context.tool_calls:
@@ -194,6 +218,15 @@ class SubagentManager:
                             tool_call.name,
                             args_str,
                         )
+                        _log_to_file(f"🛠️ CALL: {tool_call.name}({args_str})\n")
+
+                async def after_iteration(self, context: AgentHookContext) -> None:
+                    if context.tool_results:
+                        for result in context.tool_results:
+                            truncated_result = str(result)[:1000] + (
+                                "..." if len(str(result)) > 1000 else ""
+                            )
+                            _log_to_file(f"✅ RESULT: {truncated_result}\n\n")
 
             runner = AgentRunner(provider)
             result = await runner.run(
@@ -208,35 +241,43 @@ class SubagentManager:
                     fail_on_tool_error=False,
                 )
             )
+
             if result.stop_reason == "tool_error":
+                formatted_partial = self._format_partial_progress(result)
+                _log_to_file(f"❌ STOP: tool_error\n{formatted_partial}\n")
                 await self._announce_result(
                     task_id,
                     label,
                     task,
-                    self._format_partial_progress(result),
+                    formatted_partial,
                     origin,
                     "error",
                 )
                 return
             if result.stop_reason == "error":
+                err = result.error or "Error: subagent execution failed."
+                _log_to_file(f"❌ STOP: error\n{err}\n")
                 await self._announce_result(
                     task_id,
                     label,
                     task,
-                    result.error or "Error: subagent execution failed.",
+                    err,
                     origin,
                     "error",
                 )
                 return
+
             final_result = (
                 result.final_content or "Task completed but no final response was generated."
             )
 
+            _log_to_file(f"🏁 DONE: {final_result}\n")
             logger.info("Subagent [{}] completed successfully", task_id)
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
 
         except Exception as e:
             error_msg = f"Error: {str(e)}"
+            _log_to_file(f"💥 CRASH: {error_msg}\n")
             logger.error("Subagent [{}] failed: {}", task_id, e)
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
 
@@ -288,9 +329,7 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
         )
 
         await self.bus.publish_inbound(msg)
-        logger.debug(
-            "Subagent [{}] announced result to {}", task_id, origin
-        )
+        logger.debug("Subagent [{}] announced result to {}", task_id, origin)
 
     @staticmethod
     def _format_partial_progress(result) -> str:
