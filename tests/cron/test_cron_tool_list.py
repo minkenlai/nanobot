@@ -297,3 +297,14 @@ def test_list_excludes_disabled_jobs(tmp_path) -> None:
     result = tool._list_jobs()
     assert "Paused job" not in result
     assert result == "No scheduled jobs."
+
+
+def test_set_context_with_address(tmp_path) -> None:
+    from nanobot.bus.events import Address
+
+    tool = _make_tool(tmp_path)
+    addr = Address(channel="tg", segments=("12345", "678"))
+    tool.set_context(addr)
+
+    assert tool._channel == "tg"
+    assert tool._chat_id == "12345"
