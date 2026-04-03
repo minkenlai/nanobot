@@ -396,6 +396,11 @@ class TelegramChannel(BaseChannel):
             self._progress_history[address_uri] = history
 
             status_text = "🔎 **Audit Trail:**\n" + "\n".join(history)
+            html = _markdown_to_telegram_html(status_text)
+
+            # If the status text is getting dangerously long, roll over to a new message
+            if len(html) > (TELEGRAM_MAX_MESSAGE_LEN - 500):
+                self._progress_message_id.pop(address_uri, None)
 
             if address_uri in self._progress_message_id:
                 try:
@@ -403,19 +408,21 @@ class TelegramChannel(BaseChannel):
                         self._app.bot.edit_message_text,
                         chat_id=chat_id_int,
                         message_id=self._progress_message_id[address_uri],
-                        text=_markdown_to_telegram_html(status_text),
+                        text=html,
                         parse_mode="HTML",
                     )
                     return
                 except Exception as e:
                     if self._is_not_modified_error(e):
                         return
-                    logger.debug("Progress edit failed for {}: {}", address_uri, e)
+                    # If edit fails (e.g. message too long or deleted), reset and send new
+                    logger.debug("Progress edit failed for {}, rolling over: {}", address_uri, e)
+                    self._progress_message_id.pop(address_uri, None)
 
             sent = await self._call_with_retry(
                 self._app.bot.send_message,
                 chat_id=chat_id_int,
-                text=_markdown_to_telegram_html(status_text),
+                text=html,
                 parse_mode="HTML",
                 **thread_kwargs,
             )
