@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,8 +19,6 @@ runner = CliRunner()
 class _StopGatewayError(RuntimeError):
     pass
 
-
-import shutil
 
 
 @pytest.fixture

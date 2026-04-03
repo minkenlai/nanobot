@@ -48,7 +48,7 @@ def test_init_prompt_session_creates_session():
 
     with (
         patch("nanobot.cli.commands.PromptSession") as MockSession,
-        patch("nanobot.cli.commands.FileHistory") as MockHistory,
+        patch("nanobot.cli.commands.FileHistory"),
         patch("pathlib.Path.home") as mock_home,
     ):
         mock_home.return_value = MagicMock()

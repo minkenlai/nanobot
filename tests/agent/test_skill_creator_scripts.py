@@ -8,9 +8,9 @@ scripts_dir = (
 )
 sys.path.insert(0, str(scripts_dir.resolve()))
 
-import init_skill
-import package_skill
-import quick_validate
+import init_skill  # noqa: E402
+import package_skill  # noqa: E402
+import quick_validate  # noqa: E402
 
 
 def test_init_skill_creates_expected_files(tmp_path: Path) -> None:
