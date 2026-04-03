@@ -59,7 +59,10 @@ class CommandRouter:
         parts = text.strip().split()
         if not parts:
             return False
-        return parts[0].lower() in self._priority
+        cmd_part = parts[0].lower()
+        if "@" in cmd_part:
+            cmd_part = cmd_part.split("@", 1)[0]
+        return cmd_part in self._priority
 
     async def dispatch_priority(self, ctx: CommandContext) -> OutboundMessage | None:
         """Dispatch a priority command. Called from run() without the lock."""
@@ -68,6 +71,9 @@ class CommandRouter:
             return None
 
         cmd_part = parts[0].lower()
+        if "@" in cmd_part:
+            cmd_part = cmd_part.split("@", 1)[0]
+
         if handler := self._priority.get(cmd_part):
             ctx.args = " ".join(parts[1:])
             return await handler(ctx)
@@ -80,6 +86,8 @@ class CommandRouter:
             return None
 
         cmd_part = parts[0].lower()
+        if "@" in cmd_part:
+            cmd_part = cmd_part.split("@", 1)[0]
 
         # 1. Exact match (on first word)
         if handler := self._exact.get(cmd_part):
@@ -87,10 +95,12 @@ class CommandRouter:
             return await handler(ctx)
 
         # 2. Prefix match (on full string, e.g. "/team ")
-        cmd_full = ctx.raw.lower()
+        # Reconstruct full command using the normalized cmd_part to ensure prefix matching works
+        normalized_raw = f"{cmd_part} {' '.join(parts[1:])}".strip()
+        cmd_full = normalized_raw.lower()
         for pfx, handler in self._prefix:
             if cmd_full.startswith(pfx):
-                ctx.args = ctx.raw[len(pfx) :]
+                ctx.args = normalized_raw[len(pfx) :]
                 return await handler(ctx)
 
         for interceptor in self._interceptors:

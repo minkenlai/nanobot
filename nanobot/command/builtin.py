@@ -236,16 +236,24 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
 
     repl_cfg = loop.config.repl
 
+    # Use the pre-parsed arguments from the command context
+    code = ctx.args or ""
+
     # Check user-based ACL
-    user_key = f"{msg.channel}:{msg.sender_id}"
+    user_key = f"{msg.address.channel}:{msg.sender_id}"
     if user_key not in repl_cfg.allow_users:
         from loguru import logger
 
-        logger.warning("REPL access denied for user: {}", user_key)
+        logger.warning(
+            "REPL access denied for user: {}. Allowed users: {}",
+            user_key,
+            repl_cfg.allow_users,
+        )
         return OutboundMessage(
             address=msg.address,
-            content="🛑 **Access Denied:** You are not authorized to use the REPL command. "
-            "Add your identity to `repl.allowUsers` in `config.json` to enable it.",
+            content=f"🛑 **Access Denied:** You are not authorized to use the REPL command.\n\n"
+            f"Your identity string is: `{user_key}`\n\n"
+            "Add this string to `repl.allowUsers` in `config.json` to enable it.",
         )
 
     if not code.strip():

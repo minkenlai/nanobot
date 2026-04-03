@@ -29,7 +29,9 @@ def test_init_skill_creates_expected_files(tmp_path: Path) -> None:
 
 
 def test_validate_skill_accepts_existing_skill_creator() -> None:
-    valid, message = quick_validate.validate_skill(Path("nanobot/skills/skill-creator").resolve())
+    # Use the scripts_dir defined at the top of the file to find the skill-creator root
+    skill_creator_root = scripts_dir.parent
+    valid, message = quick_validate.validate_skill(skill_creator_root.resolve())
 
     assert valid, message
 
