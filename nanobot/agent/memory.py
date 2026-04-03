@@ -53,21 +53,7 @@ def _ensure_text(value: Any) -> str:
 def _normalize_save_memory_args(args: Any) -> dict[str, Any] | None:
     """Normalize provider tool-call arguments to the expected dict shape."""
     if isinstance(args, str):
-        try:
-            return json.loads(args)
-        except json.JSONDecodeError:
-            # Salvage logic: try to find the first JSON-looking block in the string
-            import re
-
-            # Look for the first JSON-looking block (starts with { and ends with })
-            # Using a non-greedy .*? to avoid capturing multiple blocks at once
-            match = re.search(r"(\{.*?\})", args, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group(1))
-                except json.JSONDecodeError:
-                    pass
-            return None
+        args = json.loads(args)
     if isinstance(args, list):
         return args[0] if args and isinstance(args[0], dict) else None
     return args if isinstance(args, dict) else None
@@ -133,6 +119,7 @@ class MemoryStore:
         messages: list[dict],
         provider: LLMProvider,
         model: str,
+        max_tokens: int | None = None,
     ) -> bool:
         """Consolidate the provided message chunk into MEMORY.md + HISTORY.md."""
         if not messages:
@@ -162,6 +149,7 @@ class MemoryStore:
                 tools=_SAVE_MEMORY_TOOL,
                 model=model,
                 tool_choice=forced,
+                max_tokens=max_tokens,
             )
 
             if response.finish_reason == "error" and _is_tool_choice_unsupported(response.content):
@@ -171,24 +159,23 @@ class MemoryStore:
                     tools=_SAVE_MEMORY_TOOL,
                     model=model,
                     tool_choice="auto",
+                    max_tokens=max_tokens,
                 )
 
-            if not response.has_tool_calls:
-                logger.warning(
-                    "Memory consolidation: LLM did not call save_memory "
-                    "(finish_reason={}, content_len={}, content_preview={})",
-                    response.finish_reason,
-                    len(response.content or ""),
-                    (response.content or "")[:200],
+            if response.finish_reason == "length":
+                logger.error(
+                    "Memory consolidation TRUNCATED (finish_reason=length). "
+                    "MEMORY.md update or history_entry was too long for the max_tokens limit ({}). "
+                    "Aborting to avoid corrupting memory files.",
+                    max_tokens,
                 )
+                return self._fail_or_raw_archive(messages)
+
+            if not response.has_tool_calls:
                 # Last ditch effort: try to parse the content as a tool-call arguments string
                 if response.content:
                     args = _normalize_save_memory_args(response.content)
-                    if args:
-                        logger.info(
-                            "Memory consolidation: salvaged tool-call from conversational content"
-                        )
-                    else:
+                    if not args:
                         return self._fail_or_raw_archive(messages)
                 else:
                     return self._fail_or_raw_archive(messages)
@@ -203,22 +190,14 @@ class MemoryStore:
                 logger.warning("Memory consolidation: save_memory payload missing required fields")
                 return self._fail_or_raw_archive(messages)
 
-            entry = args["history_entry"]
-            update = args["memory_update"]
+            entry = _ensure_text(args["history_entry"]).strip()
+            update = _ensure_text(args["memory_update"])
 
-            if entry is None or update is None:
-                logger.warning(
-                    "Memory consolidation: save_memory payload contains null required fields"
-                )
-                return self._fail_or_raw_archive(messages)
-
-            entry = _ensure_text(entry).strip()
             if not entry:
-                logger.warning("Memory consolidation: history_entry is empty after normalization")
+                logger.warning("Memory consolidation: history_entry is empty")
                 return self._fail_or_raw_archive(messages)
 
             self.append_history(entry)
-            update = _ensure_text(update)
             if update != current_memory:
                 self.write_long_term(update)
 
@@ -251,7 +230,6 @@ class MemoryConsolidator:
     """Owns consolidation policy, locking, and session offset updates."""
 
     _MAX_CONSOLIDATION_ROUNDS = 5
-
     _SAFETY_BUFFER = 1024  # extra headroom for tokenizer estimation drift
 
     def __init__(
@@ -281,7 +259,10 @@ class MemoryConsolidator:
 
     async def consolidate_messages(self, messages: list[dict[str, object]]) -> bool:
         """Archive a selected message chunk into persistent memory."""
-        return await self.store.consolidate(messages, self.provider, self.model)
+        # Use a higher token budget for consolidation than the default profile might allow
+        # to ensure the "Echo Tax" of rewriting MEMORY.md doesn't cause truncation.
+        budget = max(8192, self.max_completion_tokens)
+        return await self.store.consolidate(messages, self.provider, self.model, max_tokens=budget)
 
     def pick_consolidation_boundary(
         self,
@@ -339,11 +320,7 @@ class MemoryConsolidator:
         return True
 
     async def maybe_consolidate_by_tokens(self, session: Session) -> None:
-        """Loop: archive old messages until prompt fits within safe budget.
-
-        The budget reserves space for completion tokens and a safety buffer
-        so the LLM request never exceeds the context window.
-        """
+        """Loop: archive old messages until prompt fits within safe budget."""
         if not session.messages or self.context_window_tokens <= 0:
             return
 
@@ -355,13 +332,6 @@ class MemoryConsolidator:
             if estimated <= 0:
                 return
             if estimated < budget:
-                logger.debug(
-                    "Token consolidation idle {}: {}/{} via {}",
-                    session.key,
-                    estimated,
-                    self.context_window_tokens,
-                    source,
-                )
                 return
 
             for round_num in range(self._MAX_CONSOLIDATION_ROUNDS):
@@ -370,11 +340,6 @@ class MemoryConsolidator:
 
                 boundary = self.pick_consolidation_boundary(session, max(1, estimated - target))
                 if boundary is None:
-                    logger.debug(
-                        "Token consolidation: no safe boundary for {} (round {})",
-                        session.key,
-                        round_num,
-                    )
                     return
 
                 end_idx = boundary[0]
@@ -382,15 +347,6 @@ class MemoryConsolidator:
                 if not chunk:
                     return
 
-                logger.info(
-                    "Token consolidation round {} for {}: {}/{} via {}, chunk={} msgs",
-                    round_num,
-                    session.key,
-                    estimated,
-                    self.context_window_tokens,
-                    source,
-                    len(chunk),
-                )
                 if not await self.consolidate_messages(chunk):
                     return
                 session.last_consolidated = end_idx
