@@ -148,6 +148,9 @@ class GeminiNativeProvider(LLMProvider):
             if gemini_tools:
                 payload["tools"] = gemini_tools
 
+        if tool_choice:
+            payload["toolConfig"] = self._convert_tool_choice(tool_choice)
+
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code != 200:
@@ -206,7 +209,11 @@ class GeminiNativeProvider(LLMProvider):
                         }
                     }
 
-                    psf = tc.get("function_provider_specific_fields") or fn.get("provider_specific_fields") or {}
+                    psf = (
+                        tc.get("function_provider_specific_fields")
+                        or fn.get("provider_specific_fields")
+                        or {}
+                    )
                     if isinstance(psf, dict):
                         ts = psf.get("thought_signature") or psf.get("thoughtSignature")
                         if ts:
@@ -258,7 +265,31 @@ class GeminiNativeProvider(LLMProvider):
                     }
                 )
 
-        return [{"function_declarations": declarations}] if declarations else []
+        return [{"functionDeclarations": declarations}] if declarations else []
+
+    def _convert_tool_choice(self, tool_choice: str | dict[str, Any]) -> dict[str, Any]:
+        """Convert OpenAI-style tool_choice to Gemini toolConfig."""
+        # Mapping: https://ai.google.dev/api/rest/v1beta/ToolConfig
+        if tool_choice == "auto":
+            return {"functionCallingConfig": {"mode": "AUTO"}}
+        if tool_choice == "none":
+            return {"functionCallingConfig": {"mode": "NONE"}}
+        if tool_choice == "required":
+            return {"functionCallingConfig": {"mode": "ANY"}}
+
+        if isinstance(tool_choice, dict):
+            # Format: {"type": "function", "function": {"name": "..."}}
+            fn = tool_choice.get("function") or {}
+            name = fn.get("name")
+            if name:
+                return {
+                    "functionCallingConfig": {
+                        "mode": "ANY",
+                        "allowedFunctionNames": [name],
+                    }
+                }
+
+        return {"functionCallingConfig": {"mode": "AUTO"}}
 
     def _parse_response(self, data: dict[str, Any]) -> LLMResponse:
         """Parse Gemini response into LLMResponse."""
@@ -298,7 +329,9 @@ class GeminiNativeProvider(LLMProvider):
                         function_provider_specific_fields={
                             "thought_signature": ts,
                             "thought": thought,
-                        } if (ts or thought) else None,
+                        }
+                        if (ts or thought)
+                        else None,
                     )
                 )
 
