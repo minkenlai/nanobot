@@ -56,7 +56,7 @@ Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (chan
 
 **To add a new provider**: (1) add a `ProviderSpec` to `PROVIDERS` in `registry.py`, (2) add a config field to `ProvidersConfig` in `nanobot/config/schema.py`.
 
-Three backend implementations: `AnthropicProvider`, `OpenAICompatProvider` (covers most providers), `AzureOpenAIProvider`.
+Backend implementations include: `AnthropicProvider`, `OpenAICompatProvider`, `AzureOpenAIProvider`, and `GeminiNativeProvider`. A special `FallbackProvider` wraps these, providing quota-awareness and automatic fallback chains that reset daily.
 
 ### Tool System
 
@@ -64,11 +64,11 @@ Three backend implementations: `AnthropicProvider`, `OpenAICompatProvider` (cove
 
 ### Subagent System
 
-The `SubagentManager` (`nanobot/agent/subagent.py`) handles background task execution. Subagents are spawned via the `spawn` tool and run in a separate `AgentRunner` instance. They automatically inherit the workspace context (`SOUL.md`, `USER.md`, `SUBAGENT.md`) and report back to the main agent through the `MessageBus` upon completion.
+The `SubagentManager` (`nanobot/agent/subagent.py`) handles background task execution. Subagents are spawned via the `spawn` tool and run in a separate `AgentRunner` instance. The `spawn` tool dynamically documents available agent profiles (e.g., `fast`, `deep`, `balanced`), enabling the main agent to autonomously select the appropriate model. Subagents inherit the workspace context (`SOUL.md`, `USER.md`, `SUBAGENT.md`) and report back to the main agent through the `MessageBus` upon completion.
 
 ### Memory System
 
-Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped searchable log). `MemoryConsolidator` calls the LLM after each agent turn to extract and update both files. Messages are never modified after writing (cache-friendly for Anthropic prompt caching).
+Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped searchable log). `MemoryConsolidator` calls the LLM after each agent turn to extract and update both files. It uses a "Whole File Rewrite" strategy with an expanded 8192-token budget and strict truncation protection (`finish_reason == "length"`) to prevent data corruption. Messages are never modified after writing (cache-friendly for prompt caching).
 
 ### Skill System
 
@@ -77,6 +77,13 @@ Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped 
 ### Command System
 
 Built-in slash commands are registered in `nanobot/command/builtin.py`. The `/status` command is a consolidated dashboard providing system uptime, token usage, context estimation, and active background tasks. Commands like `/new`, `/repl`, and `/restart` manage session lifecycle and development operations. The `/repl` command allows executing arbitrary Python code for debugging and system management. For security, it is restricted to users listed in `repl.allowUsers` (default: `["cli:user"]`). Access can be granted to other users using the format `"channel:sender_id"` (e.g., `"tg:12345678"`).
+
+### Channel Integration (Telegram)
+
+The Telegram channel implementation supports advanced interaction modes:
+- **Topics as Sessions:** Threads/Topics represent isolated `Address` contexts (`tg://chat_id/topic_id`).
+- **Profile Pinning:** Frugal profile switching is natively supported via pinned messages containing `Profile: <profile_name>`.
+- **Audit Trails:** Progress/Status is streamed into a live message with proactive rollover (creating new messages gracefully before hitting Telegram's 4096-character limit).
 
 ## Configuration
 
