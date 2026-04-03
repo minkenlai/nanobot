@@ -232,12 +232,16 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
     """Execute Python code in the current environment."""
     msg = ctx.msg
     loop = ctx.loop
-    code = ctx.raw or ""
+    # Extract code from raw input to preserve whitespace
+    raw_input = (ctx.raw or "").strip()
+    if raw_input.startswith("/"):
+        # Strip the command part (e.g., "/repl ")
+        parts = raw_input.split(None, 1)
+        code = parts[1] if len(parts) > 1 else ""
+    else:
+        code = raw_input
 
     repl_cfg = loop.config.repl
-
-    # Use the pre-parsed arguments from the command context
-    code = ctx.args or ""
 
     # Check user-based ACL
     user_key = f"{msg.address.channel}:{msg.sender_id}"

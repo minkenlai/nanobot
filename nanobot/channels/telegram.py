@@ -701,45 +701,26 @@ class TelegramChannel(BaseChannel):
             return
 
         if buf.message_id is None:
-            if len(buf.text) > TELEGRAM_MAX_MESSAGE_LEN:
-                chunks = split_message(buf.text, TELEGRAM_MAX_MESSAGE_LEN)
-                first_chunk = chunks.pop(0)
-                try:
-                    sent = await self._call_with_retry(
-                        self._app.bot.send_message,
-                        chat_id=int_chat_id,
-                        text=first_chunk,
-                        **thread_kwargs,
-                    )
-                    buf.message_id = sent.message_id
-                except Exception as e:
-                    logger.warning("Stream initial send failed: {}", e)
-                    raise
+            # Initial send: don't split yet, just send the first chunk if too large
+            # and let the next edit/flush handle the rest.
+            text_to_send = buf.text
+            if len(text_to_send) > TELEGRAM_MAX_MESSAGE_LEN:
+                chunks = split_message(text_to_send, TELEGRAM_MAX_MESSAGE_LEN)
+                text_to_send = chunks[0]
+                buf.text = text_to_send  # Truncate buffer to what was actually sent
 
-                for chunk in chunks:
-                    sent = await self._call_with_retry(
-                        self._app.bot.send_message,
-                        chat_id=int_chat_id,
-                        text=chunk,
-                        **thread_kwargs,
-                    )
-                    buf.message_id = sent.message_id
-
-                buf.text = chunks[-1] if chunks else ""
+            try:
+                sent = await self._call_with_retry(
+                    self._app.bot.send_message,
+                    chat_id=int_chat_id,
+                    text=text_to_send,
+                    **thread_kwargs,
+                )
+                buf.message_id = sent.message_id
                 buf.last_edit = now
-            else:
-                try:
-                    sent = await self._call_with_retry(
-                        self._app.bot.send_message,
-                        chat_id=int_chat_id,
-                        text=buf.text,
-                        **thread_kwargs,
-                    )
-                    buf.message_id = sent.message_id
-                    buf.last_edit = now
-                except Exception as e:
-                    logger.warning("Stream initial send failed: {}", e)
-                    raise  # Let ChannelManager handle retry
+            except Exception as e:
+                logger.warning("Stream initial send failed: {}", e)
+                raise  # Let ChannelManager handle retry
         elif (now - buf.last_edit) >= self._STREAM_EDIT_INTERVAL:
             try:
                 await self._call_with_retry(

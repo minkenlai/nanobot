@@ -20,7 +20,6 @@ class _StopGatewayError(RuntimeError):
     pass
 
 
-
 @pytest.fixture
 def mock_paths():
     """Mock config/workspace paths for test isolation."""

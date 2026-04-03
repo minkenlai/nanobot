@@ -256,7 +256,11 @@ class OpenAICompatProvider(LLMProvider):
         """
         merged: list[dict[str, Any]] = []
         for msg in messages:
-            if merged and merged[-1]["role"] == msg["role"] and msg["role"] in ("user", "assistant"):
+            if (
+                merged
+                and merged[-1]["role"] == msg["role"]
+                and msg["role"] in ("user", "assistant")
+            ):
                 prev = merged[-1]
                 prev_content = prev.get("content")
                 curr_content = msg.get("content")

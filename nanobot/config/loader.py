@@ -43,7 +43,9 @@ def apply_overlay(base: dict, overlay_path: Path) -> dict:
     try:
         with open(overlay_path, encoding="utf-8") as f:
             overlay = json.load(f)
-        logger.info(f"Applying config overlay from {overlay_path} (sections: {list(overlay.keys())})")
+        logger.info(
+            f"Applying config overlay from {overlay_path} (sections: {list(overlay.keys())})"
+        )
         base.update(overlay)
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(f"Failed to load config overlay from {overlay_path}: {e} — skipping.")
