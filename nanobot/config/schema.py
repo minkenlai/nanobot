@@ -57,6 +57,7 @@ class AgentDefaults(Base):
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     grounding: str | None = None  # e.g. "google_search"
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
+    description: str | None = None  # Optional description to help choose the agent
 
     fallback_models: list[str] = Field(
         default_factory=list

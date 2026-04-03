@@ -324,6 +324,15 @@ class AgentLoop:
 
         def _fmt(tc):
             args = (tc.arguments[0] if isinstance(tc.arguments, list) else tc.arguments) or {}
+
+            # Special formatting for spawn
+            if tc.name == "spawn":
+                label = args.get("label") or args.get("task", "")[:30] + (
+                    "..." if len(args.get("task", "")) > 30 else ""
+                )
+                agent = args.get("agent", "default")
+                return f'spawn("{label}", agent="{agent}")'
+
             val = next(iter(args.values()), None) if isinstance(args, dict) else None
             if not isinstance(val, str):
                 return tc.name

@@ -40,6 +40,34 @@ class SpawnTool(Tool):
 
     @property
     def parameters(self) -> dict[str, Any]:
+        # Build agent options if possible
+        agent_desc = (
+            "Optional agent profile to use (e.g., 'deep', 'fast'). Overrides the default agent."
+        )
+        try:
+            agents = self._manager.config.agents
+            options = []
+            # Check defaults
+            options.append(f"- default: {agents.defaults.model}")
+            if agents.defaults.description:
+                options[-1] += f" ({agents.defaults.description})"
+
+            # Check extra agents
+            for key in agents.model_extra or {}:
+                try:
+                    cfg = agents.get_agent(key)
+                    opt = f"- {key}: {cfg.model}"
+                    if cfg.description:
+                        opt += f" ({cfg.description})"
+                    options.append(opt)
+                except Exception:
+                    continue
+
+            if options:
+                agent_desc += "\nAvailable agents:\n" + "\n".join(options)
+        except Exception:
+            pass
+
         return {
             "type": "object",
             "properties": {
@@ -53,7 +81,7 @@ class SpawnTool(Tool):
                 },
                 "agent": {
                     "type": "string",
-                    "description": "Optional agent profile to use (e.g., 'deep', 'fast'). Overrides the default agent.",
+                    "description": agent_desc,
                 },
             },
             "required": ["task"],
