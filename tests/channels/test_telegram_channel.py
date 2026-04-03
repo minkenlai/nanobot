@@ -1014,3 +1014,118 @@ async def test_on_help_includes_restart_command() -> None:
     help_text = update.message.reply_text.await_args.args[0]
     assert "/restart" in help_text
     assert "/status" in help_text
+
+
+@pytest.mark.asyncio
+async def test_send_delta_handles_chunking_on_rollover() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    sent_mock = AsyncMock()
+    sent_mock.message_id = 42
+    channel._app.bot.send_message = AsyncMock(return_value=sent_mock)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    # Buffer already at the limit; appending " overflow" pushes it over.
+    base_text = "x" * 4000
+    channel._stream_bufs["telegram://123"] = _StreamBuf(
+        text=base_text, message_id=7, last_edit=0.0, stream_id="s:0"
+    )
+
+    await channel.send_delta(
+        OutboundMessage(
+            address=Address(channel="telegram", segments=("123",)),
+            content=" overflow",
+            metadata={"_stream_id": "s:0"},
+        )
+    )
+
+    buf = channel._stream_bufs["telegram://123"]
+    assert len(buf.text) < 4000
+    assert buf.message_id == 42
+    # First chunk must be finalized into the existing message (id=7).
+    channel._app.bot.edit_message_text.assert_awaited_once()
+    call_kwargs = channel._app.bot.edit_message_text.await_args.kwargs
+    assert call_kwargs["message_id"] == 7
+    # Overflow remainder is sent as a new message.
+    channel._app.bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_delta_rollover_skipped_when_no_message_id() -> None:
+    """Rollover must not fire when the buffer has no message_id yet (first delta)."""
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    sent_mock = AsyncMock()
+    sent_mock.message_id = 99
+    channel._app.bot.send_message = AsyncMock(return_value=sent_mock)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    # First delta is already over the limit; message_id not set yet.
+    channel._stream_bufs["telegram://123"] = _StreamBuf(
+        text="", message_id=None, last_edit=0.0, stream_id="s:0"
+    )
+
+    await channel.send_delta(
+        OutboundMessage(
+            address=Address(channel="telegram", segments=("123",)),
+            content="x" * 4001,
+            metadata={"_stream_id": "s:0"},
+        )
+    )
+
+    # Should do an initial send, not an edit.
+    channel._app.bot.edit_message_text.assert_not_awaited()
+    channel._app.bot.send_message.assert_awaited_once()
+    assert channel._stream_bufs["telegram://123"].message_id == 99
+
+
+@pytest.mark.asyncio
+async def test_send_delta_rollover_multiple_chunks() -> None:
+    """When overflow splits into more than two chunks, all are sent as new messages."""
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    call_count = 0
+
+    async def send_message_side_effect(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        m = AsyncMock()
+        m.message_id = 100 + call_count
+        return m
+
+    channel._app.bot.send_message = AsyncMock(side_effect=send_message_side_effect)
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    # Buffer with 8000 chars + 1 pushes it to require 3 chunks of 4000.
+    channel._stream_bufs["telegram://123"] = _StreamBuf(
+        text="x" * 8000, message_id=5, last_edit=0.0, stream_id="s:0"
+    )
+
+    await channel.send_delta(
+        OutboundMessage(
+            address=Address(channel="telegram", segments=("123",)),
+            content="y",
+            metadata={"_stream_id": "s:0"},
+        )
+    )
+
+    buf = channel._stream_bufs["telegram://123"]
+    # edit_message_text finalizes chunk 1 into message 5.
+    channel._app.bot.edit_message_text.assert_awaited_once()
+    # Two new messages sent for chunks 2 and 3.
+    assert channel._app.bot.send_message.await_count == 2
+    # buf tracks the last sent message.
+    assert buf.message_id == 102
+    assert len(buf.text) < 4000

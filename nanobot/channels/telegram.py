@@ -605,6 +605,8 @@ class TelegramChannel(BaseChannel):
         address_uri = msg.address.to_uri()
         int_chat_id = int(msg.address.segments[0])
         stream_id = msg.metadata.get("_stream_id")
+        message_thread_id = msg.metadata.get("message_thread_id")
+        thread_kwargs = {"message_thread_id": message_thread_id} if message_thread_id else {}
 
         if msg.metadata.get("_stream_end"):
             buf = self._stream_bufs.get(address_uri)
@@ -659,9 +661,44 @@ class TelegramChannel(BaseChannel):
             return
 
         now = time.monotonic()
+
+        # Check if we need to roll over to a new message
+        if buf.message_id is not None and len(buf.text) > TELEGRAM_MAX_MESSAGE_LEN:
+            chunks = split_message(buf.text, TELEGRAM_MAX_MESSAGE_LEN)
+            first_chunk = chunks.pop(0)
+
+            try:
+                html = _markdown_to_telegram_html(first_chunk)
+                await self._call_with_retry(
+                    self._app.bot.edit_message_text,
+                    chat_id=int_chat_id,
+                    message_id=buf.message_id,
+                    text=html,
+                    parse_mode="HTML",
+                )
+            except Exception as e:
+                logger.debug("Rollover edit failed (HTML), trying plain: {}", e)
+                await self._call_with_retry(
+                    self._app.bot.edit_message_text,
+                    chat_id=int_chat_id,
+                    message_id=buf.message_id,
+                    text=first_chunk,
+                )
+
+            for chunk in chunks:
+                sent = await self._call_with_retry(
+                    self._app.bot.send_message,
+                    chat_id=int_chat_id,
+                    text=chunk,
+                    **thread_kwargs,
+                )
+                buf.message_id = sent.message_id
+
+            buf.text = chunks[-1] if chunks else ""
+            buf.last_edit = now
+            return
+
         if buf.message_id is None:
-            message_thread_id = msg.metadata.get("message_thread_id")
-            thread_kwargs = {"message_thread_id": message_thread_id} if message_thread_id else {}
             try:
                 sent = await self._call_with_retry(
                     self._app.bot.send_message,

@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+This project is using python3 .venv
+
 ```bash
 # Install in dev mode
 pip install -e ".[dev]"
