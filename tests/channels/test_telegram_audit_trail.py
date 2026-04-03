@@ -78,3 +78,61 @@ async def test_telegram_audit_trail_cumulative():
     assert "✅ <code>Step 1: Searching</code>" in final_audit_text
     assert "✅ <code>Step 2: Reading</code>" in final_audit_text
     assert "⚙️" not in final_audit_text
+
+
+@pytest.mark.asyncio
+async def test_audit_trail_isolated_per_topic() -> None:
+    """Concurrent topics in the same group must not share audit trail state.
+
+    Before the fix, _progress_message_id and _progress_history were keyed by
+    chat_id_str only, so two active topics in the same group would corrupt each
+    other's state.  After the fix they are keyed by address.to_uri().
+    """
+    config = TelegramConfig(enabled=True, token="fake:token", allow_from=["*"])
+    channel = TelegramChannel(config, MessageBus())
+
+    mock_app = MagicMock()
+    mock_app.bot = _FakeBot()
+    channel._app = mock_app
+
+    # Two different topics in the same group chat (chat_id="123")
+    addr_topic1 = Address(channel="tg", segments=("123", "100"))
+    addr_topic2 = Address(channel="tg", segments=("123", "200"))
+
+    # Progress event for topic 1
+    await channel.send(
+        OutboundMessage(
+            address=addr_topic1,
+            content="Step in topic 1",
+            metadata={"_progress": True, "_tool_hint": True},
+        )
+    )
+    # Progress event for topic 2
+    await channel.send(
+        OutboundMessage(
+            address=addr_topic2,
+            content="Step in topic 2",
+            metadata={"_progress": True, "_tool_hint": True},
+        )
+    )
+
+    # Both topics must have sent their own separate audit trail messages.
+    assert len(mock_app.bot.sent_messages) == 2
+    assert "tg://123/100" in channel._progress_message_id
+    assert "tg://123/200" in channel._progress_message_id
+
+    # Topic 2's message must target thread 200, not thread 100.
+    topic2_send = next(m for m in mock_app.bot.sent_messages if m.get("message_thread_id") == 200)
+    assert topic2_send is not None
+
+    # Finalise topic 1 — topic 2 must be unaffected.
+    await channel.send(
+        OutboundMessage(
+            address=addr_topic1,
+            content="Done",
+            metadata={},
+        )
+    )
+
+    assert "tg://123/100" not in channel._progress_message_id
+    assert "tg://123/200" in channel._progress_message_id

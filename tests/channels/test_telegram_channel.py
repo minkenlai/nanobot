@@ -1129,3 +1129,67 @@ async def test_send_delta_rollover_multiple_chunks() -> None:
     # buf tracks the last sent message.
     assert buf.message_id == 102
     assert len(buf.text) < 4000
+
+
+@pytest.mark.asyncio
+async def test_send_delta_uses_thread_id_from_address_not_metadata() -> None:
+    """Streaming initial send must use thread_id from address segments, not metadata.
+
+    on_stream OutboundMessages only carry _stream_delta/_stream_id in metadata —
+    they never include message_thread_id.  The fix reads from address.segments[1].
+    """
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    # Simulate the first streaming delta for a group topic (thread_id="832").
+    # Metadata intentionally omits message_thread_id, matching what AgentRunner sends.
+    await channel.send_delta(
+        OutboundMessage(
+            address=Address(channel="tg", segments=("-1003434604734", "832")),
+            content="Hello from topic",
+            metadata={"_stream_delta": True, "_stream_id": "s:0"},
+        )
+    )
+
+    assert len(channel._app.bot.sent_messages) == 1
+    assert channel._app.bot.sent_messages[0]["message_thread_id"] == "832"
+
+
+@pytest.mark.asyncio
+async def test_send_delta_stream_end_stops_typing_by_chat_id() -> None:
+    """send_delta stream-end must cancel the typing task keyed by chat_id, not address_uri.
+
+    _start_typing stores tasks under str(chat_id); _stop_typing must use the same key.
+    """
+    import asyncio as _asyncio
+
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+
+    # Pre-register a typing task exactly as _on_message does (keyed by str_chat_id).
+    dummy_task = _asyncio.create_task(_asyncio.sleep(100))
+    channel._typing_tasks["-1003434604734"] = dummy_task
+
+    # Pre-fill the stream buffer so send_delta has something to finalize.
+    channel._stream_bufs["tg://-1003434604734/832"] = _StreamBuf(
+        text="hello", message_id=7, last_edit=0.0, stream_id="s:0"
+    )
+    channel._app.bot.edit_message_text = AsyncMock()
+
+    await channel.send_delta(
+        OutboundMessage(
+            address=Address(channel="tg", segments=("-1003434604734", "832")),
+            content="",
+            metadata={"_stream_end": True, "_stream_id": "s:0"},
+        )
+    )
+
+    # The typing task keyed by chat_id should be gone and cancellation requested.
+    assert "-1003434604734" not in channel._typing_tasks
+    assert dummy_task.cancelling() > 0 or dummy_task.cancelled()

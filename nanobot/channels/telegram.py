@@ -226,9 +226,9 @@ class TelegramChannel(BaseChannel):
         self._message_threads: dict[tuple[str, int], int] = {}
         self._bot_user_id: int | None = None
         self._bot_username: str | None = None
-        self._stream_bufs: dict[str, _StreamBuf] = {}  # chat_id -> streaming state
-        self._progress_message_id: dict[str, int] = {}  # chat_id -> status message id
-        self._progress_history: dict[str, list[str]] = {}  # chat_id -> audit trail
+        self._stream_bufs: dict[str, _StreamBuf] = {}  # address_uri -> streaming state
+        self._progress_message_id: dict[str, int] = {}  # address_uri -> status message id
+        self._progress_history: dict[str, list[str]] = {}  # address_uri -> audit trail
         self._topic_pins: dict[str, tuple[float, str | None]] = {}  # key -> (expiry, profile)
         self._topic_pins: dict[
             str, tuple[float, str | None]
@@ -381,27 +381,27 @@ class TelegramChannel(BaseChannel):
         if not msg.metadata.get("_tool_hint", False):
             return
         try:
-            chat_id_str = msg.chat_id
-            chat_id_int = int(chat_id_str)
+            address_uri = msg.address.to_uri()
+            chat_id_int = int(msg.chat_id)
             thread_id = msg.message_thread_id
             thread_kwargs = {"message_thread_id": thread_id} if thread_id else {}
 
-            # Update audit trail history
-            history = self._progress_history.get(chat_id_str, [])
+            # Update audit trail history (keyed by full address URI to isolate topics)
+            history = self._progress_history.get(address_uri, [])
             if history:
                 # Convert the previous ongoing step to "Done"
                 history[-1] = history[-1].replace("⚙️", "✅")
             history.append(f"⚙️ `{msg.content}`")
-            self._progress_history[chat_id_str] = history
+            self._progress_history[address_uri] = history
 
             status_text = "🔎 **Audit Trail:**\n" + "\n".join(history)
 
-            if chat_id_str in self._progress_message_id:
+            if address_uri in self._progress_message_id:
                 try:
                     await self._call_with_retry(
                         self._app.bot.edit_message_text,
                         chat_id=chat_id_int,
-                        message_id=self._progress_message_id[chat_id_str],
+                        message_id=self._progress_message_id[address_uri],
                         text=_markdown_to_telegram_html(status_text),
                         parse_mode="HTML",
                     )
@@ -409,7 +409,7 @@ class TelegramChannel(BaseChannel):
                 except Exception as e:
                     if self._is_not_modified_error(e):
                         return
-                    logger.debug("Progress edit failed for {}: {}", chat_id_str, e)
+                    logger.debug("Progress edit failed for {}: {}", address_uri, e)
 
             sent = await self._call_with_retry(
                 self._app.bot.send_message,
@@ -418,28 +418,29 @@ class TelegramChannel(BaseChannel):
                 parse_mode="HTML",
                 **thread_kwargs,
             )
-            self._progress_message_id[chat_id_str] = sent.message_id
+            self._progress_message_id[address_uri] = sent.message_id
         except Exception as e:
-            logger.warning("Failed to update audit trail for {}: {}", msg.chat_id, e)
+            logger.warning("Failed to update audit trail for {}: {}", msg.address.to_uri(), e)
 
-    async def _finalize_audit_trail(self, chat_id: str) -> None:
+    async def _finalize_audit_trail(self, address: "Address") -> None:
         """Finalize the audit trail on delivery of the final response."""
-        if chat_id not in self._progress_message_id:
+        address_uri = address.to_uri()
+        if address_uri not in self._progress_message_id:
             return
         try:
-            history = self._progress_history.pop(chat_id, [])
+            history = self._progress_history.pop(address_uri, [])
             if history:
                 history[-1] = history[-1].replace("⚙️", "✅")
             status_text = "📋 **Audit Trail (Complete):**\n" + "\n".join(history)
             await self._call_with_retry(
                 self._app.bot.edit_message_text,
-                chat_id=int(chat_id),
-                message_id=self._progress_message_id.pop(chat_id),
+                chat_id=int(address.segments[0]),
+                message_id=self._progress_message_id.pop(address_uri),
                 text=_markdown_to_telegram_html(status_text),
                 parse_mode="HTML",
             )
         except Exception as e:
-            logger.debug("Failed to finalize audit trail for {}: {}", chat_id, e)
+            logger.debug("Failed to finalize audit trail for {}: {}", address_uri, e)
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Telegram."""
@@ -473,7 +474,7 @@ class TelegramChannel(BaseChannel):
         reply_to_message_id = msg.metadata.get("message_id")
 
         # Final response: Finalize audit trail and clear state
-        await self._finalize_audit_trail(chat_id_str)
+        await self._finalize_audit_trail(address)
         self._stop_typing(chat_id_str)
 
         # If thread ID is missing, try to recover it from context
@@ -605,7 +606,7 @@ class TelegramChannel(BaseChannel):
         address_uri = msg.address.to_uri()
         int_chat_id = int(msg.address.segments[0])
         stream_id = msg.metadata.get("_stream_id")
-        message_thread_id = msg.metadata.get("message_thread_id")
+        message_thread_id = msg.address.segments[1] if len(msg.address.segments) > 1 else None
         thread_kwargs = {"message_thread_id": message_thread_id} if message_thread_id else {}
 
         if msg.metadata.get("_stream_end"):
@@ -614,7 +615,7 @@ class TelegramChannel(BaseChannel):
                 return
             if stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id:
                 return
-            self._stop_typing(address_uri)
+            self._stop_typing(str(int_chat_id))
             try:
                 html = _markdown_to_telegram_html(buf.text)
                 await self._call_with_retry(
