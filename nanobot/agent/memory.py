@@ -53,7 +53,19 @@ def _ensure_text(value: Any) -> str:
 def _normalize_save_memory_args(args: Any) -> dict[str, Any] | None:
     """Normalize provider tool-call arguments to the expected dict shape."""
     if isinstance(args, str):
-        args = json.loads(args)
+        try:
+            return json.loads(args)
+        except json.JSONDecodeError:
+            # Salvage logic: try to find the first JSON-looking block in the string
+            import re
+
+            match = re.search(r"(\{.*\})", args, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    pass
+            return None
     if isinstance(args, list):
         return args[0] if args and isinstance(args[0], dict) else None
     return args if isinstance(args, dict) else None
@@ -167,9 +179,20 @@ class MemoryStore:
                     len(response.content or ""),
                     (response.content or "")[:200],
                 )
-                return self._fail_or_raw_archive(messages)
+                # Last ditch effort: try to parse the content as a tool-call arguments string
+                if response.content:
+                    args = _normalize_save_memory_args(response.content)
+                    if args:
+                        logger.info(
+                            "Memory consolidation: salvaged tool-call from conversational content"
+                        )
+                    else:
+                        return self._fail_or_raw_archive(messages)
+                else:
+                    return self._fail_or_raw_archive(messages)
+            else:
+                args = _normalize_save_memory_args(response.tool_calls[0].arguments)
 
-            args = _normalize_save_memory_args(response.tool_calls[0].arguments)
             if args is None:
                 logger.warning("Memory consolidation: unexpected save_memory arguments")
                 return self._fail_or_raw_archive(messages)
