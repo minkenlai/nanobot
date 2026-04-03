@@ -631,6 +631,10 @@ class AgentLoop:
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
             self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+
+            # Frugality Nudge for system/subagent completions
+            final_content = self._maybe_add_frugality_nudge(session, final_content)
+
             return OutboundMessage(
                 address=address,
                 content=final_content or "Background task completed.",
@@ -709,6 +713,9 @@ class AgentLoop:
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None
+
+        # Frugality Nudge
+        final_content = self._maybe_add_frugality_nudge(session, final_content)
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
@@ -836,3 +843,48 @@ class AgentLoop:
             on_stream=on_stream,
             on_stream_end=on_stream_end,
         )
+
+    def _maybe_add_frugality_nudge(self, session: Session, content: str | None) -> str | None:
+        """Append a non-intrusive nudge if the session is getting long/expensive."""
+        if not content or not self.config.frugality.enabled:
+            return content
+
+        cfg = self.config.frugality
+        msg_count = len(session.messages)
+
+        # 1. Check message threshold
+        if msg_count < cfg.message_floor:
+            # We also check context floor if we're not past message floor yet
+            try:
+                tokens, _ = self.memory_consolidator.estimate_session_prompt_tokens(session)
+                window = self.context_window_tokens
+                pct = int(tokens / window * 100) if window else 0
+                if pct < cfg.context_floor_pct:
+                    return content
+            except Exception:
+                return content
+        else:
+            # Past message floor, now check if we should nudge based on interval
+            pct = 0  # will calculate if needed below
+
+        # 2. Check if we should nudge this time (modulus)
+        last_nudge = session.metadata.get("last_frugality_nudge", 0)
+        if msg_count - last_nudge < cfg.nudge_interval:
+            return content
+
+        # 3. If we haven't calculated pct yet, do it now for the nudge message
+        if pct == 0:
+            try:
+                tokens, _ = self.memory_consolidator.estimate_session_prompt_tokens(session)
+                window = self.context_window_tokens
+                pct = int(tokens / window * 100) if window else 0
+            except Exception:
+                pct = 0
+
+        # Update metadata to record this nudge
+        session.metadata["last_frugality_nudge"] = msg_count
+        self.sessions.save(session)
+
+        # 4. Append the nudge
+        nudge = f"\n\n---\n💡 **Frugality Tip:** This session has {msg_count} messages ({pct}% context). If starting a new topic, consider `/new` to save tokens!"
+        return content + nudge

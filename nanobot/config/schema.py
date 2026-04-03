@@ -154,6 +154,15 @@ class HeartbeatConfig(Base):
     keep_recent_messages: int = 8
 
 
+class FrugalityConfig(Base):
+    """Configuration for frugality nudges."""
+
+    enabled: bool = True
+    message_floor: int = 50
+    context_floor_pct: int = 60
+    nudge_interval: int = 10
+
+
 class GatewayConfig(Base):
     """Gateway/server configuration."""
 
@@ -224,6 +233,7 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     repl: ReplConfig = Field(default_factory=ReplConfig)
+    frugality: FrugalityConfig = Field(default_factory=FrugalityConfig)
 
     @property
     def workspace_path(self) -> Path:
