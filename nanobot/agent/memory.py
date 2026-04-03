@@ -59,7 +59,9 @@ def _normalize_save_memory_args(args: Any) -> dict[str, Any] | None:
             # Salvage logic: try to find the first JSON-looking block in the string
             import re
 
-            match = re.search(r"(\{.*\})", args, re.DOTALL)
+            # Look for the first JSON-looking block (starts with { and ends with })
+            # Using a non-greedy .*? to avoid capturing multiple blocks at once
+            match = re.search(r"(\{.*?\})", args, re.DOTALL)
             if match:
                 try:
                     return json.loads(match.group(1))
