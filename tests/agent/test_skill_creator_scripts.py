@@ -2,15 +2,15 @@ import sys
 import zipfile
 from pathlib import Path
 
-import init_skill
-import package_skill
-import quick_validate
-
 # Add the skill-creator scripts directory to sys.path so we can import its modules
 scripts_dir = (
     Path(__file__).parent.parent.parent / "nanobot" / "skills" / "skill-creator" / "scripts"
 )
 sys.path.insert(0, str(scripts_dir.resolve()))
+
+import init_skill
+import package_skill
+import quick_validate
 
 
 def test_init_skill_creates_expected_files(tmp_path: Path) -> None:

@@ -239,7 +239,7 @@ def version_callback(value: bool):
 
 
 @app.callback()
-    def main(
+def main(
     version: bool = typer.Option(
         None,
         "--version",
@@ -264,7 +264,7 @@ def version_callback(value: bool):
 
 
 @app.command()
-    def onboard(
+def onboard(
     workspace: str | None = typer.Option(
         None,
         "--workspace",
@@ -500,7 +500,7 @@ def _migrate_cron_store(config: "Config") -> None:
 
 
 @app.command()
-    def gateway(
+def gateway(
     port: int | None = typer.Option(
         None,
         "--port",
@@ -513,7 +513,9 @@ def _migrate_cron_store(config: "Config") -> None:
         "-w",
         help="Specify the workspace directory. Overrides config.agents.defaults.workspace.",
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose logging for debugging."),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable verbose logging for debugging."
+    ),
     config: str | None = typer.Option(
         None,
         "--config",
@@ -770,7 +772,7 @@ def _migrate_cron_store(config: "Config") -> None:
 
 
 @app.command()
-    def agent(
+def agent(
     message: str = typer.Option(
         None,
         "--message",
@@ -1051,7 +1053,9 @@ def _migrate_cron_store(config: "Config") -> None:
 # ============================================================================
 
 
-channels_app = typer.Typer(help="Manage and configure external chat channels (e.g., Telegram, WhatsApp).")
+channels_app = typer.Typer(
+    help="Manage and configure external chat channels (e.g., Telegram, WhatsApp)."
+)
 app.add_typer(channels_app, name="channels")
 
 
@@ -1227,7 +1231,7 @@ def plugins_list():
 
 
 @app.command()
-    def status():
+def status():
     """
     Display the current status and configuration of your nanobot instance.
 
