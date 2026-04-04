@@ -229,10 +229,9 @@ class TelegramChannel(BaseChannel):
         self._stream_bufs: dict[str, _StreamBuf] = {}  # address_uri -> streaming state
         self._progress_message_id: dict[str, int] = {}  # address_uri -> status message id
         self._progress_history: dict[str, list[str]] = {}  # address_uri -> audit trail
-        self._topic_pins: dict[str, tuple[float, str | None]] = {}  # key -> (expiry, profile)
         self._topic_pins: dict[
-            str, tuple[float, str | None]
-        ] = {}  # chat_id:thread_id -> (timestamp, profile_name)
+            str, tuple[int | None, str | None]
+        ] = {}  # chat_id:thread_id -> (pinned_message_id, profile_name)
 
     def is_allowed(self, sender_id: str) -> bool:
         """Preserve Telegram's legacy id|username allowlist matching."""
@@ -311,6 +310,14 @@ class TelegramChannel(BaseChannel):
                 & ~filters.COMMAND,
                 self._on_message,
             )
+        )
+
+        # Event-driven profile pin cache: update immediately on pin/unpin and edit
+        self._app.add_handler(
+            MessageHandler(filters.StatusUpdate.PINNED_MESSAGE, self._on_pin_event)
+        )
+        self._app.add_handler(
+            MessageHandler(filters.UpdateType.EDITED_MESSAGE, self._on_edited_message)
         )
 
         logger.info("Starting Telegram bot (polling mode)...")
@@ -794,41 +801,76 @@ class TelegramChannel(BaseChannel):
         sid = str(user.id)
         return f"{sid}|{user.username}" if user.username else sid
 
+    @staticmethod
+    def _parse_profile_from_message(msg) -> str | None:
+        """Extract profile name from a message's text/caption, or None if absent."""
+        text = (msg.text or getattr(msg, "caption", None) or "").strip()
+        match = re.search(r"^(?:Profile|Agent):\s*([\w-]+)", text, re.IGNORECASE | re.MULTILINE)
+        return match.group(1).lower() if match else None
+
     async def _get_topic_profile_pin(self, chat_id: int, thread_id: int) -> str | None:
-        """Fetch and cache pinned message configuration for a forum topic."""
+        """Return the cached profile for a forum topic, fetching once on cold start."""
         cache_key = f"{chat_id}:{thread_id}"
-        now = time.time()
 
-        # 5-minute cache to be "bang for the buck" frugal with API calls
+        # Cache is event-driven (pin/edit handlers keep it current); return immediately on hit
         if cache_key in self._topic_pins:
-            expiry, profile = self._topic_pins[cache_key]
-            if now < expiry:
-                return profile
+            _, profile = self._topic_pins[cache_key]
+            return profile
 
+        # Cold start: fetch current pinned message once and seed the cache
         try:
             if not self._app:
                 return None
             chat = await self._app.bot.get_chat(chat_id)
             pin = chat.pinned_message
             profile = None
+            pinned_msg_id = None
 
-            # Check if the pin is in the current topic and contains a profile directive
             if pin and getattr(pin, "message_thread_id", None) == thread_id:
-                text = (pin.text or pin.caption or "").strip()
-                # Match "Profile: deep" or "Agent: flash" (case-insensitive)
-                match = re.search(
-                    r"^(?:Profile|Agent):\s*([\w-]+)", text, re.IGNORECASE | re.MULTILINE
-                )
-                if match:
-                    profile = match.group(1).lower()
+                profile = self._parse_profile_from_message(pin)
+                if profile:
                     logger.info("Found profile pin for topic {}: {}", thread_id, profile)
+                pinned_msg_id = pin.message_id
 
-            # Cache for 5 minutes (even if None, to avoid spamming get_chat)
-            self._topic_pins[cache_key] = (now + 300, profile)
+            self._topic_pins[cache_key] = (pinned_msg_id, profile)
             return profile
         except Exception as e:
             logger.warning("Failed to fetch topic pin: {}", e)
             return None
+
+    async def _on_pin_event(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle pin/unpin events to update the topic profile cache immediately."""
+        msg = update.message
+        if not msg:
+            return
+        thread_id = getattr(msg, "message_thread_id", None)
+        if thread_id is None:
+            return  # profile pins only apply to forum topics
+        cache_key = f"{msg.chat_id}:{thread_id}"
+        pinned = msg.pinned_message
+        if pinned:
+            profile = self._parse_profile_from_message(pinned)
+            self._topic_pins[cache_key] = (pinned.message_id, profile)
+            logger.info("Pin event: topic {} profile -> {}", thread_id, profile)
+        else:
+            self._topic_pins.pop(cache_key, None)
+            logger.info("Pin event: topic {} unpinned, cache cleared", thread_id)
+
+    async def _on_edited_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Re-parse profile when the pinned message itself is edited."""
+        msg = update.edited_message
+        if not msg:
+            return
+        thread_id = getattr(msg, "message_thread_id", None)
+        if thread_id is None:
+            return
+        cache_key = f"{msg.chat_id}:{thread_id}"
+        cached = self._topic_pins.get(cache_key)
+        if cached is None or cached[0] != msg.message_id:
+            return  # edited message is not the current pin for this topic
+        profile = self._parse_profile_from_message(msg)
+        self._topic_pins[cache_key] = (msg.message_id, profile)
+        logger.info("Edit event: topic {} profile updated -> {}", thread_id, profile)
 
     @staticmethod
     def _derive_topic_session_key(message) -> str | None:
