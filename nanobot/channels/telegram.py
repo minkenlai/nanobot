@@ -469,6 +469,25 @@ class TelegramChannel(BaseChannel):
             await self._update_audit_trail(msg)
             return
 
+        # Handle system events
+        if msg.metadata.get("system_event") == "pin_invalid":
+            if msg.chat_id:
+                try:
+                    await self._app.bot.send_message(
+                        chat_id=msg.chat_id,
+                        message_thread_id=msg.message_thread_id,
+                        text=msg.content,
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.debug("Failed to send pin invalid warning: {}", e)
+
+            # If we know the user's triggering message ID, react with warning
+            user_msg_id = msg.metadata.get("message_id")
+            if user_msg_id and msg.chat_id:
+                await self._add_reaction(msg.chat_id, user_msg_id, "⚠️")
+            return
+
         # Unpack the Address
         address = msg.address
         chat_id_str = address.segments[0]

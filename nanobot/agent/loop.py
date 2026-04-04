@@ -702,6 +702,17 @@ class AgentLoop:
                 logger.info("Overriding agent profile for turn: {}", agent_profile)
             except ValueError as e:
                 logger.warning("Invalid agent profile requested in metadata: {}", e)
+                # Send transient warning to user about invalid profile pin
+                await self.bus.publish_outbound(
+                    OutboundMessage(
+                        address=msg.address,
+                        content=f"⚠️ The pinned profile `{agent_profile}` was not found. Falling back to default agent.",
+                        metadata={
+                            "system_event": "pin_invalid",
+                            "message_id": msg.metadata.get("message_id"),
+                        },
+                    )
+                )
 
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages,
