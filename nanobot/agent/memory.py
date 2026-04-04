@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import weakref
 from datetime import datetime
 from pathlib import Path
@@ -53,7 +54,18 @@ def _ensure_text(value: Any) -> str:
 def _normalize_save_memory_args(args: Any) -> dict[str, Any] | None:
     """Normalize provider tool-call arguments to the expected dict shape."""
     if isinstance(args, str):
-        args = json.loads(args)
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            # Salvage: find the first JSON object embedded in conversational text
+            match = re.search(r"(\{.*?\})", args, re.DOTALL)
+            if match:
+                try:
+                    args = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    pass
+            if isinstance(args, str):
+                return None
     if isinstance(args, list):
         return args[0] if args and isinstance(args[0], dict) else None
     return args if isinstance(args, dict) else None
@@ -144,12 +156,13 @@ class MemoryStore:
 
         try:
             forced = {"type": "function", "function": {"name": "save_memory"}}
+            extra = {"max_tokens": max_tokens} if max_tokens is not None else {}
             response = await provider.chat_with_retry(
                 messages=chat_messages,
                 tools=_SAVE_MEMORY_TOOL,
                 model=model,
                 tool_choice=forced,
-                max_tokens=max_tokens,
+                **extra,
             )
 
             if response.finish_reason == "error" and _is_tool_choice_unsupported(response.content):
@@ -159,7 +172,7 @@ class MemoryStore:
                     tools=_SAVE_MEMORY_TOOL,
                     model=model,
                     tool_choice="auto",
-                    max_tokens=max_tokens,
+                    **extra,
                 )
 
             if response.finish_reason == "length":
@@ -186,7 +199,12 @@ class MemoryStore:
                 logger.warning("Memory consolidation: unexpected save_memory arguments")
                 return self._fail_or_raw_archive(messages)
 
-            if "history_entry" not in args or "memory_update" not in args:
+            if (
+                "history_entry" not in args
+                or "memory_update" not in args
+                or args["history_entry"] is None
+                or args["memory_update"] is None
+            ):
                 logger.warning("Memory consolidation: save_memory payload missing required fields")
                 return self._fail_or_raw_archive(messages)
 
