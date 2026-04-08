@@ -297,10 +297,13 @@ class Config(BaseSettings):
         if local_fallback:
             return local_fallback
 
-        # Fallback: gateways first, then others (follows registry order)
-        # OAuth providers are NOT valid fallbacks — they require explicit model selection
+        # Fallback: gateways and direct providers only (follows registry order).
+        # Standard cloud providers (Gemini, Anthropic, etc.) must match by keyword above —
+        # they cannot serve arbitrary model names, so falling back to them silently would
+        # route requests to the wrong API (e.g. Gemini when Ollama was intended).
+        # OAuth providers are NOT valid fallbacks — they require explicit model selection.
         for spec in PROVIDERS:
-            if spec.is_oauth:
+            if spec.is_oauth or not (spec.is_gateway or spec.is_direct):
                 continue
             p = getattr(self.providers, spec.name, None)
             if p and p.api_key:
