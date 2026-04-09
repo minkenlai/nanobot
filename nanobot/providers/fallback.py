@@ -288,16 +288,6 @@ class FallbackProvider(LLMProvider):
         """The config identifiers of all slots in the chain."""
         return [s[2] for s in self._slots]
 
-    @property
-    def memory_provider(self) -> LLMProvider:
-        """The last (cheapest/most stable) slot's provider, for memory consolidation."""
-        return self._slots[-1][0]
-
-    @property
-    def memory_model(self) -> str:
-        """The last slot's model string, for memory consolidation."""
-        return self._slots[-1][1]
-
     def _check_reset(self) -> str | None:
         """Return a reset notification if the quota window has rolled over, else None."""
         if self._reset_at and datetime.now(timezone.utc) >= self._reset_at:

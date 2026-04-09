@@ -78,7 +78,7 @@ The `SubagentManager` (`nanobot/agent/subagent.py`) handles background task exec
 
 ### Memory System
 
-Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped searchable log). `MemoryConsolidator` calls the LLM after each agent turn to extract and update both files. It uses a "Whole File Rewrite" strategy with an expanded 8192-token budget and strict truncation protection (`finish_reason == "length"`) to prevent data corruption. Messages are never modified after writing (cache-friendly for prompt caching).
+Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped searchable log). `MemoryConsolidator` calls the LLM after each agent turn to extract and update both files. It uses a "Whole File Rewrite" strategy with strict truncation protection (`finish_reason == "length"`) to prevent data corruption. The consolidation uses the loop's own provider (full fallback chain) and the provider's configured `max_tokens` — no artificial budget override. Messages are never modified after writing (cache-friendly for prompt caching).
 
 ### Skill System
 

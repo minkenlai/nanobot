@@ -131,7 +131,6 @@ class MemoryStore:
         messages: list[dict],
         provider: LLMProvider,
         model: str,
-        max_tokens: int | None = None,
     ) -> bool:
         """Consolidate the provided message chunk into MEMORY.md + HISTORY.md."""
         if not messages:
@@ -156,13 +155,11 @@ class MemoryStore:
 
         try:
             forced = {"type": "function", "function": {"name": "save_memory"}}
-            extra = {"max_tokens": max_tokens} if max_tokens is not None else {}
             response = await provider.chat_with_retry(
                 messages=chat_messages,
                 tools=_SAVE_MEMORY_TOOL,
                 model=model,
                 tool_choice=forced,
-                **extra,
             )
 
             if response.finish_reason == "error" and _is_tool_choice_unsupported(response.content):
@@ -172,7 +169,6 @@ class MemoryStore:
                     tools=_SAVE_MEMORY_TOOL,
                     model=model,
                     tool_choice="auto",
-                    **extra,
                 )
 
             if response.finish_reason == "length":
@@ -180,7 +176,7 @@ class MemoryStore:
                     "Memory consolidation TRUNCATED (finish_reason=length). "
                     "MEMORY.md update or history_entry was too long for the max_tokens limit ({}). "
                     "Aborting to avoid corrupting memory files.",
-                    max_tokens,
+                    provider.generation.max_tokens,
                 )
                 return self._fail_or_raw_archive(messages)
 
@@ -277,10 +273,7 @@ class MemoryConsolidator:
 
     async def consolidate_messages(self, messages: list[dict[str, object]]) -> bool:
         """Archive a selected message chunk into persistent memory."""
-        # Use a higher token budget for consolidation than the default profile might allow
-        # to ensure the "Echo Tax" of rewriting MEMORY.md doesn't cause truncation.
-        budget = max(8192, self.max_completion_tokens)
-        return await self.store.consolidate(messages, self.provider, self.model, max_tokens=budget)
+        return await self.store.consolidate(messages, self.provider, self.model)
 
     def pick_consolidation_boundary(
         self,

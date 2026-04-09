@@ -304,28 +304,6 @@ def test_fallback_provider_requires_at_least_one_slot():
         FallbackProvider([])
 
 
-# ---------------------------------------------------------------------------
-# Additional: memory_provider / memory_model return last slot
-# ---------------------------------------------------------------------------
-
-
-def test_memory_provider_returns_last_slot():
-    """memory_provider and memory_model must point to the last slot."""
-    p1 = _make_mock_provider("model-a")
-    p2 = _make_mock_provider("model-b")
-    p3 = _make_mock_provider("model-c")
-
-    fp = FallbackProvider(
-        [
-            (p1, "model-a", "model-a", "UTC"),
-            (p2, "model-b", "model-b", "UTC"),
-            (p3, "model-c", "model-c", "UTC"),
-        ]
-    )
-
-    assert fp.memory_provider is p3
-    assert fp.memory_model == "model-c"
-
 
 # ---------------------------------------------------------------------------
 # Additional: quota errors on multiple consecutive slots
