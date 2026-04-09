@@ -15,7 +15,6 @@ except ImportError:
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.telegram import TelegramChannel, TelegramConfig
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

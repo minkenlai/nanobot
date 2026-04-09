@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.memory import MemoryConsolidator, MemoryStore
+from nanobot.agent.memory import MemoryStore
 
 
 @pytest.fixture

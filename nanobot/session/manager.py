@@ -223,12 +223,12 @@ class SessionManager:
         """
         from loguru import logger
 
-        logger.error(f"GET OR CREATE {key}, cache: {list(self._cache.keys())}")
+        logger.info(f"GET OR CREATE {key}, cache: {list(self._cache.keys())}")
         if key in self._cache:
             return self._cache[key]
 
         session = self._load(key)
-        logger.error(f"LOADED {key}: {session is not None}")
+        logger.info(f"LOADED {key}: {session is not None}")
         if session is None:
             session = Session(key=key)
 

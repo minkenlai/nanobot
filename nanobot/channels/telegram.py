@@ -169,6 +169,8 @@ class _StreamBuf:
     message_id: int | None = None
     last_edit: float = 0.0
     stream_id: str | None = None
+    consecutive_updates: int = 0
+    current_debounce_delay: float = 0.6
 
 
 class TelegramConfig(Base):
@@ -754,21 +756,56 @@ class TelegramChannel(BaseChannel):
             except Exception as e:
                 logger.warning("Stream initial send failed: {}", e)
                 raise  # Let ChannelManager handle retry
-        elif (now - buf.last_edit) >= self._STREAM_EDIT_INTERVAL:
-            try:
-                await self._call_with_retry(
-                    self._app.bot.edit_message_text,
-                    chat_id=int_chat_id,
-                    message_id=buf.message_id,
-                    text=buf.text,
+        # --- Start Adaptive Debounce Logic ---
+        now = time.monotonic()
+
+        # 1. Check if the time elapsed is less than the current required debounce delay
+        if (now - buf.last_edit) < buf.current_debounce_delay:
+            buf.consecutive_updates += 1
+            logger.debug(
+                "Debouncing stream: Update {} arrived within {}s window. Next target: {}s.",
+                buf.consecutive_updates,
+                buf.current_debounce_delay,
+                buf.current_debounce_delay * 2.5,
+            )
+
+            # 2. Dynamically increase the debounce delay if we are receiving too many updates fast
+            # Threshold: If we get 3 updates in a row within the current delay window, increase the delay.
+            if buf.consecutive_updates >= 3 and buf.current_debounce_delay < 5.0:
+                buf.current_debounce_delay = min(5.0, buf.current_debounce_delay * 2.5)
+                logger.info(
+                    "Stream spike detected. Increasing debounce delay to {}s.",
+                    buf.current_debounce_delay,
                 )
+
+            # Early exit: We are in a burst; wait for the timer to pass naturally
+            return
+
+        # 3. If the time elapsed is greater than the required debounce delay: Time to flush!
+        # This is equivalent to the old check, but dynamically adjusted.
+        try:
+            await self._call_with_retry(
+                self._app.bot.edit_message_text,
+                chat_id=int_chat_id,
+                message_id=buf.message_id,
+                text=buf.text,
+            )
+            # Success: Reset state and stabilize the delay
+            buf.last_edit = now
+            buf.consecutive_updates = 0
+            buf.current_debounce_delay = 0.6  # Return to baseline minimum
+            logger.debug("Stream delta sent successfully. Resetting debounce state.")
+        except Exception as e:
+            if self._is_not_modified_error(e):
                 buf.last_edit = now
-            except Exception as e:
-                if self._is_not_modified_error(e):
-                    buf.last_edit = now
-                    return
-                logger.warning("Stream edit failed: {}", e)
-                raise  # Let ChannelManager handle retry
+                buf.consecutive_updates = 0
+                buf.current_debounce_delay = 0.6  # Return to baseline minimum
+                logger.debug("Stream edit successful: message not modified (idempotent success)")
+                return
+            logger.warning("Stream edit failed: {}", e)
+            # Crucially, do NOT reset the counter on failure, allowing aggressive retries/pauses.
+            raise  # Let ChannelManager handle retry
+        # --- End Adaptive Debounce Logic ---
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
