@@ -52,11 +52,21 @@ Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (chan
 
 ### Provider System
 
-`nanobot/providers/registry.py` is the single source of truth for 25+ providers. Each `ProviderSpec` defines name, keywords, `env_key`, default API base, and capability flags.
+`nanobot/providers/registry.py` is the single source of truth for 25+ providers. Each `ProviderSpec` defines name, keywords, `env_key`, default API base, and capability flags. Additional fields on `ProviderSpec`:
+- `is_local: bool` — disables timeout retries (local providers should fail fast, not retry)
+- `http_timeout: int` — per-provider HTTP timeout in seconds (default 120; local providers use 600)
+- `max_concurrent: int` — max simultaneous requests (0 = unlimited; local providers use 1 to serialize)
+- `strip_model_prefix: bool` — strip `"provider/"` routing prefix before sending model name to API
 
 **To add a new provider**: (1) add a `ProviderSpec` to `PROVIDERS` in `registry.py`, (2) add a config field to `ProvidersConfig` in `nanobot/config/schema.py`.
 
 Backend implementations include: `AnthropicProvider`, `OpenAICompatProvider`, `AzureOpenAIProvider`, and `GeminiNativeProvider`. A special `FallbackProvider` wraps these, providing quota-awareness and automatic fallback chains that reset daily.
+
+**FallbackProvider failure modes:**
+- **Quota exhaustion** → permanent slot advance (`self._active_index`); next reset scheduled per `quota_reset_timezone`
+- **Connectivity/timeout on local slot** → request-scoped fallback only (`effective_index`); next request retries the local provider first
+
+**Provider resolution** (`nanobot/config/schema.py`): `_match_provider` and all public resolution methods (`get_provider`, `get_api_base`, etc.) accept an explicit `provider_override` parameter. Pass `mc.provider` when resolving per-slot settings to avoid agent-level defaults leaking into per-model lookups.
 
 ### Tool System
 

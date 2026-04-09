@@ -242,13 +242,21 @@ class Config(BaseSettings):
         return Path(self.agents.defaults.workspace).expanduser()
 
     def _match_provider(
-        self, model: str | None = None, agent_name: str = "defaults"
+        self,
+        model: str | None = None,
+        agent_name: str = "defaults",
+        provider_override: str = "auto",
     ) -> tuple["ProviderConfig | None", str | None]:
-        """Match provider config and its registry name. Returns (config, spec_name)."""
+        """Match provider config and its registry name. Returns (config, spec_name).
+
+        *provider_override* takes precedence over the agent's configured ``provider``
+        field.  Pass it explicitly (e.g. from a ModelConfig entry) to avoid mutating
+        shared agent state.
+        """
         from nanobot.providers.registry import PROVIDERS, find_by_name
 
         agent_config = self.agents.get_agent(agent_name)
-        forced = agent_config.provider
+        forced = provider_override if provider_override != "auto" else agent_config.provider
         if forced != "auto":
             spec = find_by_name(forced)
             if spec:
@@ -311,29 +319,45 @@ class Config(BaseSettings):
         return None, None
 
     def get_provider(
-        self, model: str | None = None, agent_name: str = "defaults"
+        self,
+        model: str | None = None,
+        agent_name: str = "defaults",
+        provider_override: str = "auto",
     ) -> ProviderConfig | None:
-        """Get matched provider config (api_key, api_base, extra_headers). Falls back to first available."""
-        p, _ = self._match_provider(model, agent_name)
+        """Get matched provider config (api_key, api_base, extra_headers)."""
+        p, _ = self._match_provider(model, agent_name, provider_override)
         return p
 
     def get_provider_name(
-        self, model: str | None = None, agent_name: str = "defaults"
+        self,
+        model: str | None = None,
+        agent_name: str = "defaults",
+        provider_override: str = "auto",
     ) -> str | None:
         """Get the registry name of the matched provider (e.g. "deepseek", "openrouter")."""
-        _, name = self._match_provider(model, agent_name)
+        _, name = self._match_provider(model, agent_name, provider_override)
         return name
 
-    def get_api_key(self, model: str | None = None, agent_name: str = "defaults") -> str | None:
-        """Get API key for the given model. Falls back to first available key."""
-        p = self.get_provider(model, agent_name)
+    def get_api_key(
+        self,
+        model: str | None = None,
+        agent_name: str = "defaults",
+        provider_override: str = "auto",
+    ) -> str | None:
+        """Get API key for the given model."""
+        p = self.get_provider(model, agent_name, provider_override)
         return p.api_key if p else None
 
-    def get_api_base(self, model: str | None = None, agent_name: str = "defaults") -> str | None:
+    def get_api_base(
+        self,
+        model: str | None = None,
+        agent_name: str = "defaults",
+        provider_override: str = "auto",
+    ) -> str | None:
         """Get API base URL for the given model. Applies default URLs for gateway/local providers."""
         from nanobot.providers.registry import find_by_name
 
-        p, name = self._match_provider(model, agent_name)
+        p, name = self._match_provider(model, agent_name, provider_override)
         if p and p.api_base:
             return p.api_base
         # Only gateways get a default api_base here. Standard providers

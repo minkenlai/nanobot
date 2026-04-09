@@ -9,12 +9,31 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
     """Create the appropriate LLM provider from config.
 
     Two modes:
-    - **Single Provider:** fallback_models is empty. Uses the configured
-      model and provider fields.
-    - **Fallback Chain:** fallback_models is a non-empty ordered list
-      of keys into the top-level models dict. Builds a FallbackProvider
-      that tries each slot in order on quota errors. The agent's base
-      'model' and 'provider' fields are ignored.
+
+    **Single provider** — ``fallback_models`` is empty.  Uses ``model`` and
+    ``provider`` directly.  If ``model`` is a key in the top-level ``models``
+    dict the corresponding ``ModelConfig`` entry is used instead (same path as
+    fallback chain, single slot).
+
+    **Fallback chain** — ``fallback_models`` is a non-empty ordered list of
+    keys into the top-level ``models`` dict.  Wraps the resulting providers in
+    a ``FallbackProvider`` that advances to the next slot on quota/429 errors.
+
+    Provider resolution cascade (per slot):
+      1. ``ModelConfig.provider`` if explicitly set (not ``"auto"``).
+      2. ``AgentDefaults.provider`` if explicitly set — acts as a routing
+         *gateway* policy that applies to every slot whose ``ModelConfig``
+         leaves provider as ``"auto"`` (e.g. route everything through OpenRouter).
+      3. Keyword / prefix auto-detection against the model string.
+
+    Model string prefix handling:
+      Model names are stored with their routing prefix (``"anthropic/claude-opus-4"``).
+      Each provider backend handles stripping independently:
+      - Direct providers (Anthropic, Gemini) always strip the prefix before the
+        wire call because their APIs only accept bare names.
+      - OpenAI-compat providers strip only when ``spec.strip_model_prefix=True``
+        (e.g. AiHubMix); gateways like OpenRouter keep the full string because
+        the prefix is how they route to the correct upstream.
     """
     try:
         agent_config = config.agents.get_agent(agent_name)
@@ -81,12 +100,16 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
         if mc.prefill is not None and hasattr(slot_provider, "prefill"):
             slot_provider.prefill = mc.prefill
 
-        # Determine the provider name for this slot to get its reset timezone
-        slot_provider_name = config.get_provider_name(mc.model, agent_name=agent_name)
+        # Determine the provider name for this slot to get its reset timezone.
+        # Pass mc.provider so the lookup uses the slot's own provider, not the
+        # agent-level provider field (which may differ for multi-provider chains).
+        slot_provider_name = config.get_provider_name(
+            mc.model, agent_name=agent_name, provider_override=mc.provider
+        )
         slot_reset_timezone = (
             getattr(config.providers, slot_provider_name).quota_reset_timezone
             if slot_provider_name
-            else "UTC"  # Fallback to UTC if provider name can't be resolved
+            else "UTC"
         )
 
         slots.append((slot_provider, mc.model, key, slot_reset_timezone))
@@ -106,18 +129,12 @@ def _build_single_provider(
     """Instantiate a single LLM provider for *model* using *config*."""
     agent_config = config.agents.get_agent(agent_name)
 
-    # Temporarily override the provider field so _match_provider picks the right one.
-    original_provider = agent_config.provider
-    if provider_override != "auto":
-        agent_config.provider = provider_override
-
-    try:
-        provider_name = config.get_provider_name(model, agent_name=agent_name)
-        p = config.get_provider(model, agent_name=agent_name)
-        spec = find_by_name(provider_name) if provider_name else None
-        backend = spec.backend if spec else "openai_compat"
-    finally:
-        agent_config.provider = original_provider
+    provider_name = config.get_provider_name(
+        model, agent_name=agent_name, provider_override=provider_override
+    )
+    p = config.get_provider(model, agent_name=agent_name, provider_override=provider_override)
+    spec = find_by_name(provider_name) if provider_name else None
+    backend = spec.backend if spec else "openai_compat"
 
     # --- validation ---
     if backend == "azure_openai":
@@ -154,7 +171,7 @@ def _build_single_provider(
 
         provider = AnthropicProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model, agent_name=agent_name),
+            api_base=config.get_api_base(model, agent_name=agent_name, provider_override=provider_override),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
         )
@@ -163,7 +180,7 @@ def _build_single_provider(
 
         provider = GeminiNativeProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model, agent_name=agent_name),
+            api_base=config.get_api_base(model, agent_name=agent_name, provider_override=provider_override),
             default_model=model,
             grounding=agent_config.grounding,
         )
@@ -172,7 +189,7 @@ def _build_single_provider(
 
         provider = OpenAICompatProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model, agent_name=agent_name),
+            api_base=config.get_api_base(model, agent_name=agent_name, provider_override=provider_override),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
             spec=spec,

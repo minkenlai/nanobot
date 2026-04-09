@@ -199,10 +199,17 @@ class LLMProvider(ABC):
         """
         pass
 
-    @classmethod
-    def _is_transient_error(cls, content: str | None) -> bool:
+    def _is_transient_error(self, content: str | None) -> bool:
         err = (content or "").lower()
-        return any(marker in err for marker in cls._TRANSIENT_ERROR_MARKERS)
+        markers = self._TRANSIENT_ERROR_MARKERS
+        # Local providers (Ollama, vLLM) are inherently slow — a timeout means
+        # the model is still processing, not that the endpoint is flaky.
+        # Retrying would pile up a second request on top of the first, making
+        # things exponentially worse. Skip the timeout markers for local specs.
+        spec = getattr(self, "_spec", None)
+        if spec and getattr(spec, "is_local", False):
+            markers = tuple(m for m in markers if m not in ("timeout", "timed out"))
+        return any(marker in err for marker in markers)
 
     @staticmethod
     def _strip_image_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:

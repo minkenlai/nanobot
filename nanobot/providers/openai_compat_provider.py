@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import secrets
 import string
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import json_repair
@@ -146,11 +148,16 @@ class OpenAICompatProvider(LLMProvider):
         if extra_headers:
             default_headers.update(extra_headers)
 
+        http_timeout = spec.http_timeout if spec else 120
         self._client = AsyncOpenAI(
             api_key=api_key or "no-key",
             base_url=effective_base,
             default_headers=default_headers,
-            timeout=120.0,
+            timeout=http_timeout,
+        )
+        max_concurrent = spec.max_concurrent if spec else 0
+        self._semaphore: asyncio.Semaphore | None = (
+            asyncio.Semaphore(max_concurrent) if max_concurrent > 0 else None
         )
 
     def _setup_env(self, api_key: str, api_base: str | None) -> None:
@@ -632,7 +639,8 @@ class OpenAICompatProvider(LLMProvider):
             tool_choice,
         )
         logger.debug(f"LLM Request kwargs (chat): {json.dumps(kwargs, default=str)}")
-        return self._parse(await self._client.chat.completions.create(**kwargs))
+        async with self._semaphore or nullcontext():
+            return self._parse(await self._client.chat.completions.create(**kwargs))
 
     async def chat_stream(
         self,
@@ -657,14 +665,15 @@ class OpenAICompatProvider(LLMProvider):
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
         logger.debug(f"LLM Request kwargs (chat_stream): {json.dumps(kwargs, default=str)}")
-        stream = await self._client.chat.completions.create(**kwargs)
-        chunks: list[Any] = []
-        async for chunk in stream:
-            chunks.append(chunk)
-            if on_content_delta and chunk.choices:
-                text = getattr(chunk.choices[0].delta, "content", None)
-                if text:
-                    await on_content_delta(text)
+        async with self._semaphore or nullcontext():
+            stream = await self._client.chat.completions.create(**kwargs)
+            chunks: list[Any] = []
+            async for chunk in stream:
+                chunks.append(chunk)
+                if on_content_delta and chunk.choices:
+                    text = getattr(chunk.choices[0].delta, "content", None)
+                    if text:
+                        await on_content_delta(text)
         return self._parse_chunks(chunks)
 
     def get_default_model(self) -> str:

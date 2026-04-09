@@ -63,6 +63,15 @@ class ProviderSpec:
     # Provider supports cache_control on content blocks (e.g. Anthropic prompt caching)
     supports_prompt_caching: bool = False
 
+    # HTTP request timeout in seconds (read timeout per chunk for streaming).
+    # Local providers (Ollama, vLLM) are slower and need a longer timeout.
+    http_timeout: int = 120
+
+    # Maximum concurrent in-flight requests to this provider. 0 = unlimited.
+    # Set to 1 for local single-GPU providers so requests are serialized
+    # rather than piled up, which would cause timeouts and queue bloat.
+    max_concurrent: int = 0
+
     @property
     def label(self) -> str:
         return self.display_name or self.name.title()
@@ -298,6 +307,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="vLLM/Local",
         backend="openai_compat",
         is_local=True,
+        http_timeout=600,
+        max_concurrent=1,
     ),
     # Ollama (local, OpenAI-compatible)
     ProviderSpec(
@@ -309,6 +320,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         is_local=True,
         detect_by_base_keyword="11434",
         default_api_base="http://localhost:11434/v1",
+        http_timeout=600,
+        max_concurrent=1,
     ),
     # === OpenVINO Model Server (direct, local, OpenAI-compatible at /v3) ===
     ProviderSpec(
@@ -320,6 +333,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         is_direct=True,
         is_local=True,
         default_api_base="http://localhost:8000/v3",
+        http_timeout=600,
+        max_concurrent=1,
     ),
     # === Auxiliary (not a primary LLM provider) ============================
     # Groq: mainly used for Whisper voice transcription, also usable for LLM

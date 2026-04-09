@@ -55,12 +55,16 @@ class FallbackProvider(LLMProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
-        """Delegate to the active slot, falling back on quota errors."""
+        """Delegate to the active slot, falling back on quota or local connectivity errors."""
         notification = self._check_reset()
         current_max_tokens = max_tokens
+        # effective_index tracks which slot to use for *this* request.
+        # Quota advances update both effective_index and self._active_index (permanent).
+        # Connectivity advances on local slots update only effective_index (request-scoped).
+        effective_index = self._active_index
 
         while True:
-            provider, slot_model, slot_id, _ = self._slots[self._active_index]
+            provider, slot_model, slot_id, _ = self._slots[effective_index]
             try:
                 response = await provider.chat(
                     messages=messages,
@@ -97,40 +101,33 @@ class FallbackProvider(LLMProvider):
                 msg = str(exc).lower()
                 is_max_tokens_issue = "max_tokens" in msg or "max tokens" in msg
 
-                # If we hit a 402/quota error, try next slot or reduce max_tokens
+                # Quota error → permanent slot advance (resets at midnight).
                 if self._is_quota_error(exc):
                     if is_max_tokens_issue and current_max_tokens > 1024:
-                        # Optimization: if we hit a max_tokens issue, try again with reduced tokens
-                        # BEFORE giving up on the current slot or moving to next.
                         current_max_tokens //= 2
                         logger.warning(
                             f"FallbackProvider: Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
                         )
                         continue
 
-                    if self._active_index < len(self._slots) - 1:
-                        # Only advance if another concurrent request hasn't already advanced it.
-                        if self._slots[self._active_index][1] == slot_model:
-                            old_active_index = self._active_index  # Store before incrementing
+                    if effective_index < len(self._slots) - 1:
+                        # Only advance if another concurrent request hasn't already done so.
+                        if self._slots[effective_index][1] == slot_model:
                             old_id = slot_id
-                            self._active_index += 1
+                            effective_index += 1
+                            self._active_index = effective_index  # permanent
 
-                            # Calculate and store reset time for the just-failed slot
-                            failed_slot_tz = self._slot_reset_timezones[old_active_index]
-                            self._failed_slot_reset_times[old_active_index] = (
+                            failed_slot_tz = self._slot_reset_timezones[effective_index - 1]
+                            self._failed_slot_reset_times[effective_index - 1] = (
                                 self._next_reset_midnight(failed_slot_tz)
                             )
-
-                            # Update _reset_at to the earliest pending reset
                             self._reset_at = (
                                 min(self._failed_slot_reset_times.values())
                                 if self._failed_slot_reset_times
                                 else None
                             )
-
-                            # Update generation settings to the new active slot's provider.
-                            self.generation = self._slots[self._active_index][0].generation
-                            new_id = self._slots[self._active_index][2]
+                            self.generation = self._slots[effective_index][0].generation
+                            new_id = self._slots[effective_index][2]
                             fallback_msg = (
                                 f"⚠️ Model quota hit on {old_id}. Switching to fallback: {new_id}."
                             )
@@ -140,6 +137,30 @@ class FallbackProvider(LLMProvider):
                                 else fallback_msg
                             )
                         continue
+
+                # Connectivity/timeout error on a local slot → request-scoped advance.
+                # self._active_index is NOT updated so the next request still tries the
+                # local provider first (it may just have been temporarily slow).
+                is_local_slot = getattr(getattr(provider, "_spec", None), "is_local", False)
+                if (
+                    is_local_slot
+                    and self._is_connectivity_error(exc)
+                    and effective_index < len(self._slots) - 1
+                ):
+                    new_id = self._slots[effective_index + 1][2]
+                    logger.warning(
+                        "FallbackProvider: {} unreachable, trying {} for this request: {!r}",
+                        slot_id,
+                        new_id,
+                        exc,
+                    )
+                    effective_index += 1
+                    fallback_msg = f"⚠️ {slot_id} unavailable. Using {new_id} for this request."
+                    notification = (
+                        (notification + "\n" + fallback_msg) if notification else fallback_msg
+                    )
+                    continue
+
                 raise
 
     async def chat_stream(
@@ -153,12 +174,14 @@ class FallbackProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        """Stream from the active slot, falling back on quota errors."""
+        """Stream from the active slot, falling back on quota or local connectivity errors."""
         notification = self._check_reset()
         current_max_tokens = max_tokens
+        # See chat() for the effective_index vs self._active_index design.
+        effective_index = self._active_index
 
         while True:
-            provider, slot_model, slot_id, _ = self._slots[self._active_index]
+            provider, slot_model, slot_id, _ = self._slots[effective_index]
             try:
                 # Deliver any pending notification as a leading delta.
                 if notification and on_content_delta:
@@ -182,40 +205,33 @@ class FallbackProvider(LLMProvider):
                 msg = str(exc).lower()
                 is_max_tokens_issue = "max_tokens" in msg or "max tokens" in msg
 
-                # If we hit a 402/quota error, try next slot or reduce max_tokens
+                # Quota error → permanent slot advance (resets at midnight).
                 if self._is_quota_error(exc):
                     if is_max_tokens_issue and current_max_tokens > 1024:
-                        # Optimization: if we hit a max_tokens issue, try again with reduced tokens
-                        # BEFORE giving up on the current slot or moving to next.
                         current_max_tokens //= 2
                         logger.warning(
                             f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
                         )
                         continue
 
-                    if self._active_index < len(self._slots) - 1:
-                        # Only advance if another concurrent request hasn't already advanced it.
-                        if self._slots[self._active_index][1] == slot_model:
-                            old_active_index = self._active_index  # Store before incrementing
+                    if effective_index < len(self._slots) - 1:
+                        # Only advance if another concurrent request hasn't already done so.
+                        if self._slots[effective_index][1] == slot_model:
                             old_id = slot_id
-                            self._active_index += 1
+                            effective_index += 1
+                            self._active_index = effective_index  # permanent
 
-                            # Calculate and store reset time for the just-failed slot
-                            failed_slot_tz = self._slot_reset_timezones[old_active_index]
-                            self._failed_slot_reset_times[old_active_index] = (
+                            failed_slot_tz = self._slot_reset_timezones[effective_index - 1]
+                            self._failed_slot_reset_times[effective_index - 1] = (
                                 self._next_reset_midnight(failed_slot_tz)
                             )
-
-                            # Update _reset_at to the earliest pending reset
                             self._reset_at = (
                                 min(self._failed_slot_reset_times.values())
                                 if self._failed_slot_reset_times
                                 else None
                             )
-
-                            # Update generation settings to the new active slot's provider.
-                            self.generation = self._slots[self._active_index][0].generation
-                            new_id = self._slots[self._active_index][2]
+                            self.generation = self._slots[effective_index][0].generation
+                            new_id = self._slots[effective_index][2]
                             fallback_msg = (
                                 f"⚠️ Model quota hit on {old_id}. Switching to fallback: {new_id}."
                             )
@@ -225,41 +241,28 @@ class FallbackProvider(LLMProvider):
                                 else fallback_msg
                             )
                         continue
-                raise
-            except Exception as exc:
-                msg = str(exc).lower()
-                is_max_tokens_issue = "max_tokens" in msg or "max tokens" in msg
 
-                # If we hit a 402/quota error, try next slot or reduce max_tokens
-                if self._is_quota_error(exc):
-                    if is_max_tokens_issue and current_max_tokens > 1024:
-                        # Optimization: if we hit a max_tokens issue, try again with reduced tokens
-                        # BEFORE giving up on the current slot or moving to next.
-                        current_max_tokens //= 2
-                        logger.warning(
-                            f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
-                        )
-                        continue
+                # Connectivity/timeout error on a local slot → request-scoped advance.
+                is_local_slot = getattr(getattr(provider, "_spec", None), "is_local", False)
+                if (
+                    is_local_slot
+                    and self._is_connectivity_error(exc)
+                    and effective_index < len(self._slots) - 1
+                ):
+                    new_id = self._slots[effective_index + 1][2]
+                    logger.warning(
+                        "FallbackProvider: {} unreachable, trying {} for this request: {!r}",
+                        slot_id,
+                        new_id,
+                        exc,
+                    )
+                    effective_index += 1
+                    fallback_msg = f"⚠️ {slot_id} unavailable. Using {new_id} for this request."
+                    notification = (
+                        (notification + "\n" + fallback_msg) if notification else fallback_msg
+                    )
+                    continue
 
-                    if self._active_index < len(self._slots) - 1:
-                        # Only advance if another concurrent request hasn't already advanced it.
-                        if self._slots[self._active_index][1] == slot_model:
-                            old_id = slot_id
-                            self._active_index += 1
-                            if self._reset_at is None:
-                                self._reset_at = self._next_reset_midnight(self._reset_timezone)
-                            # Update generation settings to the new active slot's provider.
-                            self.generation = self._slots[self._active_index][0].generation
-                            new_id = self._slots[self._active_index][2]
-                            fallback_msg = (
-                                f"⚠️ Model quota hit on {old_id}. Switching to fallback: {new_id}."
-                            )
-                            notification = (
-                                (notification + "\n" + fallback_msg)
-                                if notification
-                                else fallback_msg
-                            )
-                        continue
                 raise
 
     def get_default_model(self) -> str:
@@ -342,3 +345,14 @@ class FallbackProvider(LLMProvider):
                 "payment required",
             ]
         )
+
+    @staticmethod
+    def _is_connectivity_error(exc: Exception) -> bool:
+        """Return True for timeout / connection-refused / network errors."""
+        # Check the exception class name (catches httpx.ReadTimeout,
+        # openai.APITimeoutError, openai.APIConnectionError, etc.)
+        name = type(exc).__name__
+        if "Timeout" in name or "Connection" in name or "Network" in name:
+            return True
+        msg = str(exc).lower()
+        return "timeout" in msg or "timed out" in msg or "connection" in msg
