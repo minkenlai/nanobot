@@ -32,10 +32,10 @@ ruff format nanobot/
 ### Message Flow
 
 ```
-Chat Channel → MessageBus → AgentLoop → LLMProvider → ToolRegistry → MessageBus → Chat Channel
+Chat Channel → MessageBus → AgentLoop → AgentRegistry → LLMProvider → ToolRegistry → MessageBus → Chat Channel
 ```
 
-Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (channel name + path segments). `BaseChannel.send_delta` accepts a full `OutboundMessage`. `AgentLoop` (`nanobot/agent/loop.py`) is the core orchestrator. After each turn, `MemoryConsolidator` summarizes to `MEMORY.md` / `HISTORY.md` in the agent's workspace.
+Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (channel name + path segments). `AgentLoop` (`nanobot/agent/loop.py`) is the core orchestrator, which now leverages an optional `AgentRegistry`. It uses the registry to pull specialized Runners/Providers, or uses an explicitly supplied one. After each turn, `MemoryConsolidator` summarizes to `MEMORY.md` / `HISTORY.md` in the agent's workspace.
 
 ### Key Packages
 
@@ -78,7 +78,7 @@ The `SubagentManager` (`nanobot/agent/subagent.py`) handles background task exec
 
 ### Memory System
 
-Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped searchable log). `MemoryConsolidator` calls the LLM after each agent turn to extract and update both files. It uses a "Whole File Rewrite" strategy with strict truncation protection (`finish_reason == "length"`) to prevent data corruption. The consolidation uses the loop's own provider (full fallback chain) and the provider's configured `max_tokens` — no artificial budget override. Messages are never modified after writing (cache-friendly for prompt caching).
+Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped searchable log). `MemoryConsolidator` calls the LLM after each agent turn to extract and update both files. It uses a "Whole File Rewrite" strategy with strict truncation protection (`finish_reason == "length"`) to prevent data corruption. The consolidation uses the loop's own provider (full fallback chain) and the provider's configured `max_tokens` — it respects the configured budget and does not enforce an artificial override. Messages are never modified after writing (cache-friendly for prompt caching).
 
 ### Skill System
 
