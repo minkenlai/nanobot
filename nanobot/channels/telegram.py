@@ -870,6 +870,12 @@ class TelegramChannel(BaseChannel):
                 pinned_msg_id = pin.message_id
 
             self._topic_pins[cache_key] = (pinned_msg_id, profile)
+            logger.info(
+                "Cold start Pin profile caching: key {} = ({}, {})",
+                cache_key,
+                pinned_msg_id,
+                profile,
+            )
             return profile
         except Exception as e:
             logger.warning("Failed to fetch topic pin: {}", e)
@@ -888,10 +894,10 @@ class TelegramChannel(BaseChannel):
         if pinned:
             profile = self._parse_profile_from_message(pinned)
             self._topic_pins[cache_key] = (pinned.message_id, profile)
-            logger.info("Pin event: topic {} profile -> {}", thread_id, profile)
+            logger.info("Pin event: key {} topic {} profile -> {}", cache_key, thread_id, profile)
         else:
             self._topic_pins.pop(cache_key, None)
-            logger.info("Pin event: topic {} unpinned, cache cleared", thread_id)
+            logger.info("Pin event: key {} topic {} unpinned, cache cleared", cache_key, thread_id)
 
     async def _on_edited_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Re-parse profile when the pinned message itself is edited."""
@@ -907,7 +913,9 @@ class TelegramChannel(BaseChannel):
             return  # edited message is not the current pin for this topic
         profile = self._parse_profile_from_message(msg)
         self._topic_pins[cache_key] = (msg.message_id, profile)
-        logger.info("Edit event: topic {} profile updated -> {}", thread_id, profile)
+        logger.info(
+            "Edit event: key {} topic {} profile updated -> {}", cache_key, thread_id, profile
+        )
 
     @staticmethod
     def _derive_topic_session_key(message) -> str | None:
