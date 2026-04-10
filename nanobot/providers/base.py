@@ -236,12 +236,17 @@ class LLMProvider(ABC):
     async def _safe_chat(self, **kwargs: Any) -> LLMResponse:
         """Call chat() and convert unexpected exceptions to error responses."""
         try:
-            return await self.chat(**kwargs)
+            # ENFORCING GLOBAL APPLICATION TIMEOUT: 10 minutes (600s)
+            # This forces a clean exit path if the underlying provider locks up.
+            return await asyncio.wait_for(self.chat(**kwargs), timeout=600.0)
+        except asyncio.TimeoutError:
+            print("Provider call timed out after 600 seconds.")
+            return LLMResponse(content="Error: LLM generation timed out.", finish_reason="timeout")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            msg = str(exc) or type(exc).__name__
-            return LLMResponse(content=f"Error calling LLM: {msg}", finish_reason="error")
+            # Catch other provider-specific exceptions
+            return LLMResponse(content=f"Error calling chat: {exc}", finish_reason="error")
 
     async def chat_stream(
         self,
@@ -277,7 +282,10 @@ class LLMProvider(ABC):
     async def _safe_chat_stream(self, **kwargs: Any) -> LLMResponse:
         """Call chat_stream() and convert unexpected exceptions to error responses."""
         try:
-            return await self.chat_stream(**kwargs)
+            return await asyncio.wait_for(self.chat_stream(**kwargs), timeout=600.0)
+        except asyncio.TimeoutError:
+            print("Provider call timed out after 600 seconds.")
+            return LLMResponse(content="Error: LLM generation timed out.", finish_reason="timeout")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
