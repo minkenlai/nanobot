@@ -420,12 +420,12 @@ def _onboard_plugins(config_path: Path) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _make_provider(config: Config):
+def _make_provider(config: Config, agent_name: str = "defaults"):
     """Wrapper around build_provider to maintain CLI error handling."""
     from nanobot.providers.factory import build_provider
 
     try:
-        return build_provider(config, "defaults")
+        return build_provider(config, agent_name)
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(1)
@@ -528,6 +528,11 @@ def gateway(
         help="Path to a JSON file that merges additional settings over the base configuration. "
         "Useful for temporary or environment-specific overrides.",
     ),
+    agent_name: str | None = typer.Option(
+        None,
+        "--agent-name",
+        help="Specify an agent name from the config to use for this session. Overrides 'defaults'",
+    ),
 ):
     """
     Start the nanobot gateway server.
@@ -555,7 +560,7 @@ def gateway(
     console.print(f"{__logo__} Starting nanobot gateway version {__version__} on port {port}...")
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
-    provider = _make_provider(config)
+    provider = _make_provider(config, agent_name or "defaults")
     session_manager = SessionManager(config.workspace_path)
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
@@ -816,6 +821,11 @@ def agent(
         "--logs/--no-logs",
         help="Show detailed nanobot runtime logs (INFO and DEBUG level) during chat for debugging.",
     ),
+    agent_name: str | None = typer.Option(
+        None,
+        "--agent-name",
+        help="Specify an agent name from the config to use for this session. Overrides 'defaults'",
+    ),
 ):
     """
     Interact with the nanobot agent directly via the command line.
@@ -833,7 +843,7 @@ def agent(
     sync_workspace_templates(config.workspace_path)
 
     bus = MessageBus()
-    provider = _make_provider(config)
+    provider = _make_provider(config, agent_name or "defaults")
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
     if is_default_workspace(config.workspace_path):

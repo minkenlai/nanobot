@@ -178,13 +178,21 @@ class TestSubagentCancellation:
     async def test_cancel_by_session(self):
         from nanobot.agent.subagent import SubagentManager
         from nanobot.bus.queue import MessageBus
+        from nanobot.config.schema import Config
+        from nanobot.providers.factory import AgentRegistry
 
         bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
-        from nanobot.config.schema import Config
+        registry = AgentRegistry(Config())
 
-        mgr = SubagentManager(config=Config(), provider=provider, workspace=MagicMock(), bus=bus)
+        mgr = SubagentManager(
+            config=Config(),
+            provider=provider,
+            workspace=MagicMock(),
+            bus=bus,
+            registry=registry,
+        )
 
         cancelled = asyncio.Event()
 
@@ -208,24 +216,35 @@ class TestSubagentCancellation:
     async def test_cancel_by_session_no_tasks(self):
         from nanobot.agent.subagent import SubagentManager
         from nanobot.bus.queue import MessageBus
+        from nanobot.config.schema import Config
+        from nanobot.providers.factory import AgentRegistry
 
         bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
-        from nanobot.config.schema import Config
+        registry = AgentRegistry(Config())
 
-        mgr = SubagentManager(config=Config(), provider=provider, workspace=MagicMock(), bus=bus)
+        mgr = SubagentManager(
+            config=Config(),
+            provider=provider,
+            workspace=MagicMock(),
+            bus=bus,
+            registry=registry,
+        )
         assert await mgr.cancel_by_session("nonexistent") == 0
 
     @pytest.mark.asyncio
     async def test_subagent_preserves_reasoning_fields_in_tool_turn(self, monkeypatch, tmp_path):
         from nanobot.agent.subagent import SubagentManager
         from nanobot.bus.queue import MessageBus
+        from nanobot.config.schema import Config
         from nanobot.providers.base import LLMResponse, ToolCallRequest
+        from nanobot.providers.factory import AgentRegistry
 
         bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
+        registry = AgentRegistry(Config())
 
         captured_second_call: list[dict] = []
 
@@ -244,9 +263,14 @@ class TestSubagentCancellation:
             return LLMResponse(content="done", tool_calls=[])
 
         provider.chat_with_retry = scripted_chat_with_retry
-        from nanobot.config.schema import Config
 
-        mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
+        mgr = SubagentManager(
+            config=Config(),
+            provider=provider,
+            workspace=tmp_path,
+            bus=bus,
+            registry=registry,
+        )
 
         async def fake_execute(self, name, arguments):
             return "tool result"
@@ -271,7 +295,9 @@ class TestSubagentCancellation:
     async def test_subagent_announces_error_when_tool_execution_fails(self, monkeypatch, tmp_path):
         from nanobot.agent.subagent import SubagentManager
         from nanobot.bus.queue import MessageBus
+        from nanobot.config.schema import Config
         from nanobot.providers.base import LLMResponse, ToolCallRequest
+        from nanobot.providers.factory import AgentRegistry
 
         bus = MessageBus()
         provider = MagicMock()
@@ -282,9 +308,15 @@ class TestSubagentCancellation:
                 tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
             )
         )
-        from nanobot.config.schema import Config
+        registry = AgentRegistry(Config())
 
-        mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
+        mgr = SubagentManager(
+            config=Config(),
+            provider=provider,
+            workspace=tmp_path,
+            bus=bus,
+            registry=registry,
+        )
         mgr._announce_result = AsyncMock()
 
         calls = {"n": 0}
@@ -314,10 +346,12 @@ class TestSubagentCancellation:
         from nanobot.bus.queue import MessageBus
         from nanobot.config.schema import Config
         from nanobot.providers.base import LLMResponse, ToolCallRequest
+        from nanobot.providers.factory import AgentRegistry
 
         bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
+        registry = AgentRegistry(Config())
 
         # Scripted response: thinking -> tool call -> done
         call_count = {"n": 0}
@@ -333,7 +367,13 @@ class TestSubagentCancellation:
 
         provider.chat_with_retry = scripted_chat
 
-        mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
+        mgr = SubagentManager(
+            config=Config(),
+            provider=provider,
+            workspace=tmp_path,
+            bus=bus,
+            registry=registry,
+        )
 
         # Mock tool execution to return a simple string
         with patch(
@@ -363,7 +403,9 @@ class TestSubagentCancellation:
     async def test_cancel_by_session_cancels_running_subagent_tool(self, monkeypatch, tmp_path):
         from nanobot.agent.subagent import SubagentManager
         from nanobot.bus.queue import MessageBus
+        from nanobot.config.schema import Config
         from nanobot.providers.base import LLMResponse, ToolCallRequest
+        from nanobot.providers.factory import AgentRegistry
 
         bus = MessageBus()
         provider = MagicMock()
@@ -374,9 +416,15 @@ class TestSubagentCancellation:
                 tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
             )
         )
-        from nanobot.config.schema import Config
+        registry = AgentRegistry(Config())
 
-        mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
+        mgr = SubagentManager(
+            config=Config(),
+            provider=provider,
+            workspace=tmp_path,
+            bus=bus,
+            registry=registry,
+        )
         mgr._announce_result = AsyncMock()
 
         started = asyncio.Event()

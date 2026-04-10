@@ -1,8 +1,52 @@
 """Factory for instantiating LLM providers from configuration."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.providers.registry import find_by_name
+
+if TYPE_CHECKING:
+    from nanobot.agent.runner import AgentRunner
+
+
+class AgentRegistry:
+    """Registry for caching and managing LLM providers and runners."""
+
+    def __init__(self, config: Config):
+        self.config = config
+        self._providers: dict[str, LLMProvider] = {}
+        self._runners: dict[str, AgentRunner] = {}
+
+    def get_provider(self, agent_name: str) -> LLMProvider:
+        """Get a cached LLMProvider for the specified agent profile."""
+        if agent_name not in self._providers:
+            self._providers[agent_name] = build_provider(self.config, agent_name)
+        return self._providers[agent_name]
+
+    def get_runner(self, agent_name: str) -> AgentRunner:
+        """Get a cached AgentRunner for the specified agent profile."""
+        if agent_name not in self._runners:
+            from nanobot.agent.runner import AgentRunner
+
+            provider = self.get_provider(agent_name)
+            self._runners[agent_name] = AgentRunner(provider)
+        return self._runners[agent_name]
+
+
+# Module-level cache for backward compatibility and simple usage
+_GLOBAL_REGISTRY: dict[int, AgentRegistry] = {}
+
+
+def get_runner(config: Config, agent_name: str = "defaults") -> AgentRunner:
+    """Get a cached AgentRunner for the specified agent profile (backward compat)."""
+    # Use config id to ensure different configs get different registries
+    cfg_id = id(config)
+    if cfg_id not in _GLOBAL_REGISTRY:
+        _GLOBAL_REGISTRY[cfg_id] = AgentRegistry(config)
+    return _GLOBAL_REGISTRY[cfg_id].get_runner(agent_name)
 
 
 def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
@@ -171,7 +215,9 @@ def _build_single_provider(
 
         provider = AnthropicProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model, agent_name=agent_name, provider_override=provider_override),
+            api_base=config.get_api_base(
+                model, agent_name=agent_name, provider_override=provider_override
+            ),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
         )
@@ -180,7 +226,9 @@ def _build_single_provider(
 
         provider = GeminiNativeProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model, agent_name=agent_name, provider_override=provider_override),
+            api_base=config.get_api_base(
+                model, agent_name=agent_name, provider_override=provider_override
+            ),
             default_model=model,
             grounding=agent_config.grounding,
         )
@@ -189,7 +237,9 @@ def _build_single_provider(
 
         provider = OpenAICompatProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model, agent_name=agent_name, provider_override=provider_override),
+            api_base=config.get_api_base(
+                model, agent_name=agent_name, provider_override=provider_override
+            ),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
             spec=spec,

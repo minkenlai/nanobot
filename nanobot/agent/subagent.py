@@ -22,7 +22,7 @@ from nanobot.bus.events import Address, InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config, ExecToolConfig, WebSearchConfig
 from nanobot.providers.base import LLMProvider
-from nanobot.providers.factory import build_provider
+from nanobot.providers.factory import AgentRegistry
 
 _MAX_COMPLETED_RECORDS = 50
 
@@ -46,25 +46,32 @@ class SubagentManager:
     def __init__(
         self,
         config: Config,
-        provider: LLMProvider,
         workspace: Path,
         bus: MessageBus,
-        model: str | None = None,
+        registry: AgentRegistry,
+        provider: LLMProvider | None = None,
         web_search_config: WebSearchConfig | None = None,
         web_proxy: str | None = None,
         exec_config: ExecToolConfig | None = None,
         restrict_to_workspace: bool = False,
     ):
         self.config = config
-        self.provider = provider
         self.workspace = workspace
         self.bus = bus
-        self.model = model or provider.get_default_model()
+        self.registry = registry
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
-        self.runner = AgentRunner(provider)
+
+        # For the default runner, we use the provider passed in (if any),
+        # otherwise we use the registry to get the default runner.
+        if provider:
+            self.runner = AgentRunner(provider)
+        else:
+            self.runner = self.registry.get_runner("defaults")
+        self.provider = self.runner.provider
+
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
         # Ordered registry: running tasks + last N completed/failed tasks
@@ -123,12 +130,14 @@ class SubagentManager:
     ) -> None:
         """Execute the subagent task and announce the result."""
         agent_name = agent or "defaults"
-        if agent is not None and agent != "defaults":
+        if agent_name == "defaults":
+            runner = self.runner
+        else:
             try:
-                provider = build_provider(self.config, agent_name)
+                runner = self.registry.get_runner(agent_name)
             except Exception as e:
                 logger.error(
-                    "Subagent [{}] failed to build provider for agent '{}': {}",
+                    "Subagent [{}] failed to get runner for agent '{}': {}",
                     task_id,
                     agent_name,
                     e,
@@ -142,16 +151,13 @@ class SubagentManager:
                     "error",
                 )
                 return
-        else:
-            provider = self.provider
 
-        target_model = provider.get_default_model()
+        provider = runner.provider
         logger.info(
-            "Subagent [{}] starting task: {} (agent: {}, model: {})",
+            "Subagent [{}] starting task: {} (agent: {})",
             task_id,
             label,
             agent_name,
-            target_model,
         )
 
         log_file = self.workspace / "logs" / f"task-{task_id}.log"
@@ -161,7 +167,6 @@ class SubagentManager:
                 f.write(f"Task ID: {task_id}\n")
                 f.write(f"Label: {label}\n")
                 f.write(f"Agent: {agent_name}\n")
-                f.write(f"Model: {target_model}\n")
                 f.write(f"Started: {datetime.now(timezone.utc).isoformat()}\n")
                 f.write("-" * 40 + "\n")
                 f.write(f"Task:\n{task}\n")
@@ -228,13 +233,12 @@ class SubagentManager:
                             )
                             _log_to_file(f"✅ RESULT: {truncated_result}\n\n")
 
-            runner = AgentRunner(provider)
             result = await runner.run(
                 AgentRunSpec(
                     initial_messages=messages,
                     tools=tools,
-                    model=target_model,
-                    max_iterations=15,
+                    model=provider.get_default_model(),
+                    max_iterations=15,  # TODO: make configurable
                     hook=_SubagentHook(),
                     max_iterations_message="Task completed but no final response was generated.",
                     error_message=None,

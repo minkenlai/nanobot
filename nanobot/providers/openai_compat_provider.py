@@ -165,10 +165,18 @@ class OpenAICompatProvider(LLMProvider):
         spec = self._spec
         if not spec or not spec.env_key:
             return
-        if spec.is_gateway:
-            os.environ[spec.env_key] = api_key
-        else:
-            os.environ.setdefault(spec.env_key, api_key)
+
+        # Use setdefault to avoid clobbering existing process environment.
+        # If the value is already set differently, log a warning as it may impact tool execution.
+        existing = os.environ.get(spec.env_key)
+        if existing and existing != api_key:
+            logger.warning(
+                "Environment variable '{}' is already set to a different value. "
+                "Tools or sub-processes using this provider may inherit incorrect credentials.",
+                spec.env_key,
+            )
+
+        os.environ.setdefault(spec.env_key, api_key)
         effective_base = api_base or spec.default_api_base
         for env_name, env_val in spec.env_extras:
             resolved = env_val.replace("{api_key}", api_key).replace("{api_base}", effective_base)
@@ -284,8 +292,9 @@ class OpenAICompatProvider(LLMProvider):
                     prev["content"] = curr_content
                 if "tool_calls" in msg:
                     if "tool_calls" not in prev:
-                        prev["tool_calls"] = []
-                    prev["tool_calls"].extend(msg["tool_calls"])
+                        prev["tool_calls"] = list(msg["tool_calls"])
+                    else:
+                        prev["tool_calls"] = list(prev["tool_calls"]) + list(msg["tool_calls"])
             else:
                 merged.append(dict(msg))
         return merged

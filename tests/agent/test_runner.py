@@ -345,8 +345,12 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
         )
     )
     from nanobot.config.schema import Config
+    from nanobot.providers.factory import AgentRegistry
 
-    mgr = SubagentManager(config=Config(), provider=provider, workspace=tmp_path, bus=bus)
+    registry = AgentRegistry(Config())
+    mgr = SubagentManager(
+        config=Config(), provider=provider, workspace=tmp_path, bus=bus, registry=registry
+    )
     mgr._announce_result = AsyncMock()
 
     async def fake_execute(self, name, arguments):

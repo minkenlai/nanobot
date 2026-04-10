@@ -32,6 +32,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import Config
 from nanobot.providers.base import LLMProvider
+from nanobot.providers.factory import AgentRegistry
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
@@ -71,6 +72,7 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
+        registry: AgentRegistry | None = None,
     ):
         from nanobot.config.schema import Config, ExecToolConfig, WebSearchConfig
 
@@ -93,17 +95,25 @@ class AgentLoop:
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
-        self.runner = AgentRunner(provider)
+        self.registry = registry or AgentRegistry(self.config)
+
+        # For the default runner, we use the provider passed in (if any),
+        # otherwise we use the registry to get the default runner.
+        if provider:
+            self.runner = AgentRunner(provider)
+        else:
+            self.runner = self.registry.get_runner("defaults")
+
         self.subagents = SubagentManager(
             config=self.config,
-            provider=provider,
             workspace=workspace,
             bus=bus,
-            model=self.model,
             web_search_config=self.web_search_config,
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            registry=self.registry,
+            provider=self.runner.provider,
         )
 
         self._running = False
@@ -338,10 +348,7 @@ class AgentLoop:
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
         *,
         message_id: str | None = None,
-        model: str | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        reasoning_effort: str | None = None,
+        agent_runner: AgentRunner | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Run the agent iteration loop.
 
@@ -395,15 +402,18 @@ class AgentLoop:
             ) -> str | None:
                 return loop_self._strip_think(content)
 
-        result = await self.runner.run(
+        runner = self.runner
+        model = self.model
+        # Use user-pinned agent provider if specified in msg metadata, otherwise default to main runner.
+        if agent_runner:
+            runner = agent_runner
+            model = agent_runner.provider.get_default_model()
+        result = await runner.run(
             AgentRunSpec(
                 initial_messages=initial_messages,
                 tools=self.tools,
-                model=model or self.model,
+                model=model,
                 max_iterations=self.max_iterations,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                reasoning_effort=reasoning_effort,
                 hook=_LoopHook(),
                 error_message="Sorry, I encountered an error calling the AI model.",
                 concurrent_tools=True,
@@ -598,19 +608,12 @@ class AgentLoop:
                 chat_id=address.segments[0] if address.segments else "",
                 current_role=current_role,
             )
-            # Resolve agent profile override from metadata
+            # Warn on unexpected agent profile override from metadata
             agent_profile = msg.metadata.get("agent_profile")
-            loop_kwargs = {}
-            if agent_profile and self.config.agents:
-                try:
-                    profile_cfg = self.config.agents.get_agent(agent_profile)
-                    loop_kwargs["model"] = profile_cfg.model
-                    loop_kwargs["max_tokens"] = profile_cfg.max_tokens
-                    loop_kwargs["temperature"] = profile_cfg.temperature
-                    loop_kwargs["reasoning_effort"] = profile_cfg.reasoning_effort
-                    logger.info("Overriding agent profile for turn: {}", agent_profile)
-                except ValueError as e:
-                    logger.warning("Invalid agent profile requested in metadata: {}", e)
+            if agent_profile:
+                logger.warning(
+                    "Invalid for system msg to have agent profile in metadata: {}", agent_profile
+                )
 
             async def _bus_progress(text: str) -> None:
                 from nanobot.bus.events import ProgressEvent
@@ -624,7 +627,6 @@ class AgentLoop:
                 on_progress=on_progress or _bus_progress,
                 on_stream=on_stream,
                 on_stream_end=on_stream_end,
-                **loop_kwargs,
             )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
@@ -680,14 +682,10 @@ class AgentLoop:
 
         # Resolve agent profile override from metadata
         agent_profile = msg.metadata.get("agent_profile")
-        loop_kwargs = {}
+        agent_runner = None
         if agent_profile and self.config.agents:
             try:
-                profile_cfg = self.config.agents.get_agent(agent_profile)
-                loop_kwargs["model"] = profile_cfg.model
-                loop_kwargs["max_tokens"] = profile_cfg.max_tokens
-                loop_kwargs["temperature"] = profile_cfg.temperature
-                loop_kwargs["reasoning_effort"] = profile_cfg.reasoning_effort
+                agent_runner = self.registry.get_runner(agent_profile)
                 logger.info("Overriding agent profile for turn: {}", agent_profile)
             except ValueError as e:
                 logger.warning("Invalid agent profile requested in metadata: {}", e)
@@ -710,7 +708,7 @@ class AgentLoop:
             on_stream=on_stream,
             on_stream_end=on_stream_end,
             message_id=msg.metadata.get("message_id"),
-            **loop_kwargs,
+            agent_runner=agent_runner,
         )
 
         if final_content is None:
