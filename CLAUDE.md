@@ -8,21 +8,19 @@ This project is using python3 .venv
 
 ```bash
 # Install in dev mode
-pip install -e ".[dev]"
+.venv/bin/pip install -e ".[dev]"
 
 # Run all tests
-pytest
-# or
-uv run pytest tests/
+.venv/bin/pytest
 
 # Run a single test file
-pytest tests/agent/test_memory_consolidation_types.py
+.venv/bin/pytest tests/agent/test_memory_consolidation_types.py
 
 # Lint
-ruff check nanobot/
+.venv/bin/ruff check nanobot/
 
 # Format
-ruff format nanobot/
+.venv/bin/ruff format nanobot/
 ```
 
 ## Architecture
@@ -48,7 +46,7 @@ Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (chan
 | `nanobot/session/` | Per-conversation history (JSONL append-only) |
 | `nanobot/config/` | Pydantic config schema + workspace path resolution |
 | `nanobot/cli/` | Typer CLI (`agent`, `gateway`, `onboard`, `status`, etc.) |
-| `nanobot/skills/` | Bundled skills loaded from `~/.nanobot/workspace/skills/` |
+| `nanobot/skills/` | Bundled skills. Other skills are loaded from `~/.nanobot/workspace/skills/` |
 
 ### Provider System
 
@@ -97,7 +95,8 @@ The Telegram channel implementation supports advanced interaction modes:
 
 ## Configuration
 
-User config lives at `~/.nanobot/config.json` (Pydantic `BaseSettings`, supports both camelCase and snake_case). The workspace (agent files, memory, skills) defaults to `~/.nanobot/workspace/`.
+User config normally lives at `~/.nanobot/config.json` but when run as service via systemd, it's mapped from `/etc/nanobot/config.json`
+The workspace (agent files, memory, skills) defaults to `~/.nanobot/workspace/`.
 
 ## Testing Conventions
 
@@ -105,7 +104,7 @@ User config lives at `~/.nanobot/config.json` (Pydantic `BaseSettings`, supports
 - Tests live in `tests/` mirroring the source structure
 - Integration tests hit real code paths; avoid mocking internals
 
-## Deployment Architecture (v3.1)
+## Deployment Architecture
 
 Production environments use a symlink-based worktree architecture:
 - **Workspace:** `~/.nanobot/workspace`
@@ -116,5 +115,6 @@ Production environments use a symlink-based worktree architecture:
 
 ## Branching
 
-- `main`: stable, production-ready
-- `nightly`: experimental features; cherry-picked to main weekly
+`dev` is the working branch in the `workspace/nanobot-dev` worktree -- agents should perform all work in the worktree.
+Actual repository root is at `workspace/nanobot-repo` -- user handles merging from `dev` to `staging` and/or `main`.
+- remote `origin` links to user's own repository.
