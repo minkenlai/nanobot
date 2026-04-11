@@ -762,17 +762,18 @@ class TelegramChannel(BaseChannel):
         # 1. Check if the time elapsed is less than the current required debounce delay
         if (now - buf.last_edit) < buf.current_debounce_delay:
             buf.consecutive_updates += 1
-            logger.debug(
-                "Debouncing stream: Update {} arrived within {}s window. Next target: {}s.",
-                buf.consecutive_updates,
-                buf.current_debounce_delay,
-                buf.current_debounce_delay * 2.5,
-            )
+            if buf.consecutive_updates % 5 == 0:
+                logger.debug(
+                    "Debouncing stream: Update {} arrived within {}s window. Next target: {}s.",
+                    buf.consecutive_updates,
+                    buf.current_debounce_delay,
+                    buf.current_debounce_delay * 1.5,
+                )
 
             # 2. Dynamically increase the debounce delay if we are receiving too many updates fast
             # Threshold: If we get 3 updates in a row within the current delay window, increase the delay.
-            if buf.consecutive_updates >= 3 and buf.current_debounce_delay < 5.0:
-                buf.current_debounce_delay = min(5.0, buf.current_debounce_delay * 2.5)
+            if buf.consecutive_updates >= 3 and buf.current_debounce_delay < 3.0:
+                buf.current_debounce_delay = min(3.0, buf.current_debounce_delay * 1.5)
                 logger.info(
                     "Stream spike detected. Increasing debounce delay to {}s.",
                     buf.current_debounce_delay,
