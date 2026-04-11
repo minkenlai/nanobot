@@ -478,6 +478,12 @@ class TelegramChannel(BaseChannel):
             await self._update_audit_trail(msg)
             return
 
+        # Turn end: Finalize audit trail and stop typing
+        if msg.metadata.get("_turn_end", False):
+            await self._finalize_audit_trail(msg.address)
+            self._stop_typing(msg.chat_id)
+            return
+
         # Handle system events
         if msg.metadata.get("system_event") == "pin_invalid":
             if msg.chat_id:

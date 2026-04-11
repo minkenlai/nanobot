@@ -389,8 +389,10 @@ class AgentLoop:
                             context.response.content if context.response else None
                         )
                         if thought:
+                            logger.debug("Calling on_progress for thought")
                             await on_progress(thought)
                     tool_hint = loop_self._strip_think(loop_self._tool_hint(context.tool_calls))
+                    logger.debug("Calling on_progress for tool_hint: {}", tool_hint)
                     await on_progress(tool_hint, tool_hint=True)
                 for tc in context.tool_calls:
                     args_str = json.dumps(tc.arguments, ensure_ascii=False)
@@ -520,12 +522,13 @@ class AgentLoop:
                 )
                 if response is not None:
                     await self.bus.publish_outbound(response)
-                elif msg.channel == "cli":
+                else:
+                    # Always signal turn end to channels to clear progress/typing indicators
                     await self.bus.publish_outbound(
                         OutboundMessage(
                             address=msg.address,
                             content="",
-                            metadata=msg.metadata or {},
+                            metadata={**(msg.metadata or {}), "_turn_end": True},
                         )
                     )
             except asyncio.CancelledError:
@@ -615,10 +618,11 @@ class AgentLoop:
                     "Invalid for system msg to have agent profile in metadata: {}", agent_profile
                 )
 
-            async def _bus_progress(text: str) -> None:
-                from nanobot.bus.events import ProgressEvent
-
-                await self.bus.publish_progress(ProgressEvent(address=address, content=text))
+            async def _bus_progress(text: str, *, tool_hint: bool = False) -> None:
+                meta = {"_progress": True, "_tool_hint": tool_hint}
+                await self.bus.publish_outbound(
+                    OutboundMessage(address=address, content=text, metadata=meta)
+                )
 
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages,
