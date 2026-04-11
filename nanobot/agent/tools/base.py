@@ -1,6 +1,8 @@
 """Base class for agent tools."""
 
+import time
 from abc import ABC, abstractmethod
+from loguru import logger
 from typing import Any
 
 
@@ -64,7 +66,28 @@ class Tool(ABC):
         Returns:
             Result of the tool execution (string or list of content blocks).
         """
-        pass
+        start_time = time.time()
+        try:
+            result = await super()._execute(**kwargs)
+            duration = time.time() - start_time
+            logger.info("tool executed {} keys {} values {} result {} duration {}".format(
+                self.__class__.__name__,
+                list(kwargs.keys()),
+                list(kwargs.values()),
+                result,
+                duration,
+            ))
+            return result
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.info("tool failed {} keys {} values {} error {} duration {}".format(
+                self.__class__.__name__,
+                list(kwargs.keys()),
+                list(kwargs.values()),
+                str(e),
+                duration,
+            ))
+            raise
 
     def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Apply safe schema-driven casts before validation."""
