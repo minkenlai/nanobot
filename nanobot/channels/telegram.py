@@ -23,6 +23,7 @@ from nanobot.config.paths import get_media_dir
 from nanobot.config.schema import Base
 from nanobot.security.network import validate_url_target
 from nanobot.utils.helpers import split_message
+from nanobot.utils.telegram_utils import load_topic_pins, save_topic_pins
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 TELEGRAM_REPLY_CONTEXT_MAX_LEN = (
@@ -204,6 +205,9 @@ class TelegramChannel(BaseChannel):
         BotCommand("start", "Start the bot"),
         BotCommand("new", "Start a new conversation"),
         BotCommand("stop", "Cancel active tasks in this session"),
+        BotCommand("profiles", "List available agent profiles"),
+        BotCommand("topics", "List group topics and their assigned profiles"),
+        BotCommand("pin", "Assign an agent profile to the current topic"),
         BotCommand("help", "Show available commands"),
         BotCommand("restart", "Refresh code in-place"),
         BotCommand("status", "Show system status and usage"),
@@ -234,6 +238,12 @@ class TelegramChannel(BaseChannel):
         self._topic_pins: dict[
             str, tuple[int | None, str | None]
         ] = {}  # chat_id:thread_id -> (pinned_message_id, profile_name)
+
+        # Initialize pins from disk
+        persistence = load_topic_pins()
+        for chat_id, topics in persistence.items():
+            for thread_id, profile in topics.items():
+                self._topic_pins[f"{chat_id}:{thread_id}"] = (None, profile)
 
     def is_allowed(self, sender_id: str) -> bool:
         """Preserve Telegram's legacy id|username allowlist matching."""
@@ -292,6 +302,9 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("start", self._on_start))
         self._app.add_handler(CommandHandler("new", self._forward_command))
         self._app.add_handler(CommandHandler("stop", self._forward_command))
+        self._app.add_handler(CommandHandler("profiles", self._on_profiles))
+        self._app.add_handler(CommandHandler("topics", self._on_topics))
+        self._app.add_handler(CommandHandler("pin", self._on_pin_command))
         self._app.add_handler(CommandHandler("repl", self._forward_command))
         self._app.add_handler(CommandHandler("restart", self._forward_command))
         self._app.add_handler(CommandHandler("status", self._forward_command))
@@ -834,9 +847,140 @@ class TelegramChannel(BaseChannel):
             "🐈 nanobot commands:\n"
             "/new — Start a new conversation\n"
             "/stop — Stop current tasks\n"
+            "/profiles — List available agent profiles\n"
+            "/topics — List group topics and their assigned profiles\n"
+            "/pin <profile> — Assign an agent profile to the current topic\n"
             "/restart — Restart the bot\n"
             "/status — Show system status and usage\n"
             "/help — Show available commands"
+        )
+
+    async def _on_profiles(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /profiles command."""
+        if not update.message:
+            return
+
+        if not self.global_config or not self.global_config.agents:
+            await update.message.reply_text("Agent configuration not available.")
+            return
+
+        profiles = []
+        agents = self.global_config.agents
+
+        # List defaults
+        try:
+            defaults = agents.defaults
+            models = [defaults.model] + defaults.fallback_models
+            profiles.append(f"• **defaults**: {', '.join(models)}")
+        except Exception:
+            pass
+
+        # List extra agents
+        agent_dict = agents.model_dump(by_alias=True)
+        for name in agent_dict.keys():
+            if name in ("defaults", "model_config", "model_fields", "model_computed_fields"):
+                continue
+            try:
+                agent = agents.get_agent(name)
+                models = [agent.model] + agent.fallback_models
+                profiles.append(f"• **{name}**: {', '.join(models)}")
+            except Exception:
+                continue
+
+        if not profiles:
+            await update.message.reply_text("No agent profiles configured.")
+            return
+
+        await update.message.reply_text(
+            "🎭 **Available Agent Profiles:**\n\n" + "\n".join(profiles), parse_mode="Markdown"
+        )
+
+    async def _on_topics(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /topics command."""
+        if not update.message:
+            return
+
+        chat_id = str(update.message.chat_id)
+        lines = ["📌 **Topic Profile Mappings:**"]
+
+        found = False
+        # Collect and sort topics for consistent display
+        topics_to_show = []
+        for key, value in self._topic_pins.items():
+            if key.startswith(f"{chat_id}:"):
+                found = True
+                _, topic_id_str = key.split(":", 1)
+                _, profile = value
+                topics_to_show.append((int(topic_id_str), profile))
+
+        topics_to_show.sort()
+
+        for topic_id, profile in topics_to_show:
+            profile_str = f"`{profile}`" if profile else "_(none)_"
+            lines.append(f"• Topic {topic_id}: {profile_str}")
+
+        if not found:
+            lines.append("No topics discovered yet in this chat.")
+
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _on_pin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /pin <profile> command."""
+        if not update.message:
+            return
+
+        thread_id = getattr(update.message, "message_thread_id", None)
+        if thread_id is None:
+            if update.message.chat.type == "private":
+                await update.message.reply_text(
+                    "Profiles are assigned automatically in private chats."
+                )
+            else:
+                await update.message.reply_text(
+                    "This command can only be used within a forum topic."
+                )
+            return
+
+        args = context.args
+        if not args:
+            await update.message.reply_text("Usage: `/pin <profile_name>`", parse_mode="Markdown")
+            return
+
+        profile_name = args[0].lower()
+
+        # Validate profile name
+        valid = False
+        if profile_name == "defaults":
+            valid = True
+        elif self.global_config and self.global_config.agents:
+            try:
+                self.global_config.agents.get_agent(profile_name)
+                valid = True
+            except Exception:
+                pass
+
+        if not valid:
+            await update.message.reply_text(
+                f"❌ Invalid profile name: `{profile_name}`.\nUse /profiles to see available options.",
+                parse_mode="Markdown",
+            )
+            return
+
+        chat_id_str = str(update.message.chat_id)
+        cache_key = f"{chat_id_str}:{thread_id}"
+
+        # Update in-memory
+        self._topic_pins[cache_key] = (None, profile_name)
+
+        # Save to disk
+        persistence = load_topic_pins()
+        if chat_id_str not in persistence:
+            persistence[chat_id_str] = {}
+        persistence[chat_id_str][thread_id] = profile_name
+        save_topic_pins(persistence)
+
+        await update.message.reply_text(
+            f"✅ Topic {thread_id} pinned to profile: `{profile_name}`", parse_mode="Markdown"
         )
 
     @staticmethod
@@ -850,7 +994,12 @@ class TelegramChannel(BaseChannel):
         """Extract profile name from a message's text/caption, or None if absent."""
         text = (msg.text or getattr(msg, "caption", None) or "").strip()
         match = re.search(r"^(?:Profile|Agent):\s*([\w-]+)", text, re.IGNORECASE | re.MULTILINE)
-        return match.group(1).lower() if match else None
+        result = match.group(1).lower() if match else None
+        if result:
+            logger.debug("Got {} from {}", result, text)
+        else:
+            logger.debug("No profile in {}", text)
+        return result
 
     async def _get_topic_profile_pin(self, chat_id: int, thread_id: int) -> str | None:
         """Return the cached profile for a forum topic, fetching once on cold start."""
@@ -858,8 +1007,14 @@ class TelegramChannel(BaseChannel):
 
         # Cache is event-driven (pin/edit handlers keep it current); return immediately on hit
         if cache_key in self._topic_pins:
-            _, profile = self._topic_pins[cache_key]
-            return profile
+            pinned_msg_id, profile = self._topic_pins[cache_key]
+            if profile:
+                return profile
+            # If we have a cached native pin but it didn't have a profile, return None
+            if pinned_msg_id is not None:
+                return None
+            # If pinned_msg_id is None and profile is None, it's a lazy-fill or manual unpin
+            # We fall through to check for a native pin once.
 
         # Cold start: fetch current pinned message once and seed the cache
         try:
@@ -868,21 +1023,17 @@ class TelegramChannel(BaseChannel):
             chat = await self._app.bot.get_chat(chat_id)
             pin = chat.pinned_message
             profile = None
-            pinned_msg_id = None
+            pinned_msg_id = -1  # Mark as checked
 
-            if pin and getattr(pin, "message_thread_id", None) == thread_id:
-                profile = self._parse_profile_from_message(pin)
-                if profile:
-                    logger.info("Found profile pin for topic {}: {}", thread_id, profile)
-                pinned_msg_id = pin.message_id
+            if pin:
+                msg_thread_id = getattr(pin, "message_thread_id", None)
+                if msg_thread_id == thread_id:
+                    profile = self._parse_profile_from_message(pin)
+                    if profile:
+                        logger.info("Found native profile pin for topic {}: {}", thread_id, profile)
+                    pinned_msg_id = pin.message_id
 
             self._topic_pins[cache_key] = (pinned_msg_id, profile)
-            logger.info(
-                "Cold start Pin profile caching: key {} = ({}, {})",
-                cache_key,
-                pinned_msg_id,
-                profile,
-            )
             return profile
         except Exception as e:
             logger.warning("Failed to fetch topic pin: {}", e)
@@ -1098,6 +1249,13 @@ class TelegramChannel(BaseChannel):
 
         # Profile pinning support for forum topics
         if (thread_id := getattr(message, "message_thread_id", None)) is not None:
+            # Lazy-fill topic mapping
+            cache_key = f"{message.chat_id}:{thread_id}"
+            if cache_key not in self._topic_pins:
+                self._topic_pins[cache_key] = (None, None)
+                # Note: we don't save to disk on lazy-fill to avoid excessive writes
+                # but it will appear in /topics for the current session.
+
             profile = await self._get_topic_profile_pin(message.chat_id, thread_id)
             if profile:
                 metadata["agent_profile"] = profile
@@ -1173,6 +1331,11 @@ class TelegramChannel(BaseChannel):
 
         # Profile pinning support for forum topics
         if (thread_id := getattr(message, "message_thread_id", None)) is not None:
+            # Lazy-fill topic mapping
+            cache_key = f"{chat_id}:{thread_id}"
+            if cache_key not in self._topic_pins:
+                self._topic_pins[cache_key] = (None, None)
+
             profile = await self._get_topic_profile_pin(chat_id, thread_id)
             if profile:
                 metadata["agent_profile"] = profile

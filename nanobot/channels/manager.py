@@ -75,6 +75,7 @@ class ChannelManager:
                     cls = available_plugins[name]
 
                 channel = cls(section, self.bus)
+                channel.global_config = self.config
                 channel.transcription_api_key = groq_key
                 self.channels[name] = channel
 

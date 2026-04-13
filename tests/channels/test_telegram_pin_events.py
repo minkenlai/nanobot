@@ -242,11 +242,11 @@ async def test_get_topic_profile_pin_cold_start_no_pin():
     result = await ch._get_topic_profile_pin(-100, 5)
 
     assert result is None
-    assert ch._topic_pins["-100:5"] == (None, None)
+    assert ch._topic_pins["-100:5"] == (-1, None)
 
 
 async def test_get_topic_profile_pin_cold_start_pin_in_different_topic():
-    """Pin exists but belongs to a different topic — cache (None, None) for this topic."""
+    """Pin exists but belongs to a different topic — cache (-1, None) for this topic."""
     ch = _make_channel()
     pinned_msg = SimpleNamespace(
         message_id=42,
@@ -260,4 +260,28 @@ async def test_get_topic_profile_pin_cold_start_pin_in_different_topic():
     result = await ch._get_topic_profile_pin(-100, 5)
 
     assert result is None
-    assert ch._topic_pins["-100:5"] == (None, None)
+    assert ch._topic_pins["-100:5"] == (-1, None)
+
+
+async def test_get_topic_profile_pin_lazy_fill_then_discover_native():
+    """Lazy fill seeds with (None, None), which triggers a native pin lookup on next use."""
+    ch = _make_channel()
+    # 1. Simulate lazy fill (e.g. from _on_message)
+    ch._topic_pins["-100:5"] = (None, None)
+
+    # 2. Setup a native pin to be discovered
+    pinned_msg = SimpleNamespace(
+        message_id=42,
+        text="Profile: fast",
+        caption=None,
+        message_thread_id=5,
+    )
+    fake_chat = SimpleNamespace(pinned_message=pinned_msg)
+    ch._app = SimpleNamespace(bot=SimpleNamespace(get_chat=AsyncMock(return_value=fake_chat)))
+
+    # 3. Call get_topic_profile_pin - it should NOT return None from cache, but call API
+    result = await ch._get_topic_profile_pin(-100, 5)
+
+    assert result == "fast"
+    assert ch._topic_pins["-100:5"] == (42, "fast")
+    ch._app.bot.get_chat.assert_called_once()

@@ -84,6 +84,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
 
     # Agent / Model info
     agent_id = session.metadata.get("agent", "defaults")
+    pinned_profile = msg.metadata.get("agent_profile")
 
     from nanobot.providers.fallback import FallbackProvider
 
@@ -119,6 +120,8 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     content += f"**PID:** `{os.getpid()}`\n\n"
 
     content += f"**Agent:** `{agent_id}`\n"
+    if pinned_profile:
+        content += f"**Pinned Profile:** `{pinned_profile}`\n"
     content += f"**Model:** {model_info}\n"
     content += (
         f"**Tokens:** {usage.get('input_tokens', 0):,} in / {usage.get('output_tokens', 0):,} out\n"
