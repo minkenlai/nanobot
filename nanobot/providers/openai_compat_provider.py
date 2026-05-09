@@ -416,13 +416,15 @@ class OpenAICompatProvider(LLMProvider):
             }
         return {}
 
-    def _parse(self, response: Any) -> LLMResponse:
+    @classmethod
+    def _parse(cls, response: Any, provider: LLMProvider | None = None) -> LLMResponse:
         if isinstance(response, str):
             return LLMResponse(content=response, finish_reason="stop")
 
-        self._dump_debug_data("chat_response", response)
+        if provider:
+            provider._dump_debug_data("chat_response", response)
 
-        response_map = self._maybe_mapping(response)
+        response_map = cls._maybe_mapping(response)
         if response_map is not None:
             logger.debug(
                 "Parsing OpenAI-compat response. Keys: {}. Usage: {}",
@@ -431,36 +433,36 @@ class OpenAICompatProvider(LLMProvider):
             )
             choices = response_map.get("choices") or []
             if not choices:
-                content = self._extract_text_content(
+                content = cls._extract_text_content(
                     response_map.get("content") or response_map.get("output_text")
                 )
                 if content is not None:
                     return LLMResponse(
                         content=content,
                         finish_reason=str(response_map.get("finish_reason") or "stop"),
-                        usage=self._extract_usage(response_map),
+                        usage=cls._extract_usage(response_map),
                     )
                 return LLMResponse(
                     content="Error: API returned empty choices.", finish_reason="error"
                 )
 
-            choice0 = self._maybe_mapping(choices[0]) or {}
-            msg0 = self._maybe_mapping(choice0.get("message")) or {}
-            content = self._extract_text_content(msg0.get("content"))
+            choice0 = cls._maybe_mapping(choices[0]) or {}
+            msg0 = cls._maybe_mapping(choice0.get("message")) or {}
+            content = cls._extract_text_content(msg0.get("content"))
             finish_reason = str(choice0.get("finish_reason") or "stop")
 
             raw_tool_calls: list[Any] = []
             reasoning_content = msg0.get("reasoning_content")
             for ch in choices:
-                ch_map = self._maybe_mapping(ch) or {}
-                m = self._maybe_mapping(ch_map.get("message")) or {}
+                ch_map = cls._maybe_mapping(ch) or {}
+                m = cls._maybe_mapping(ch_map.get("message")) or {}
                 tool_calls = m.get("tool_calls")
                 if isinstance(tool_calls, list) and tool_calls:
                     raw_tool_calls.extend(tool_calls)
                     if ch_map.get("finish_reason") in ("tool_calls", "stop"):
                         finish_reason = str(ch_map["finish_reason"])
                 if not content:
-                    content = self._extract_text_content(m.get("content"))
+                    content = cls._extract_text_content(m.get("content"))
                 if not reasoning_content:
                     reasoning_content = m.get("reasoning_content")
 
@@ -469,8 +471,8 @@ class OpenAICompatProvider(LLMProvider):
 
             parsed_tool_calls = []
             for tc in raw_tool_calls:
-                tc_map = self._maybe_mapping(tc) or {}
-                fn = self._maybe_mapping(tc_map.get("function")) or {}
+                tc_map = cls._maybe_mapping(tc) or {}
+                fn = cls._maybe_mapping(tc_map.get("function")) or {}
                 args = fn.get("arguments", {})
                 if isinstance(args, str):
                     args = json_repair.loads(args)
@@ -493,7 +495,7 @@ class OpenAICompatProvider(LLMProvider):
                 content=content,
                 tool_calls=parsed_tool_calls,
                 finish_reason=finish_reason,
-                usage=self._extract_usage(response_map),
+                usage=cls._extract_usage(response_map),
                 reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
             )
 
@@ -545,17 +547,19 @@ class OpenAICompatProvider(LLMProvider):
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason or "stop",
-            usage=self._extract_usage(response),
+            usage=cls._extract_usage(response),
             reasoning_content=getattr(msg, "reasoning_content", None) or None,
         )
 
-    def _parse_chunks(self, chunks: list[Any]) -> LLMResponse:
+    @classmethod
+    def _parse_chunks(cls, chunks: list[Any], provider: LLMProvider | None = None) -> LLMResponse:
         content_parts: list[str] = []
         tc_bufs: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"
         usage: dict[str, int] = {}
 
-        self._dump_debug_data("chat_stream_chunks", chunks)
+        if provider:
+            provider._dump_debug_data("chat_stream_chunks", chunks)
 
         def _accum_tc(tc: Any, idx_hint: int) -> None:
             """Accumulate one streaming tool-call delta into *tc_bufs*."""
@@ -595,31 +599,31 @@ class OpenAICompatProvider(LLMProvider):
                 content_parts.append(chunk)
                 continue
 
-            chunk_map = self._maybe_mapping(chunk)
+            chunk_map = cls._maybe_mapping(chunk)
             if chunk_map is not None:
                 choices = chunk_map.get("choices") or []
                 if not choices:
-                    usage = self._extract_usage(chunk_map) or usage
-                    text = self._extract_text_content(
+                    usage = cls._extract_usage(chunk_map) or usage
+                    text = cls._extract_text_content(
                         chunk_map.get("content") or chunk_map.get("output_text")
                     )
                     if text:
                         content_parts.append(text)
                     continue
-                choice = self._maybe_mapping(choices[0]) or {}
+                choice = cls._maybe_mapping(choices[0]) or {}
                 if choice.get("finish_reason"):
                     finish_reason = str(choice["finish_reason"])
-                delta = self._maybe_mapping(choice.get("delta")) or {}
-                text = self._extract_text_content(delta.get("content"))
+                delta = cls._maybe_mapping(choice.get("delta")) or {}
+                text = cls._extract_text_content(delta.get("content"))
                 if text:
                     content_parts.append(text)
                 for idx, tc in enumerate(delta.get("tool_calls") or []):
                     _accum_tc(tc, idx)
-                usage = self._extract_usage(chunk_map) or usage
+                usage = cls._extract_usage(chunk_map) or usage
                 continue
 
             if not chunk.choices:
-                usage = self._extract_usage(chunk) or usage
+                usage = cls._extract_usage(chunk) or usage
                 continue
             choice = chunk.choices[0]
             if choice.finish_reason:
@@ -684,7 +688,7 @@ class OpenAICompatProvider(LLMProvider):
         )
         logger.debug(f"LLM Request kwargs (chat): {json.dumps(kwargs, default=str)}")
         async with self._semaphore or nullcontext():
-            return self._parse(await self._client.chat.completions.create(**kwargs))
+            return self._parse(await self._client.chat.completions.create(**kwargs), provider=self)
 
     async def chat_stream(
         self,
@@ -718,7 +722,7 @@ class OpenAICompatProvider(LLMProvider):
                     text = getattr(chunk.choices[0].delta, "content", None)
                     if text:
                         await on_content_delta(text)
-        return self._parse_chunks(chunks)
+        return self._parse_chunks(chunks, provider=self)
 
     def get_default_model(self) -> str:
         return self.default_model
