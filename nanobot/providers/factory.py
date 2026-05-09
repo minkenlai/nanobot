@@ -177,6 +177,9 @@ def _build_single_provider(
     p = config.get_provider(model, agent_name=agent_name, provider_override=provider_override)
     spec = find_by_name(provider_name) if provider_name else None
     backend = spec.backend if spec else "openai_compat"
+    logger.debug(
+        f"Building provider for agent '{agent_name}': model='{model}', provider='{provider_name}', backend='{backend}'"
+    )
 
     # --- validation ---
     if backend == "azure_openai":
@@ -190,6 +193,10 @@ def _build_single_provider(
         needs_key = not (p and p.api_key)
         exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
         if needs_key and not exempt:
+            logger.warning(
+                f"No API key found for provider '{provider_name or 'auto-detected'}': "
+                f"{vars(p) if p else 'No provider config found'}"
+            )
             raise ValueError(
                 f"No API key configured for {provider_name or 'the selected provider'}.\n"
                 "Set one in config.json under the appropriate providers section."

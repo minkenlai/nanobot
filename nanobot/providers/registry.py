@@ -129,6 +129,62 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         default_api_base="https://aihubmix.com/v1",
         strip_model_prefix=True,
     ),
+    # SiliconFlow (硅基流动): OpenAI-compatible gateway, model names keep org prefix
+    ProviderSpec(
+        name="siliconflow",
+        keywords=("siliconflow",),
+        env_key="OPENAI_API_KEY",
+        display_name="SiliconFlow",
+        backend="openai_compat",
+        is_gateway=True,
+        detect_by_base_keyword="siliconflow",
+        default_api_base="https://api.siliconflow.cn/v1",
+    ),
+    # VolcEngine (火山引擎): OpenAI-compatible gateway, pay-per-use models
+    ProviderSpec(
+        name="volcengine",
+        keywords=("volcengine", "volces", "ark"),
+        env_key="OPENAI_API_KEY",
+        display_name="VolcEngine",
+        backend="openai_compat",
+        is_gateway=True,
+        detect_by_base_keyword="volces",
+        default_api_base="https://ark.cn-beijing.volces.com/api/v3",
+    ),
+    # VolcEngine Coding Plan (火山引擎 Coding Plan): same key as volcengine
+    ProviderSpec(
+        name="volcengine_coding_plan",
+        keywords=("volcengine-plan",),
+        env_key="OPENAI_API_KEY",
+        display_name="VolcEngine Coding Plan",
+        backend="openai_compat",
+        is_gateway=True,
+        default_api_base="https://ark.cn-beijing.volces.com/api/coding/v3",
+        strip_model_prefix=True,
+    ),
+    # BytePlus: VolcEngine international, pay-per-use models
+    ProviderSpec(
+        name="byteplus",
+        keywords=("byteplus",),
+        env_key="OPENAI_API_KEY",
+        display_name="BytePlus",
+        backend="openai_compat",
+        is_gateway=True,
+        detect_by_base_keyword="bytepluses",
+        default_api_base="https://ark.ap-southeast.bytepluses.com/api/v3",
+        strip_model_prefix=True,
+    ),
+    # BytePlus Coding Plan: same key as byteplus
+    ProviderSpec(
+        name="byteplus_coding_plan",
+        keywords=("byteplus-plan",),
+        env_key="OPENAI_API_KEY",
+        display_name="BytePlus Coding Plan",
+        backend="openai_compat",
+        is_gateway=True,
+        default_api_base="https://ark.ap-southeast.bytepluses.com/api/coding/v3",
+        strip_model_prefix=True,
+    ),
     # === Standard providers (matched by model-name keywords) ===============
     # Anthropic: native Anthropic SDK
     ProviderSpec(
@@ -186,6 +242,16 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         backend="gemini_native",
         default_api_base="https://generativelanguage.googleapis.com/v1beta",
     ),
+    # Zhipu (智谱): OpenAI-compatible at open.bigmodel.cn
+    ProviderSpec(
+        name="zhipu",
+        keywords=("zhipu", "glm", "zai"),
+        env_key="ZAI_API_KEY",
+        display_name="Zhipu AI",
+        backend="openai_compat",
+        env_extras=(("ZHIPUAI_API_KEY", "{api_key}"),),
+        default_api_base="https://open.bigmodel.cn/api/paas/v4",
+    ),
     # DashScope (通义): Qwen models, OpenAI-compatible endpoint
     ProviderSpec(
         name="dashscope",
@@ -222,6 +288,15 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="Mistral",
         backend="openai_compat",
         default_api_base="https://api.mistral.ai/v1",
+    ),
+    # Step Fun (阶跃星辰): OpenAI-compatible API
+    ProviderSpec(
+        name="stepfun",
+        keywords=("stepfun", "step"),
+        env_key="STEPFUN_API_KEY",
+        display_name="Step Fun",
+        backend="openai_compat",
+        default_api_base="https://api.stepfun.com/v1",
     ),
     # === Local deployment (matched by config key, NOT by api_base) =========
     # vLLM / any OpenAI-compatible local server
