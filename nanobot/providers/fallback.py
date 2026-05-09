@@ -40,6 +40,8 @@ class FallbackProvider(LLMProvider):
         self._failed_slot_reset_times: dict[int, datetime] = {}
         # Inherit generation settings from the primary slot's provider.
         self.generation: GenerationSettings = slots[0][0].generation
+        self.debug = slots[0][0].debug
+        self.dump_dir = slots[0][0].dump_dir
 
     # ------------------------------------------------------------------
     # LLMProvider abstract method implementations

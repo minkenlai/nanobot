@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from typing import Any
+
+from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.tools.registry import ToolRegistry
@@ -211,6 +214,11 @@ class AgentRunner:
         tool_call: ToolCallRequest,
     ) -> tuple[Any, dict[str, str], BaseException | None]:
         try:
+            logger.debug(
+                "Executing tool {}: {}",
+                tool_call.name,
+                json.dumps(tool_call.arguments, ensure_ascii=False),
+            )
             result = await spec.tools.execute(tool_call.name, tool_call.arguments)
         except asyncio.CancelledError:
             raise

@@ -420,8 +420,15 @@ class OpenAICompatProvider(LLMProvider):
         if isinstance(response, str):
             return LLMResponse(content=response, finish_reason="stop")
 
+        self._dump_debug_data("chat_response", response)
+
         response_map = self._maybe_mapping(response)
         if response_map is not None:
+            logger.debug(
+                "Parsing OpenAI-compat response. Keys: {}. Usage: {}",
+                list(response_map.keys()),
+                response_map.get("usage"),
+            )
             choices = response_map.get("choices") or []
             if not choices:
                 content = self._extract_text_content(
@@ -457,6 +464,9 @@ class OpenAICompatProvider(LLMProvider):
                 if not reasoning_content:
                     reasoning_content = m.get("reasoning_content")
 
+            if raw_tool_calls:
+                logger.debug("Found {} raw tool calls in response", len(raw_tool_calls))
+
             parsed_tool_calls = []
             for tc in raw_tool_calls:
                 tc_map = self._maybe_mapping(tc) or {}
@@ -465,6 +475,9 @@ class OpenAICompatProvider(LLMProvider):
                 if isinstance(args, str):
                     args = json_repair.loads(args)
                 ec, prov, fn_prov = _extract_tc_extras(tc)
+
+                logger.debug("Parsed tool call: {}({})", fn.get("name"), args)
+
                 parsed_tool_calls.append(
                     ToolCallRequest(
                         id=_short_tool_id(),
@@ -484,6 +497,9 @@ class OpenAICompatProvider(LLMProvider):
                 reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
             )
 
+        logger.debug(
+            "Parsing OpenAI SDK object response. Usage: {}", getattr(response, "usage", None)
+        )
         if not response.choices:
             return LLMResponse(content="Error: API returned empty choices.", finish_reason="error")
 
@@ -502,12 +518,18 @@ class OpenAICompatProvider(LLMProvider):
             if not content and m.content:
                 content = m.content
 
+        if raw_tool_calls:
+            logger.debug("Found {} raw tool calls in OpenAI SDK response", len(raw_tool_calls))
+
         tool_calls = []
         for tc in raw_tool_calls:
             args = tc.function.arguments
             if isinstance(args, str):
                 args = json_repair.loads(args)
             ec, prov, fn_prov = _extract_tc_extras(tc)
+
+            logger.debug("Parsed SDK tool call: {}({})", tc.function.name, args)
+
             tool_calls.append(
                 ToolCallRequest(
                     id=_short_tool_id(),
@@ -527,12 +549,13 @@ class OpenAICompatProvider(LLMProvider):
             reasoning_content=getattr(msg, "reasoning_content", None) or None,
         )
 
-    @classmethod
-    def _parse_chunks(cls, chunks: list[Any]) -> LLMResponse:
+    def _parse_chunks(self, chunks: list[Any]) -> LLMResponse:
         content_parts: list[str] = []
         tc_bufs: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"
         usage: dict[str, int] = {}
+
+        self._dump_debug_data("chat_stream_chunks", chunks)
 
         def _accum_tc(tc: Any, idx_hint: int) -> None:
             """Accumulate one streaming tool-call delta into *tc_bufs*."""
@@ -572,31 +595,31 @@ class OpenAICompatProvider(LLMProvider):
                 content_parts.append(chunk)
                 continue
 
-            chunk_map = cls._maybe_mapping(chunk)
+            chunk_map = self._maybe_mapping(chunk)
             if chunk_map is not None:
                 choices = chunk_map.get("choices") or []
                 if not choices:
-                    usage = cls._extract_usage(chunk_map) or usage
-                    text = cls._extract_text_content(
+                    usage = self._extract_usage(chunk_map) or usage
+                    text = self._extract_text_content(
                         chunk_map.get("content") or chunk_map.get("output_text")
                     )
                     if text:
                         content_parts.append(text)
                     continue
-                choice = cls._maybe_mapping(choices[0]) or {}
+                choice = self._maybe_mapping(choices[0]) or {}
                 if choice.get("finish_reason"):
                     finish_reason = str(choice["finish_reason"])
-                delta = cls._maybe_mapping(choice.get("delta")) or {}
-                text = cls._extract_text_content(delta.get("content"))
+                delta = self._maybe_mapping(choice.get("delta")) or {}
+                text = self._extract_text_content(delta.get("content"))
                 if text:
                     content_parts.append(text)
                 for idx, tc in enumerate(delta.get("tool_calls") or []):
                     _accum_tc(tc, idx)
-                usage = cls._extract_usage(chunk_map) or usage
+                usage = self._extract_usage(chunk_map) or usage
                 continue
 
             if not chunk.choices:
-                usage = cls._extract_usage(chunk) or usage
+                usage = self._extract_usage(chunk) or usage
                 continue
             choice = chunk.choices[0]
             if choice.finish_reason:
@@ -607,19 +630,31 @@ class OpenAICompatProvider(LLMProvider):
             for tc in (delta.tool_calls or []) if delta else []:
                 _accum_tc(tc, getattr(tc, "index", 0))
 
+        content = "".join(content_parts) or None
+        tool_calls = [
+            ToolCallRequest(
+                id=b["id"] or _short_tool_id(),
+                name=b["name"],
+                arguments=json_repair.loads(b["arguments"]) if b["arguments"] else {},
+                extra_content=b.get("extra_content"),
+                provider_specific_fields=b.get("prov"),
+                function_provider_specific_fields=b.get("fn_prov"),
+            )
+            for b in tc_bufs.values()
+        ]
+
+        logger.debug(
+            "Parsed stream chunks. Content length: {}. Tool calls: {}. Finish reason: {}",
+            len(content) if content else 0,
+            len(tool_calls),
+            finish_reason,
+        )
+        for tc in tool_calls:
+            logger.debug("Parsed stream tool call: {}({})", tc.name, tc.arguments)
+
         return LLMResponse(
-            content="".join(content_parts) or None,
-            tool_calls=[
-                ToolCallRequest(
-                    id=b["id"] or _short_tool_id(),
-                    name=b["name"],
-                    arguments=json_repair.loads(b["arguments"]) if b["arguments"] else {},
-                    extra_content=b.get("extra_content"),
-                    provider_specific_fields=b.get("prov"),
-                    function_provider_specific_fields=b.get("fn_prov"),
-                )
-                for b in tc_bufs.values()
-            ],
+            content=content,
+            tool_calls=tool_calls,
             finish_reason=finish_reason,
             usage=usage,
         )

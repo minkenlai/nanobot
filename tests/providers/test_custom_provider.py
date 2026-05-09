@@ -53,7 +53,9 @@ def test_custom_provider_parse_accepts_dict_response() -> None:
 
 
 def test_custom_provider_parse_chunks_accepts_plain_text_chunks() -> None:
-    result = OpenAICompatProvider._parse_chunks(["hello ", "world"])
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider()
+    result = provider._parse_chunks(["hello ", "world"])
 
     assert result.finish_reason == "stop"
     assert result.content == "hello world"

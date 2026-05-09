@@ -235,6 +235,7 @@ class Config(BaseSettings):
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     repl: ReplConfig = Field(default_factory=ReplConfig)
     frugality: FrugalityConfig = Field(default_factory=FrugalityConfig)
+    debug_llm: bool = False  # Log full responses and dump them to files in workspace/logs/llm_dumps
 
     @property
     def workspace_path(self) -> Path:

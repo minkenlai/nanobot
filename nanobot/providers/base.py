@@ -5,6 +5,8 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
@@ -104,6 +106,34 @@ class LLMProvider(ABC):
         self.api_key = api_key
         self.api_base = api_base
         self.generation: GenerationSettings = GenerationSettings()
+        self.debug: bool = False
+        self.dump_dir: Path | None = None
+
+    def _dump_debug_data(self, name: str, data: Any) -> None:
+        """Dump raw LLM data to a file in workspace/logs/llm_dumps/."""
+        if not self.debug or not self.dump_dir:
+            return
+
+        try:
+            target_dir = self.dump_dir / "llm_dumps"
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"{timestamp}_{name}.json"
+            target_path = target_dir / filename
+
+            # Handle non-serializable objects (like OpenAI SDK models)
+            def _default(obj: Any) -> Any:
+                if hasattr(obj, "model_dump"):
+                    return obj.model_dump()
+                return str(obj)
+
+            with open(target_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False, default=_default)
+
+            logger.debug("LLM debug data dumped to {}", target_path)
+        except Exception as e:
+            logger.warning("Failed to dump LLM debug data: {}", e)
 
     @staticmethod
     def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

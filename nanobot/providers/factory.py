@@ -250,4 +250,6 @@ def _build_single_provider(
         max_tokens=agent_config.max_tokens,
         reasoning_effort=agent_config.reasoning_effort,
     )
+    provider.debug = config.debug_llm
+    provider.dump_dir = config.workspace_path / "logs"
     return provider
