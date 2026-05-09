@@ -6,6 +6,7 @@ parse → serialize round-trip so the model can continue reasoning.
 """
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 from nanobot.providers.base import ToolCallRequest
@@ -145,8 +146,9 @@ def test_parse_chunks_sdk_preserves_extra_content() -> None:
     delta = SimpleNamespace(content=None, tool_calls=[tc_delta])
     choice = SimpleNamespace(finish_reason="tool_calls", delta=delta)
     chunk = SimpleNamespace(choices=[choice], usage=None)
+    chunks: list[Any] = [chunk]
 
-    result = OpenAICompatProvider._parse_chunks([chunk])
+    result = OpenAICompatProvider._parse_chunks(chunks)
 
     assert len(result.tool_calls) == 1
     tc = result.tool_calls[0]
@@ -176,7 +178,8 @@ def test_parse_chunks_dict_preserves_extra_content() -> None:
         ],
     }
 
-    result = OpenAICompatProvider._parse_chunks([chunk])
+    chunks: list[Any] = [chunk]
+    result = OpenAICompatProvider._parse_chunks(chunks)
 
     assert len(result.tool_calls) == 1
     tc = result.tool_calls[0]

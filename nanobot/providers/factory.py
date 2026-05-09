@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from loguru import logger
 
+from nanobot.agent.runner import AgentRunner
 from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.providers.registry import find_by_name
-
-if TYPE_CHECKING:
-    from nanobot.agent.runner import AgentRunner
 
 
 class AgentRegistry:
@@ -23,15 +21,15 @@ class AgentRegistry:
     def get_provider(self, agent_name: str) -> LLMProvider:
         """Get a cached LLMProvider for the specified agent profile."""
         if agent_name not in self._providers:
+            logger.debug(f"Building provider for agent '{agent_name}'")
             self._providers[agent_name] = build_provider(self.config, agent_name)
         return self._providers[agent_name]
 
     def get_runner(self, agent_name: str) -> AgentRunner:
         """Get a cached AgentRunner for the specified agent profile."""
         if agent_name not in self._runners:
-            from nanobot.agent.runner import AgentRunner
-
             provider = self.get_provider(agent_name)
+            logger.debug(f"Building runner for agent '{agent_name}'")
             self._runners[agent_name] = AgentRunner(provider)
         return self._runners[agent_name]
 
