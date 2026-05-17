@@ -323,6 +323,18 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         http_timeout=600,
         max_concurrent=1,
     ),
+    # inferencia llama.cpp (local, OpenAI-compatible)
+    ProviderSpec(
+        name="inferencia",
+        keywords=("inferencia", "llama", "llama.cpp"),
+        env_key="",
+        display_name="inferencia-llama.cpp",
+        backend="openai_compat",
+        is_local=True,
+        default_api_base="http://inferencia:8080/v1",
+        http_timeout=600,
+        max_concurrent=2,
+    ),
     # === OpenVINO Model Server (direct, local, OpenAI-compatible at /v3) ===
     ProviderSpec(
         name="ovms",
