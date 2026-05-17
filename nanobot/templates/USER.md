@@ -16,9 +16,6 @@ Information to help personalize interactions.
 - (Directness, frugality, efficiency, "bang for the buck")
 - (No corporate fluff — just get it done)
 
-## Hardware & Environment
-- (e.g., WSL2 on Debian Trixie, 3D printing setup)
-
 ## Personal Context & Goals
 - (Family members or important people)
 - (Health, fitness, career goals)
