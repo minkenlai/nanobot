@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
@@ -108,6 +109,7 @@ class ProviderConfig(Base):
 class ProvidersConfig(Base):
     """Configuration for LLM providers."""
 
+    inferencia: ProviderConfig = Field(default_factory=ProviderConfig)  # Self-hosted llama.cpp
     custom: ProviderConfig = Field(default_factory=ProviderConfig)  # Any OpenAI-compatible endpoint
     azure_openai: ProviderConfig = Field(
         default_factory=ProviderConfig
@@ -226,9 +228,7 @@ class ToolsConfig(Base):
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
-    models: dict[str, ModelConfig] = Field(
-        default_factory=dict
-    )  # named model configs for fallback chains
+    models: dict[str, ModelConfig] = Field(default_factory=dict)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
@@ -258,12 +258,13 @@ class Config(BaseSettings):
         from nanobot.providers.registry import PROVIDERS, find_by_name
 
         agent_config = self.agents.get_agent(agent_name)
-        forced = provider_override if provider_override != "auto" else agent_config.provider
-        if forced != "auto":
-            spec = find_by_name(forced)
+        if provider_override != "auto":
+            spec = find_by_name(provider_override)
             if spec:
                 p = getattr(self.providers, spec.name, None)
                 return (p, spec.name) if p else (None, None)
+            else:
+                logger.warning(f"provider not found {provider_override}")
             return None, None
 
         model_lower = (model or agent_config.model).lower()

@@ -299,14 +299,15 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         default_api_base="https://api.stepfun.com/v1",
     ),
     # === Local deployment (matched by config key, NOT by api_base) =========
-    # vLLM / any OpenAI-compatible local server
+    # inferencia llama.cpp (local, OpenAI-compatible)
     ProviderSpec(
-        name="vllm",
-        keywords=("vllm",),
-        env_key="HOSTED_VLLM_API_KEY",
-        display_name="vLLM/Local",
+        name="inferencia",
+        keywords=("inferencia", "llama", "llama.cpp"),
+        env_key="",
+        display_name="inferencia llama.cpp",
         backend="openai_compat",
         is_local=True,
+        default_api_base="http://inferencia:8080/v1",
         http_timeout=600,
         max_concurrent=1,
     ),
@@ -323,17 +324,16 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         http_timeout=600,
         max_concurrent=1,
     ),
-    # inferencia llama.cpp (local, OpenAI-compatible)
+    # vLLM / any OpenAI-compatible local server
     ProviderSpec(
-        name="inferencia",
-        keywords=("inferencia", "llama", "llama.cpp"),
-        env_key="",
-        display_name="inferencia-llama.cpp",
+        name="vllm",
+        keywords=("vllm",),
+        env_key="HOSTED_VLLM_API_KEY",
+        display_name="vLLM/Local",
         backend="openai_compat",
         is_local=True,
-        default_api_base="http://inferencia:8080/v1",
         http_timeout=600,
-        max_concurrent=2,
+        max_concurrent=1,
     ),
     # === OpenVINO Model Server (direct, local, OpenAI-compatible at /v3) ===
     ProviderSpec(

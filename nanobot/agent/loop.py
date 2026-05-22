@@ -404,12 +404,14 @@ class AgentLoop:
             ) -> str | None:
                 return loop_self._strip_think(content)
 
-        runner = self.runner
-        model = self.model
         # Use user-pinned agent provider if specified in msg metadata, otherwise default to main runner.
         if agent_runner:
             runner = agent_runner
             model = agent_runner.provider.get_default_model()
+        else:
+            runner = self.runner
+            model = self.model
+
         result = await runner.run(
             AgentRunSpec(
                 initial_messages=initial_messages,
@@ -697,7 +699,7 @@ class AgentLoop:
                 await self.bus.publish_outbound(
                     OutboundMessage(
                         address=msg.address,
-                        content=f"⚠️ The pinned profile `{agent_profile}` was not found. Falling back to default agent.",
+                        content=f"⚠️ The pinned profile `{agent_profile}` has issues. Falling back to default agent.",
                         metadata={
                             "system_event": "pin_invalid",
                             "message_id": msg.metadata.get("message_id"),
