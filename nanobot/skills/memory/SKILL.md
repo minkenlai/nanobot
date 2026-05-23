@@ -8,6 +8,7 @@ always: true
 
 ## Structure
 
+- `memory/STAGING.md` — Transient scratchpad for today's notes and facts. Use this for high-frequency updates during the day.
 - `memory/MEMORY.md` — Long-term facts (preferences, project context, relationships). Always loaded into your context.
 - `memory/HISTORY.md` — Append-only event log. NOT loaded into context. Search it with grep-style tools or in-memory filters. Each entry starts with [YYYY-MM-DD HH:MM].
 
@@ -25,12 +26,11 @@ Examples:
 
 Prefer targeted command-line search for large history files.
 
-## When to Update MEMORY.md
+## When to Update Memory
 
-Write important facts immediately using `edit_file` or `write_file`:
-- User preferences ("I prefer dark mode")
-- Project context ("The API uses OAuth2")
-- Relationships ("Alice is the project lead")
+- **High-frequency/Transient facts:** Write to `memory/STAGING.md` using `edit_file` or `write_file`.
+- **Invariants/Core preferences:** Write directly to `memory/MEMORY.md` (e.g., "Ken prefers X over Y").
+- **Project-specific data:** Write to the relevant PKB folder (e.g., `kb/01_Projects/...`) or `STAGING.md` for later sorting.
 
 ## Auto-consolidation
 
