@@ -86,12 +86,18 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     agent_id = session.metadata.get("agent", "defaults")
     pinned_profile = msg.metadata.get("agent_profile")
 
+    # When a pinned profile is active, use its provider for model info
+    if pinned_profile:
+        agent_provider = loop.registry.get_provider(pinned_profile)
+    else:
+        agent_provider = loop.provider
+
     from nanobot.providers.fallback import FallbackProvider
 
-    if isinstance(loop.provider, FallbackProvider):
-        model_id = loop.provider.active_identifier
-        model_name = loop.provider.active_model
-        fallbacks = loop.provider.fallback_identifiers
+    if isinstance(agent_provider, FallbackProvider):
+        model_id = agent_provider.active_identifier
+        model_name = agent_provider.active_model
+        fallbacks = agent_provider.fallback_identifiers
         if len(fallbacks) > 1:
             # Highlight current position in chain
             chain = []
@@ -104,7 +110,7 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
         else:
             model_info = f"`{model_name}` (`{model_id}`)"
     else:
-        model_name = getattr(loop.provider, "get_default_model", lambda: loop.model)()
+        model_name = getattr(agent_provider, "get_default_model", lambda: loop.model)()
         # Try to find if this model corresponds to a named model config
         model_id = "unknown"
         if loop.config and loop.config.models:
@@ -264,6 +270,12 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
         )
 
     if not code.strip():
+        # If no code is provided, send the repl_recipes.md file if it exists.
+        recipes_path = loop.workspace / "repl_recipes.md"
+        if recipes_path.exists():
+            return OutboundMessage(
+                address=msg.address, content="📚 **REPL Recipes**", media=[str(recipes_path)]
+            )
         return OutboundMessage(address=msg.address, content="Usage: `/repl <python statement>`")
 
     log_file = loop.workspace / "logs" / "repl.log"

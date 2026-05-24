@@ -304,7 +304,6 @@ def test_fallback_provider_requires_at_least_one_slot():
         FallbackProvider([])
 
 
-
 # ---------------------------------------------------------------------------
 # Additional: quota errors on multiple consecutive slots
 # ---------------------------------------------------------------------------
