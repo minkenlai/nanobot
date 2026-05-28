@@ -35,8 +35,7 @@ _SAVE_MEMORY_TOOL = [
                     },
                     "memory_update": {
                         "type": "string",
-                        "description": "Full updated long-term memory as markdown. Include all existing "
-                        "facts plus new ones. Return unchanged if nothing new.",
+                        "description": "New facts, updates, or changes to be added to long-term memory. Use a bulleted list. Do NOT return the entire memory file.",
                     },
                 },
                 "required": ["history_entry", "memory_update"],
@@ -94,6 +93,7 @@ class MemoryStore:
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
+        self.staging_file = self.memory_dir / "STAGING.md"
         self._consecutive_failures = 0
 
     def read_long_term(self) -> str:
@@ -213,7 +213,12 @@ class MemoryStore:
 
             self.append_history(entry)
             if update != current_memory:
-                self.write_long_term(update)
+                # Instead of overwriting MEMORY.md, we append these updates to STAGING.md
+                # to be processed by the memory-synthesize skill later.
+                staging_path = self.memory_dir / "STAGING.md"
+                with open(staging_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n## Consolidation Update: {datetime.now().isoformat()}\n{update}\n")
+                logger.info("Memory updates staged to STAGING.md")
 
             self._consecutive_failures = 0
             logger.info("Memory consolidation done for {} messages", len(messages))

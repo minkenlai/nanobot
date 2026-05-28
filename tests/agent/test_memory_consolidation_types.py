@@ -78,7 +78,7 @@ class TestMemoryConsolidationTypeHandling:
         assert result is True
         assert store.history_file.exists()
         assert "[2026-01-01] User discussed testing." in store.history_file.read_text()
-        assert "User likes testing." in store.memory_file.read_text()
+        assert "User likes testing." in store.staging_file.read_text()
 
     @pytest.mark.asyncio
     async def test_dict_arguments_serialized_to_json(self, tmp_path: Path) -> None:

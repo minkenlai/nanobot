@@ -594,58 +594,99 @@ class AgentLoop:
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
-        """Process a single inbound message and return the response."""
-        # System messages: parse origin address
+        """Dispatch inbound messages to the appropriate handler."""
         if msg.channel == "system":
-            # msg.chat_id was stored as "channel:chat_id" or a URI
-            address = Address.from_uri(msg.chat_id)
-            logger.info("Processing system message for {}", address)
-            key = address.to_uri()
-            session = self.sessions.get_or_create(key)
-            await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-            self._set_tool_context(address, key, msg.metadata.get("message_id"))
-            history = session.get_history(max_messages=0)
-            current_role = "assistant" if msg.sender_id == "subagent" else "user"
-            messages = self.context.build_messages(
-                history=history,
-                current_message=msg.content,
-                channel=address.channel,
-                chat_id=address.segments[0] if address.segments else "",
-                current_role=current_role,
+            return await self._process_system_message(
+                msg, on_progress=on_progress, on_stream=on_stream, on_stream_end=on_stream_end
             )
-            # Warn on unexpected agent profile override from metadata
-            agent_profile = msg.metadata.get("agent_profile")
-            if agent_profile:
-                logger.warning(
-                    "Invalid for system msg to have agent profile in metadata: {}", agent_profile
-                )
+        return await self._process_user_message(
+            msg,
+            session_key=session_key,
+            on_progress=on_progress,
+            on_stream=on_stream,
+            on_stream_end=on_stream_end,
+        )
 
-            async def _bus_progress(text: str, *, tool_hint: bool = False) -> None:
-                meta = {"_progress": True, "_tool_hint": tool_hint}
-                await self.bus.publish_outbound(
-                    OutboundMessage(address=address, content=text, metadata=meta)
-                )
+    def _make_progress_callback(
+        self,
+        address: Address,
+        base_meta: dict | None = None,
+    ) -> Callable[[str, bool], Awaitable[None]]:
+        """Build a progress callback that publishes to the bus."""
 
-            final_content, _, all_msgs = await self._run_agent_loop(
-                messages,
-                address=address,
-                message_id=msg.metadata.get("message_id"),
-                on_progress=on_progress or _bus_progress,
-                on_stream=on_stream,
-                on_stream_end=on_stream_end,
-            )
-            self._save_turn(session, all_msgs, 1 + len(history))
-            self.sessions.save(session)
-            self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
-
-            # Frugality Nudge for system/subagent completions
-            final_content = self._maybe_add_frugality_nudge(session, final_content)
-
-            return OutboundMessage(
-                address=address,
-                content=final_content or "Background task completed.",
+        async def _callback(text: str, *, tool_hint: bool = False) -> None:
+            meta = dict(base_meta or {})
+            meta["_progress"] = True
+            meta["_tool_hint"] = tool_hint
+            await self.bus.publish_outbound(
+                OutboundMessage(address=address, content=text, metadata=meta)
             )
 
+        return _callback
+
+    async def _process_system_message(
+        self,
+        msg: InboundMessage,
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
+        on_stream: Callable[[str], Awaitable[None]] | None = None,
+        on_stream_end: Callable[..., Awaitable[None]] | None = None,
+    ) -> OutboundMessage | None:
+        """Handle system messages (restart notifications, subagent replies, etc.)."""
+        # msg.chat_id was stored as "channel:chat_id" or a URI
+        address = Address.from_uri(msg.chat_id)
+        logger.info("Processing system message for {}", address)
+        key = address.to_uri()
+        session = self.sessions.get_or_create(key)
+        await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+        self._set_tool_context(address, key, msg.metadata.get("message_id"))
+
+        history = session.get_history(max_messages=0)
+        current_role = "assistant" if msg.sender_id == "subagent" else "user"
+        messages = self.context.build_messages(
+            history=history,
+            current_message=msg.content,
+            channel=address.channel,
+            chat_id=address.segments[0] if address.segments else "",
+            current_role=current_role,
+        )
+
+        # Warn on unexpected agent profile override from metadata
+        agent_profile = msg.metadata.get("agent_profile")
+        if agent_profile:
+            logger.warning(
+                "Invalid for system msg to have agent profile in metadata: {}", agent_profile
+            )
+
+        progress_cb = on_progress or self._make_progress_callback(address)
+
+        final_content, _, all_msgs = await self._run_agent_loop(
+            messages,
+            address=address,
+            message_id=msg.metadata.get("message_id"),
+            on_progress=progress_cb,
+            on_stream=on_stream,
+            on_stream_end=on_stream_end,
+        )
+
+        self._save_turn(session, all_msgs, 1 + len(history))
+        self.sessions.save(session)
+        self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+        final_content = self._maybe_add_frugality_nudge(session, final_content)
+
+        return OutboundMessage(
+            address=address,
+            content=final_content or "Background task completed.",
+        )
+
+    async def _process_user_message(
+        self,
+        msg: InboundMessage,
+        session_key: str | None = None,
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
+        on_stream: Callable[[str], Awaitable[None]] | None = None,
+        on_stream_end: Callable[..., Awaitable[None]] | None = None,
+    ) -> OutboundMessage | None:
+        """Handle user messages (chat, slash commands, tool requests, etc.)."""
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
 
@@ -659,8 +700,8 @@ class AgentLoop:
             return result
 
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-
         self._set_tool_context(msg.address, key, msg.metadata.get("message_id"))
+
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
@@ -674,17 +715,7 @@ class AgentLoop:
             chat_id=msg.chat_id,
         )
 
-        async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
-            meta = dict(msg.metadata or {})
-            meta["_progress"] = True
-            meta["_tool_hint"] = tool_hint
-            await self.bus.publish_outbound(
-                OutboundMessage(
-                    address=msg.address,
-                    content=content,
-                    metadata=meta,
-                )
-            )
+        progress_cb = on_progress or self._make_progress_callback(msg.address, msg.metadata)
 
         # Resolve agent profile override from metadata
         agent_profile = msg.metadata.get("agent_profile")
@@ -695,7 +726,6 @@ class AgentLoop:
                 logger.info("Overriding agent profile for turn: {}", agent_profile)
             except ValueError as e:
                 logger.warning("Invalid agent profile requested in metadata: {}", e)
-                # Send transient warning to user about invalid profile pin
                 await self.bus.publish_outbound(
                     OutboundMessage(
                         address=msg.address,
@@ -710,7 +740,7 @@ class AgentLoop:
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages,
             address=msg.address,
-            on_progress=on_progress or _bus_progress,
+            on_progress=progress_cb,
             on_stream=on_stream,
             on_stream_end=on_stream_end,
             message_id=msg.metadata.get("message_id"),
@@ -727,7 +757,6 @@ class AgentLoop:
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None
 
-        # Frugality Nudge
         final_content = self._maybe_add_frugality_nudge(session, final_content)
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
