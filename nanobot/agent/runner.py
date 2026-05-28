@@ -159,6 +159,32 @@ class AgentRunner:
                 await hook.after_iteration(context)
                 break
 
+            if clean is None or not clean:
+                # Model returned empty content after tool calls — self-prompt to recover.
+                # Smaller models often "understand" the tool result but forget to respond.
+                # Only apply on iterations > 0 (after at least one tool call cycle).
+                if iteration > 0 and iteration < spec.max_iterations - 1:
+                    logger.info(
+                        "Model returned empty response after tool calls; injecting self-prompt to recover."
+                    )
+                    messages.append(
+                        build_assistant_message(
+                            "",
+                            reasoning_content=response.reasoning_content,
+                            thinking_blocks=response.thinking_blocks,
+                        )
+                    )
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": "Please summarize the tool results or provide next steps.",
+                        }
+                    )
+                    await hook.after_iteration(context)
+                    continue
+                # Fallback if we're already at the last iteration — don't block.
+                clean = "I have processed the tool results. Please let me know if you need any follow-up."
+
             messages.append(
                 build_assistant_message(
                     clean,
