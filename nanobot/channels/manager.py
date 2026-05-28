@@ -263,6 +263,15 @@ class ChannelManager:
             except asyncio.CancelledError:
                 raise  # Propagate cancellation for graceful shutdown
             except Exception as e:
+                err_str = str(e).lower()
+                if "message channel identifier not found" in err_str:
+                    logger.warning(
+                        "Bot lacks send permission for {} ({}: {}), skipping",
+                        msg.channel,
+                        type(e).__name__,
+                        e,
+                    )
+                    return
                 if attempt == max_attempts - 1:
                     logger.error(
                         "Failed to send to {} after {} attempts: {} - {}",

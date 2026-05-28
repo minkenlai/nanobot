@@ -394,6 +394,43 @@ async def test_send_with_retry_retries_on_failure():
 
 
 @pytest.mark.asyncio
+async def test_send_with_retry_no_retry_on_channel_permission_error():
+    """_send_with_retry should NOT retry on 'message channel identifier not found' errors."""
+    call_count = 0
+
+    class _PermErrorChannel(BaseChannel):
+        name = "permerror"
+        display_name = "PermError"
+
+        async def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+        async def send(self, msg: OutboundMessage) -> None:
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("403 Not Found: message channel identifier not found")
+
+    fake_config = SimpleNamespace(
+        channels=ChannelsConfig(send_max_retries=3),
+        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
+    )
+
+    mgr = ChannelManager.__new__(ChannelManager)
+    mgr.config = fake_config
+    mgr.bus = MessageBus()
+    mgr.channels = {"permerror": _PermErrorChannel(fake_config, mgr.bus)}
+    mgr._dispatch_task = None
+
+    msg = OutboundMessage(address=Address(channel="permerror", segments=("123",)), content="test")
+    await mgr._send_with_retry(mgr.channels["permerror"], msg)
+
+    assert call_count == 1  # Should NOT retry on permission error
+
+
+@pytest.mark.asyncio
 async def test_send_with_retry_no_retry_when_max_is_zero():
     """_send_with_retry should not retry when send_max_retries is 0."""
     call_count = 0

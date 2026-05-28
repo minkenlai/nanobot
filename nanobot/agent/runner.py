@@ -131,6 +131,7 @@ class AgentRunner:
                     stop_reason = "tool_error"
                     context.error = error
                     context.stop_reason = stop_reason
+                    final_content = error
                     await hook.after_iteration(context)
                     break
                 for tool_call, result in zip(response.tool_calls, results):
