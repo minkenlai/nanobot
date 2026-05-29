@@ -40,6 +40,19 @@ class ExecTool(Tool):
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
         self.path_append = path_append
+        # Known slash commands that should not be mistaken for absolute paths
+        self._slash_command_names = frozenset(
+            {
+                "/new",
+                "/help",
+                "/status",
+                "/stop",
+                "/repl",
+                "/restart",
+                "/halt",
+                "/RIP",
+            }
+        )
 
     @property
     def name(self) -> str:
@@ -190,7 +203,7 @@ class ExecTool(Tool):
 
             cwd_path = Path(cwd).resolve()
 
-            for raw in self._extract_absolute_paths(cmd):
+            for raw in self._filter_slash_commands(self._extract_absolute_paths(cmd)):
                 try:
                     expanded = os.path.expandvars(raw.strip())
                     p = Path(expanded).expanduser().resolve()
@@ -211,3 +224,7 @@ class ExecTool(Tool):
             r"(?:^|[\s|>'\"])(~[^\s\"'>;|<]*)", command
         )  # POSIX/Windows home shortcut: ~
         return win_paths + posix_paths + home_paths
+
+    def _filter_slash_commands(self, paths: list[str]) -> list[str]:
+        """Remove known slash commands from extracted paths to avoid false positives."""
+        return [p for p in paths if p not in self._slash_command_names]
