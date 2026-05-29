@@ -302,7 +302,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # inferencia llama.cpp (local, OpenAI-compatible)
     ProviderSpec(
         name="inferencia",
-        keywords=("inferencia", "llama", "llama.cpp"),
+        keywords=("inferencia",),
         env_key="",
         display_name="inferencia llama.cpp",
         backend="openai_compat",

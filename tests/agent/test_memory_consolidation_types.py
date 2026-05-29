@@ -102,9 +102,8 @@ class TestMemoryConsolidationTypeHandling:
         parsed = json.loads(history_content.strip())
         assert parsed["summary"] == "User discussed testing."
 
-        memory_content = store.memory_file.read_text()
-        parsed_mem = json.loads(memory_content)
-        assert "User likes testing" in parsed_mem["facts"]
+        staging_content = store.staging_file.read_text()
+        assert "User likes testing" in staging_content
 
     @pytest.mark.asyncio
     async def test_string_arguments_as_raw_json(self, tmp_path: Path) -> None:
@@ -194,7 +193,7 @@ class TestMemoryConsolidationTypeHandling:
 
         assert result is True
         assert "User discussed testing." in store.history_file.read_text()
-        assert "User likes testing." in store.memory_file.read_text()
+        assert "User likes testing." in store.staging_file.read_text()
 
     @pytest.mark.asyncio
     async def test_list_arguments_empty_list_returns_false(self, tmp_path: Path) -> None:

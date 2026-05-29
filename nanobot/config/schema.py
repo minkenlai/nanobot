@@ -258,13 +258,16 @@ class Config(BaseSettings):
         from nanobot.providers.registry import PROVIDERS, find_by_name
 
         agent_config = self.agents.get_agent(agent_name)
-        if provider_override != "auto":
-            spec = find_by_name(provider_override)
+        effective_provider = (
+            provider_override if provider_override != "auto" else agent_config.provider
+        )
+        if effective_provider != "auto":
+            spec = find_by_name(effective_provider)
             if spec:
                 p = getattr(self.providers, spec.name, None)
                 return (p, spec.name) if p else (None, None)
             else:
-                logger.warning(f"provider not found {provider_override}")
+                logger.warning(f"provider not found {effective_provider}")
             return None, None
 
         model_lower = (model or agent_config.model).lower()

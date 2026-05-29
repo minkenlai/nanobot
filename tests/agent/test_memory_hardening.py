@@ -55,4 +55,5 @@ async def test_memory_store_handles_raw_string_args(memory_store, mock_provider)
     )
 
     assert result is True
-    assert memory_store.read_long_term() == "updated memory"
+    staging_content = memory_store.staging_file.read_text()
+    assert "updated memory" in staging_content
