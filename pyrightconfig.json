@@ -1,0 +1,24 @@
+{
+  "include": ["nanobot"],
+  "exclude": [
+    "**/__pycache__",
+    "**/.venv",
+    "**/node_modules"
+  ],
+  "typeCheckingMode": "off",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none",
+  "reportInvalidTypeForm": "error",
+  "reportMissingModuleSource": "warning",
+  "reportOptionalCall": "warning",
+  "reportOptionalIterable": "warning",
+  "reportOptionalMemberAccess": "warning",
+  "reportOptionalSubscript": "warning",
+  "reportOptionalContextManager": "warning",
+  "reportOptionalOperand": "warning",
+  "reportPrivateImportUsage": "warning",
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Linux",
+  "venvPath": ".",
+  "venv": ".venv"
+}
