@@ -23,7 +23,12 @@ from nanobot.config.paths import get_media_dir
 from nanobot.config.schema import Base
 from nanobot.security.network import validate_url_target
 from nanobot.utils.helpers import split_message
-from nanobot.utils.telegram_utils import load_topic_pins, save_topic_pins
+from nanobot.utils.telegram_utils import (
+    load_topic_pins,
+    save_topic_pins,
+    set_cached_profile,
+    set_cached_topic_name,
+)
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 TELEGRAM_REPLY_CONTEXT_MAX_LEN = (
@@ -236,14 +241,16 @@ class TelegramChannel(BaseChannel):
         self._progress_message_id: dict[str, int] = {}  # address_uri -> status message id
         self._progress_history: dict[str, list[str]] = {}  # address_uri -> audit trail
         self._topic_pins: dict[
-            str, tuple[int | None, str | None]
-        ] = {}  # chat_id:thread_id -> (pinned_message_id, profile_name)
+            str, tuple[int | None, str | None, str | None]
+        ] = {}  # chat_id:thread_id -> (pinned_message_id, profile_name, topic_name)
 
         # Initialize pins from disk
         persistence = load_topic_pins()
         for chat_id, topics in persistence.items():
-            for thread_id, profile in topics.items():
-                self._topic_pins[f"{chat_id}:{thread_id}"] = (None, profile)
+            for thread_id, entry in topics.items():
+                profile = entry.get("profile") if isinstance(entry, dict) else entry
+                topic_name = entry.get("name") if isinstance(entry, dict) else None
+                self._topic_pins[f"{chat_id}:{thread_id}"] = (None, profile, topic_name)
 
     def is_allowed(self, sender_id: str) -> bool:
         """Preserve Telegram's legacy id|username allowlist matching."""
@@ -333,6 +340,13 @@ class TelegramChannel(BaseChannel):
         )
         self._app.add_handler(
             MessageHandler(filters.UpdateType.EDITED_MESSAGE, self._on_edited_message)
+        )
+        # Capture topic names when created or renamed
+        self._app.add_handler(
+            MessageHandler(filters.StatusUpdate.FORUM_TOPIC_CREATED, self._on_forum_topic_created)
+        )
+        self._app.add_handler(
+            MessageHandler(filters.StatusUpdate.FORUM_TOPIC_EDITED, self._on_forum_topic_edited)
         )
 
         logger.info("Starting Telegram bot (polling mode)...")
@@ -870,7 +884,7 @@ class TelegramChannel(BaseChannel):
         # List defaults
         try:
             defaults = agents.defaults
-            models = [defaults.model] + defaults.fallback_models
+            models = defaults.fallback_models if defaults.fallback_models else [defaults.model]
             profiles.append(f"• **defaults**: {', '.join(models)}")
         except Exception:
             pass
@@ -882,7 +896,7 @@ class TelegramChannel(BaseChannel):
                 continue
             try:
                 agent = agents.get_agent(name)
-                models = [agent.model] + agent.fallback_models
+                models = agent.fallback_models if agent.fallback_models else [agent.model]
                 profiles.append(f"• **{name}**: {', '.join(models)}")
             except Exception:
                 continue
@@ -910,14 +924,17 @@ class TelegramChannel(BaseChannel):
             if key.startswith(f"{chat_id}:"):
                 found = True
                 _, topic_id_str = key.split(":", 1)
-                _, profile = value
-                topics_to_show.append((int(topic_id_str), profile))
+                _, profile, topic_name = value
+                topics_to_show.append((int(topic_id_str), profile, topic_name))
 
         topics_to_show.sort()
 
-        for topic_id, profile in topics_to_show:
+        for topic_id, profile, topic_name in topics_to_show:
             profile_str = f"`{profile}`" if profile else "_(none)_"
-            lines.append(f"• Topic {topic_id}: {profile_str}")
+            if topic_name:
+                lines.append(f'• Topic {topic_id} "{topic_name}" = {profile_str}')
+            else:
+                lines.append(f"• Topic {topic_id}: {profile_str}")
 
         if not found:
             lines.append("No topics discovered yet in this chat.")
@@ -970,13 +987,12 @@ class TelegramChannel(BaseChannel):
         cache_key = f"{chat_id_str}:{thread_id}"
 
         # Update in-memory
-        self._topic_pins[cache_key] = (None, profile_name)
+        _, _, topic_name = self._topic_pins.get(cache_key, (None, None, None))
+        self._topic_pins[cache_key] = (None, profile_name, topic_name)
 
         # Save to disk
         persistence = load_topic_pins()
-        if chat_id_str not in persistence:
-            persistence[chat_id_str] = {}
-        persistence[chat_id_str][thread_id] = profile_name
+        set_cached_profile(persistence, chat_id_str, thread_id, profile_name, topic_name)
         save_topic_pins(persistence)
 
         await update.message.reply_text(
@@ -1007,7 +1023,7 @@ class TelegramChannel(BaseChannel):
 
         # Cache is event-driven (pin/edit handlers keep it current); return immediately on hit
         if cache_key in self._topic_pins:
-            pinned_msg_id, profile = self._topic_pins[cache_key]
+            pinned_msg_id, profile, _topic_name = self._topic_pins[cache_key]
             if profile:
                 return profile
             # If we have a cached native pin but it didn't have a profile, return None
@@ -1033,7 +1049,8 @@ class TelegramChannel(BaseChannel):
                         logger.info("Found native profile pin for topic {}: {}", thread_id, profile)
                     pinned_msg_id = pin.message_id
 
-            self._topic_pins[cache_key] = (pinned_msg_id, profile)
+            _, _, cached_topic_name = self._topic_pins.get(cache_key, (None, None, None))
+            self._topic_pins[cache_key] = (pinned_msg_id, profile, cached_topic_name)
             return profile
         except Exception as e:
             logger.warning("Failed to fetch topic pin: {}", e)
@@ -1051,7 +1068,8 @@ class TelegramChannel(BaseChannel):
         pinned = msg.pinned_message
         if pinned:
             profile = self._parse_profile_from_message(pinned)
-            self._topic_pins[cache_key] = (pinned.message_id, profile)
+            _, _, topic_name = self._topic_pins.get(cache_key, (None, None, None))
+            self._topic_pins[cache_key] = (pinned.message_id, profile, topic_name)
             logger.info("Pin event: key {} topic {} profile -> {}", cache_key, thread_id, profile)
         else:
             self._topic_pins.pop(cache_key, None)
@@ -1070,10 +1088,71 @@ class TelegramChannel(BaseChannel):
         if cached is None or cached[0] != msg.message_id:
             return  # edited message is not the current pin for this topic
         profile = self._parse_profile_from_message(msg)
-        self._topic_pins[cache_key] = (msg.message_id, profile)
+        _, _, topic_name = self._topic_pins.get(cache_key, (None, None, None))
+        self._topic_pins[cache_key] = (msg.message_id, profile, topic_name)
         logger.info(
             "Edit event: key {} topic {} profile updated -> {}", cache_key, thread_id, profile
         )
+
+    async def _on_forum_topic_created(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Capture the topic name when a new forum topic is created."""
+        msg = update.message
+        if not msg:
+            return
+        thread_id = getattr(msg, "message_thread_id", None)
+        topic = getattr(msg, "forum_topic_created", None)
+        if not thread_id or not topic:
+            return
+        topic_name = getattr(topic, "name", None)
+        cache_key = f"{msg.chat_id}:{thread_id}"
+        cached_pid, cached_profile, cached_name = self._topic_pins.get(
+            cache_key, (None, None, None)
+        )
+        self._topic_pins[cache_key] = (
+            cached_pid,
+            cached_profile,
+            topic_name or cached_name,
+        )
+        logger.info(
+            "Forum topic created: key {} topic {} name={}", cache_key, thread_id, topic_name
+        )
+        # Persist to disk
+        persistence = load_topic_pins()
+        set_cached_topic_name(persistence, str(msg.chat_id), thread_id, topic_name or cached_name)
+        if cached_profile:
+            set_cached_profile(persistence, str(msg.chat_id), thread_id, cached_profile)
+        save_topic_pins(persistence)
+
+    async def _on_forum_topic_edited(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Capture the new topic name when a forum topic is renamed."""
+        msg = update.message
+        if not msg:
+            return
+        thread_id = getattr(msg, "message_thread_id", None)
+        topic_edit = getattr(msg, "forum_topic_edited", None)
+        if not thread_id or not topic_edit:
+            return
+        topic_name = getattr(topic_edit, "name", None)
+        cache_key = f"{msg.chat_id}:{thread_id}"
+        cached_pid, cached_profile, cached_name = self._topic_pins.get(
+            cache_key, (None, None, None)
+        )
+        self._topic_pins[cache_key] = (
+            cached_pid,
+            cached_profile,
+            topic_name or cached_name,
+        )
+        logger.info("Forum topic edited: key {} topic {} name={}", cache_key, thread_id, topic_name)
+        # Persist to disk
+        persistence = load_topic_pins()
+        set_cached_topic_name(persistence, str(msg.chat_id), thread_id, topic_name or cached_name)
+        if cached_profile:
+            set_cached_profile(persistence, str(msg.chat_id), thread_id, cached_profile)
+        save_topic_pins(persistence)
 
     @staticmethod
     def _derive_topic_session_key(message) -> str | None:
