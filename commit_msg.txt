@@ -1,0 +1,8 @@
+feat(telegram): enhance forum topic support and update memory documentation
+
+- Implement persistence and tracking of Telegram forum topic names in _topic_pins.
+- Fix bug where topic renaming or creation wiped previously assigned agent profiles.
+- Improve /topics command output to include topic names.
+- Refine /profiles command to simplify model and fallback list display.
+- Update CLAUDE.md to document the new three-layer memory staging architecture (STAGING -> MEMORY -> HISTORY) and ExecTool safety guard enhancements.
+- Add comprehensive test suite for Telegram forum topic and pin lifecycle in tests/channels/test_telegram_pin_events.py.
