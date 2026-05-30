@@ -21,6 +21,9 @@ This project is using python3 .venv
 
 # Format
 .venv/bin/ruff format nanobot/
+
+# Type check (LSP / opencode)
+.venv/bin/basedpyright
 ```
 
 ## Architecture
@@ -33,7 +36,7 @@ This project is using python3 .venv
 Chat Channel → MessageBus → AgentLoop → AgentRegistry → LLMProvider → ToolRegistry → MessageBus → Chat Channel
 ```
 
-Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (channel name + path segments). `AgentLoop` (`nanobot/agent/loop.py`) is the core orchestrator, which now leverages an optional `AgentRegistry`. It uses the registry to pull specialized Runners/Providers, or uses an explicitly supplied one. After each turn, `MemoryConsolidator` summarizes to `MEMORY.md` / `HISTORY.md` in the agent's workspace.
+Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (channel name + path segments). `AgentLoop` (`nanobot/agent/loop.py`) is the core orchestrator, which now leverages an optional `AgentRegistry`. It uses the registry to pull specialized Runners/Providers, or uses an explicitly supplied one. Message dispatch is split into `_process_system_message()` and `_process_user_message()` with a shared `_make_progress_callback()` factory for bus publishing. After each turn, `MemoryConsolidator` stages deltas to `STAGING.md` (non-destructive pipeline).
 
 ### Key Packages
 
@@ -64,11 +67,17 @@ Backend implementations include: `AnthropicProvider`, `OpenAICompatProvider`, `A
 - **Quota exhaustion** → permanent slot advance (`self._active_index`); next reset scheduled per `quota_reset_timezone`
 - **Connectivity/timeout on local slot** → request-scoped fallback only (`effective_index`); next request retries the local provider first
 
-**Provider resolution** (`nanobot/config/schema.py`): `_match_provider` and all public resolution methods (`get_provider`, `get_api_base`, etc.) accept an explicit `provider_override` parameter. Pass `mc.provider` when resolving per-slot settings to avoid agent-level defaults leaking into per-model lookups.
+**Provider resolution** (`nanobot/config/schema.py`): `_match_provider` and all public resolution methods (`get_provider`, `get_api_base`, etc.) accept an explicit `provider_override` parameter. When `provider_override == "auto"`, resolution first checks `agent_config.provider` before falling back to keyword-based model matching. Pass `mc.provider` when resolving per-slot settings to avoid agent-level defaults leaking into per-model lookups. Note: `llama`/`llama.cpp` are NOT in inferencia's keywords (removed to prevent false-positive detection on `llama3.2`, etc.).
 
 ### Tool System
 
 `nanobot/agent/tools/registry.py` holds `ToolRegistry`. Built-in tools: file operations, shell exec, web search/fetch, message sending, subagent spawn, cron scheduling, and MCP. File/shell tools respect `restrictToWorkspace` config to sandbox access.
+
+**ExecTool safety guard** (`nanobot/agent/tools/shell.py`):
+- Blocks dangerous patterns (rm -rf, dd, format, shutdown, fork bombs).
+- Detects internal/private URLs via DNS resolution before execution.
+- When `restrictToWorkspace` is enabled, extracts absolute paths from commands and blocks paths outside the working directory.
+- **Slash command whitelist:** Known slash commands (`/new`, `/restart`, `/RIP`, etc.) are filtered from path extraction to prevent false-positive workspace guard blocks (e.g., `echo "/new"` must not be mistaken for accessing `/new` filesystem path).
 
 ### Subagent System
 
@@ -76,7 +85,12 @@ The `SubagentManager` (`nanobot/agent/subagent.py`) handles background task exec
 
 ### Memory System
 
-Two-layer: `MEMORY.md` (long-term facts, compact) and `HISTORY.md` (timestamped searchable log). `MemoryConsolidator` calls the LLM after each agent turn to extract and update both files. It uses a "Whole File Rewrite" strategy with strict truncation protection (`finish_reason == "length"`) to prevent data corruption. The consolidation uses the loop's own provider (full fallback chain) and the provider's configured `max_tokens` — it respects the configured budget and does not enforce an artificial override. Messages are never modified after writing (cache-friendly for prompt caching).
+Three-layer staging architecture:
+- **`STAGING.md`** — Transient scratchpad. `MemoryConsolidator` appends deltas here after each turn (non-destructive).
+- **`MEMORY.md`** — Long-term invariants. Updated via manual synthesis (`memory-synthesize` skill) which reads from staging.
+- **`HISTORY.md`** — Append-only timestamped log. Searchable via grep-style tools.
+
+`MemoryConsolidator` appends incremental updates to `STAGING.md` after each turn (never overwrites `MEMORY.md` directly). Strict truncation protection (`finish_reason == "length"`) prevents corrupting STAGING.md/HISTORY.md. Periodic `memory-synthesize` skill reads from staging to update `MEMORY.md`. It uses the loop's own provider (full fallback chain) and the provider's configured `max_tokens`. Messages are never modified after writing (cache-friendly for prompt caching).
 
 ### Skill System
 
