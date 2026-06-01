@@ -92,9 +92,9 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     else:
         agent_provider = loop.provider
 
-    from nanobot.providers.fallback import FallbackProvider
+    from nanobot.providers.fallback import FallbackClient
 
-    if isinstance(agent_provider, FallbackProvider):
+    if isinstance(agent_provider, FallbackClient):
         model_id = agent_provider.active_identifier
         model_name = agent_provider.active_model
         fallbacks = agent_provider.fallback_identifiers

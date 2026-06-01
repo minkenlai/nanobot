@@ -5,29 +5,29 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from nanobot.providers.base import LLMProvider, LLMResponse
+from nanobot.providers.base import LLMClient, LLMResponse
 
 __all__ = [
-    "LLMProvider",
+    "LLMClient",
     "LLMResponse",
-    "AnthropicProvider",
-    "OpenAICompatProvider",
-    "OpenAICodexProvider",
-    "AzureOpenAIProvider",
+    "AnthropicClient",
+    "OpenAICompatClient",
+    "OpenAICodexClient",
+    "AzureOpenAIClient",
 ]
 
 _LAZY_IMPORTS = {
-    "AnthropicProvider": ".anthropic_provider",
-    "OpenAICompatProvider": ".openai_compat_provider",
-    "OpenAICodexProvider": ".openai_codex_provider",
-    "AzureOpenAIProvider": ".azure_openai_provider",
+    "AnthropicClient": ".anthropic_provider",
+    "OpenAICompatClient": ".openai_compat_provider",
+    "OpenAICodexClient": ".openai_codex_provider",
+    "AzureOpenAIClient": ".azure_openai_provider",
 }
 
 if TYPE_CHECKING:
-    from nanobot.providers.anthropic_provider import AnthropicProvider
-    from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
-    from nanobot.providers.openai_codex_provider import OpenAICodexProvider
-    from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+    from nanobot.providers.anthropic_provider import AnthropicClient
+    from nanobot.providers.azure_openai_provider import AzureOpenAIClient
+    from nanobot.providers.openai_codex_provider import OpenAICodexClient
+    from nanobot.providers.openai_compat_provider import OpenAICompatClient
 
 
 def __getattr__(name: str):

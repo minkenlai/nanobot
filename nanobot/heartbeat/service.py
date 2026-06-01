@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 from loguru import logger
 
 if TYPE_CHECKING:
-    from nanobot.providers.base import LLMProvider
+    from nanobot.providers.base import LLMClient
 
 _HEARTBEAT_TOOL = [
     {
@@ -53,7 +53,7 @@ class HeartbeatService:
     def __init__(
         self,
         workspace: Path,
-        provider: LLMProvider,
+        provider: LLMClient,
         model: str,
         on_execute: Callable[[str], Coroutine[Any, Any, str]] | None = None,
         on_notify: Callable[[str], Coroutine[Any, Any, None]] | None = None,

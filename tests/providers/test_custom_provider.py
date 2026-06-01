@@ -1,14 +1,14 @@
-"""Tests for OpenAICompatProvider handling custom/direct endpoints."""
+"""Tests for OpenAICompatClient handling custom/direct endpoints."""
 
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from nanobot.providers.openai_compat_provider import OpenAICompatClient
 
 
 def test_custom_provider_parse_handles_empty_choices() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider()
+        provider = OpenAICompatClient()
     response = SimpleNamespace(choices=[])
 
     result = provider._parse(response)
@@ -19,7 +19,7 @@ def test_custom_provider_parse_handles_empty_choices() -> None:
 
 def test_custom_provider_parse_accepts_plain_string_response() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider()
+        provider = OpenAICompatClient()
 
     result = provider._parse("hello from backend")
 
@@ -29,7 +29,7 @@ def test_custom_provider_parse_accepts_plain_string_response() -> None:
 
 def test_custom_provider_parse_accepts_dict_response() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider()
+        provider = OpenAICompatClient()
 
     result = provider._parse(
         {
@@ -54,7 +54,7 @@ def test_custom_provider_parse_accepts_dict_response() -> None:
 
 def test_custom_provider_parse_chunks_accepts_plain_text_chunks() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider()
+        provider = OpenAICompatClient()
     result = provider._parse_chunks(["hello ", "world"])
 
     assert result.finish_reason == "stop"

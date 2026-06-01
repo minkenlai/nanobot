@@ -2,10 +2,10 @@ import asyncio
 
 import pytest
 
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from nanobot.providers.base import GenerationSettings, LLMClient, LLMResponse
 
 
-class ScriptedProvider(LLMProvider):
+class ScriptedProvider(LLMClient):
     def __init__(self, responses):
         super().__init__()
         self._responses = list(responses)

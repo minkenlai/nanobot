@@ -21,7 +21,7 @@ from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import Address, InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config, ExecToolConfig, WebSearchConfig
-from nanobot.providers.base import LLMProvider
+from nanobot.providers.base import LLMClient
 from nanobot.providers.factory import AgentRegistry
 
 _MAX_COMPLETED_RECORDS = 50
@@ -49,7 +49,7 @@ class SubagentManager:
         workspace: Path,
         bus: MessageBus,
         registry: AgentRegistry,
-        provider: LLMProvider | None = None,
+        provider: LLMClient | None = None,
         web_search_config: WebSearchConfig | None = None,
         web_proxy: str | None = None,
         exec_config: ExecToolConfig | None = None,

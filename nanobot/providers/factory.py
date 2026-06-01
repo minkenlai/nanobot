@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from nanobot.config.schema import Config
-from nanobot.providers.base import GenerationSettings, LLMProvider
+from nanobot.providers.base import GenerationSettings, LLMClient
 from nanobot.providers.registry import find_by_name
 
 if TYPE_CHECKING:
@@ -19,11 +19,11 @@ class AgentRegistry:
 
     def __init__(self, config: Config):
         self.config = config
-        self._providers: dict[str, LLMProvider] = {}
+        self._providers: dict[str, LLMClient] = {}
         self._runners: dict[str, AgentRunner] = {}
 
-    def get_provider(self, agent_name: str) -> LLMProvider:
-        """Get a cached LLMProvider for the specified agent profile."""
+    def get_provider(self, agent_name: str) -> LLMClient:
+        """Get a cached LLMClient for the specified agent profile."""
         if agent_name not in self._providers:
             logger.debug(f"Building provider for agent '{agent_name}'")
             self._providers[agent_name] = build_provider(self.config, agent_name)
@@ -55,7 +55,7 @@ def get_runner(config: Config, agent_name: str = "defaults") -> AgentRunner:
     return _GLOBAL_REGISTRY[cfg_id].get_runner(agent_name)
 
 
-def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
+def build_provider(config: Config, agent_name: str = "defaults") -> LLMClient:
     """Create the appropriate LLM provider from config.
 
     Two modes:
@@ -67,7 +67,7 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
 
     **Fallback chain** — ``fallback_models`` is a non-empty ordered list of
     keys into the top-level ``models`` dict.  Wraps the resulting providers in
-    a ``FallbackProvider`` that advances to the next slot on quota/429 errors.
+    a ``FallbackClient`` that advances to the next slot on quota/429 errors.
 
     Provider resolution cascade (per slot):
       1. ``ModelConfig.provider`` if explicitly set (not ``"auto"``).
@@ -111,7 +111,7 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
         )
 
     # Build one provider per slot.
-    slots: list[tuple[LLMProvider, str, str, str]] = []
+    slots: list[tuple[LLMClient, str, str, str]] = []
     for key in fallback_keys:
         mc = config.models[key]
         slot_provider = _build_single_provider(config, agent_name, mc.model, mc.provider)
@@ -144,6 +144,7 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
             temperature=temp,
             max_tokens=max_tok,
             reasoning_effort=reason,
+            context_max=mc.context_max,
         )
 
         # Apply prefill override if the provider supports it.
@@ -168,14 +169,14 @@ def build_provider(config: Config, agent_name: str = "defaults") -> LLMProvider:
         # Single-entry chain — no wrapper needed.
         return slots[0][0]
 
-    from nanobot.providers.fallback import FallbackProvider
+    from nanobot.providers.fallback import FallbackClient
 
-    return FallbackProvider(slots)
+    return FallbackClient(slots)
 
 
 def _build_single_provider(
     config: Config, agent_name: str, model: str, provider_override: str = "auto"
-) -> LLMProvider:
+) -> LLMClient:
     """Instantiate a single LLM provider for *model* using *config*."""
     agent_config = config.agents.get_agent(agent_name)
 
@@ -212,21 +213,21 @@ def _build_single_provider(
 
     # --- instantiation by backend ---
     if backend == "openai_codex":
-        from nanobot.providers.openai_codex_provider import OpenAICodexProvider
+        from nanobot.providers.openai_codex_provider import OpenAICodexClient
 
-        provider = OpenAICodexProvider(default_model=model)
+        provider = OpenAICodexClient(default_model=model)
     elif backend == "azure_openai":
-        from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
+        from nanobot.providers.azure_openai_provider import AzureOpenAIClient
 
-        provider = AzureOpenAIProvider(
+        provider = AzureOpenAIClient(
             api_key=p.api_key,  # type: ignore
             api_base=p.api_base,  # type: ignore
             default_model=model,
         )
     elif backend == "anthropic":
-        from nanobot.providers.anthropic_provider import AnthropicProvider
+        from nanobot.providers.anthropic_provider import AnthropicClient
 
-        provider = AnthropicProvider(
+        provider = AnthropicClient(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(
                 model, agent_name=agent_name, provider_override=provider_override
@@ -235,9 +236,9 @@ def _build_single_provider(
             extra_headers=p.extra_headers if p else None,
         )
     elif backend == "gemini_native":
-        from nanobot.providers.gemini_provider import GeminiNativeProvider
+        from nanobot.providers.gemini_provider import GeminiNativeClient
 
-        provider = GeminiNativeProvider(
+        provider = GeminiNativeClient(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(
                 model, agent_name=agent_name, provider_override=provider_override
@@ -246,9 +247,9 @@ def _build_single_provider(
             grounding=agent_config.grounding,
         )
     else:
-        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+        from nanobot.providers.openai_compat_provider import OpenAICompatClient
 
-        provider = OpenAICompatProvider(
+        provider = OpenAICompatClient(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(
                 model, agent_name=agent_name, provider_override=provider_override
@@ -258,10 +259,16 @@ def _build_single_provider(
             spec=spec,
         )
 
+    # For single providers, try to lookup context_max if it's a known model key
+    context_max = None
+    if model in config.models:
+        context_max = config.models[model].context_max
+
     provider.generation = GenerationSettings(
         temperature=agent_config.temperature,
         max_tokens=agent_config.max_tokens,
         reasoning_effort=agent_config.reasoning_effort,
+        context_max=context_max,
     )
     provider.debug = config.debug_llm
     provider.dump_dir = config.workspace_path / "logs"

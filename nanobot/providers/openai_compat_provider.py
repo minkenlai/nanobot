@@ -17,7 +17,7 @@ import json_repair
 from loguru import logger
 from openai import AsyncOpenAI
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMClient, LLMResponse, ToolCallRequest
 
 if TYPE_CHECKING:
     from nanobot.providers.registry import ProviderSpec
@@ -118,7 +118,7 @@ def _uses_openrouter_attribution(spec: "ProviderSpec | None", api_base: str | No
     return bool(api_base and "openrouter" in api_base.lower())
 
 
-class OpenAICompatProvider(LLMProvider):
+class OpenAICompatClient(LLMClient):
     """Unified provider for all OpenAI-compatible APIs.
 
     Receives a resolved ``ProviderSpec`` from the caller — no internal
@@ -233,7 +233,7 @@ class OpenAICompatProvider(LLMProvider):
 
     def _sanitize_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Strip non-standard keys, normalize tool_call IDs."""
-        sanitized = LLMProvider._sanitize_request_messages(messages, _ALLOWED_MSG_KEYS)
+        sanitized = LLMClient._sanitize_request_messages(messages, _ALLOWED_MSG_KEYS)
         id_map: dict[str, str] = {}
 
         def map_id(value: Any) -> Any:
@@ -417,7 +417,7 @@ class OpenAICompatProvider(LLMProvider):
         return {}
 
     @classmethod
-    def _parse(cls, response: Any, provider: LLMProvider | None = None) -> LLMResponse:
+    def _parse(cls, response: Any, provider: LLMClient | None = None) -> LLMResponse:
         if isinstance(response, str):
             return LLMResponse(content=response, finish_reason="stop")
 
@@ -552,7 +552,7 @@ class OpenAICompatProvider(LLMProvider):
         )
 
     @classmethod
-    def _parse_chunks(cls, chunks: list[Any], provider: LLMProvider | None = None) -> LLMResponse:
+    def _parse_chunks(cls, chunks: list[Any], provider: LLMClient | None = None) -> LLMResponse:
         content_parts: list[str] = []
         tc_bufs: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"

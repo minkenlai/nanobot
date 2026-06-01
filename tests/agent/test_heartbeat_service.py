@@ -3,10 +3,10 @@ import asyncio
 import pytest
 
 from nanobot.heartbeat.service import HeartbeatService
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMClient, LLMResponse, ToolCallRequest
 
 
-class DummyProvider(LLMProvider):
+class DummyProvider(LLMClient):
     def __init__(self, responses: list[LLMResponse]):
         super().__init__()
         self._responses = list(responses)
@@ -268,7 +268,7 @@ async def test_decide_prompt_includes_current_time(tmp_path) -> None:
 
     captured_messages: list[dict] = []
 
-    class CapturingProvider(LLMProvider):
+    class CapturingProvider(LLMClient):
         async def chat(self, *, messages=None, **kwargs) -> LLMResponse:
             if messages:
                 captured_messages.extend(messages)

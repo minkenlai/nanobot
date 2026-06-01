@@ -31,7 +31,7 @@ from nanobot.bus.events import Address, InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import Config
-from nanobot.providers.base import LLMProvider
+from nanobot.providers.base import LLMClient
 from nanobot.providers.factory import AgentRegistry
 from nanobot.session.manager import Session, SessionManager
 
@@ -57,7 +57,7 @@ class AgentLoop:
     def __init__(
         self,
         bus: MessageBus,
-        provider: LLMProvider,
+        provider: LLMClient,
         workspace: Path,
         config: Config | None = None,
         model: str | None = None,
@@ -129,12 +129,23 @@ class AgentLoop:
         self._concurrency_gate: asyncio.Semaphore | None = (
             asyncio.Semaphore(_max) if _max > 0 else None
         )
+        # Override context_window_tokens with provider's max if available
+        provider_context_max = (
+            getattr(self.runner.provider.generation, "context_max", None)
+            if hasattr(self.runner.provider, "generation")
+            else None
+        )
+        effective_context_window = (
+            provider_context_max if provider_context_max is not None else context_window_tokens
+        )
+        self.context_window_tokens = effective_context_window
+
         self.memory_consolidator = MemoryConsolidator(
             workspace=workspace,
-            provider=provider,
+            provider=provider or self.runner.provider,
             model=self.model,
             sessions=self.sessions,
-            context_window_tokens=context_window_tokens,
+            context_window_tokens=effective_context_window,
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
             max_completion_tokens=provider.generation.max_tokens,

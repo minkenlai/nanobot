@@ -10,7 +10,7 @@ from typing import Any
 
 import json_repair
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMClient, LLMResponse, ToolCallRequest
 
 _ALNUM = string.ascii_letters + string.digits
 
@@ -19,7 +19,7 @@ def _gen_tool_id() -> str:
     return "toolu_" + "".join(secrets.choice(_ALNUM) for _ in range(22))
 
 
-class AnthropicProvider(LLMProvider):
+class AnthropicClient(LLMClient):
     """LLM provider using the native Anthropic SDK for Claude models.
 
     Handles message format conversion (OpenAI → Anthropic Messages API),

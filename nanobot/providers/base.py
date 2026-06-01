@@ -74,9 +74,10 @@ class GenerationSettings:
     temperature: float = 1.0
     max_tokens: int = 4096
     reasoning_effort: str | None = None
+    context_max: int | None = None
 
 
-class LLMProvider(ABC):
+class LLMClient(ABC):
     """
     Abstract base class for LLM providers.
 

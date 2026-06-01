@@ -10,7 +10,7 @@ from typing import Any
 from unittest.mock import patch
 
 from nanobot.providers.base import ToolCallRequest
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from nanobot.providers.openai_compat_provider import OpenAICompatClient
 
 GEMINI_EXTRA = {"google": {"thought_signature": "sig-abc-123"}}
 
@@ -81,7 +81,7 @@ def _make_sdk_response_with_extra_content():
 
 def test_parse_sdk_object_preserves_extra_content() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider()
+        provider = OpenAICompatClient()
 
     result = provider._parse(_make_sdk_response_with_extra_content())
 
@@ -99,7 +99,7 @@ def test_parse_sdk_object_preserves_extra_content() -> None:
 
 def test_parse_dict_preserves_extra_content() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider()
+        provider = OpenAICompatClient()
 
     response_dict = {
         "choices": [
@@ -148,7 +148,7 @@ def test_parse_chunks_sdk_preserves_extra_content() -> None:
     chunk = SimpleNamespace(choices=[choice], usage=None)
     chunks: list[Any] = [chunk]
 
-    result = OpenAICompatProvider._parse_chunks(chunks)
+    result = OpenAICompatClient._parse_chunks(chunks)
 
     assert len(result.tool_calls) == 1
     tc = result.tool_calls[0]
@@ -179,7 +179,7 @@ def test_parse_chunks_dict_preserves_extra_content() -> None:
     }
 
     chunks: list[Any] = [chunk]
-    result = OpenAICompatProvider._parse_chunks(chunks)
+    result = OpenAICompatClient._parse_chunks(chunks)
 
     assert len(result.tool_calls) == 1
     tc = result.tool_calls[0]
@@ -197,7 +197,7 @@ def test_stale_extra_content_in_tool_calls_survives_sanitize() -> None:
     should survive message sanitization (it lives inside the tool_call dict,
     not at message level, so it bypasses _ALLOWED_MSG_KEYS filtering)."""
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider()
+        provider = OpenAICompatClient()
 
     messages = [
         {

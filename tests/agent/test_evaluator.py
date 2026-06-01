@@ -1,10 +1,10 @@
 import pytest
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMClient, LLMResponse, ToolCallRequest
 from nanobot.utils.evaluator import evaluate_response
 
 
-class DummyProvider(LLMProvider):
+class DummyProvider(LLMClient):
     def __init__(self, responses: list[LLMResponse]):
         super().__init__()
         self._responses = list(responses)

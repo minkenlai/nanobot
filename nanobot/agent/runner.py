@@ -11,7 +11,7 @@ from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.providers.base import LLMProvider, ToolCallRequest
+from nanobot.providers.base import LLMClient, ToolCallRequest
 from nanobot.utils.helpers import build_assistant_message
 
 _DEFAULT_MAX_ITERATIONS_MESSAGE = (
@@ -55,7 +55,7 @@ class AgentRunResult:
 class AgentRunner:
     """Run a tool-capable LLM loop without product-layer concerns."""
 
-    def __init__(self, provider: LLMProvider):
+    def __init__(self, provider: LLMClient):
         self.provider = provider
 
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:

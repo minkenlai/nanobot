@@ -11,12 +11,12 @@ from urllib.parse import urljoin
 import httpx
 import json_repair
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMClient, LLMResponse, ToolCallRequest
 
 _AZURE_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name"})
 
 
-class AzureOpenAIProvider(LLMProvider):
+class AzureOpenAIClient(LLMClient):
     """
     Azure OpenAI provider with API version 2024-10-21 compliance.
 

@@ -12,13 +12,13 @@ import httpx
 from loguru import logger
 from oauth_cli_kit import get_token as get_codex_token
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMClient, LLMResponse, ToolCallRequest
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "nanobot"
 
 
-class OpenAICodexProvider(LLMProvider):
+class OpenAICodexClient(LLMClient):
     """Use Codex OAuth to call the Responses API."""
 
     def __init__(self, default_model: str = "openai-codex/gpt-5.1-codex"):

@@ -1,4 +1,4 @@
-"""Tests for OpenAICompatProvider spec-driven behavior.
+"""Tests for OpenAICompatClient spec-driven behavior.
 
 Validates that:
 - OpenRouter (no strip) keeps model names intact.
@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from nanobot.providers.openai_compat_provider import OpenAICompatClient
 from nanobot.providers.registry import find_by_name
 
 
@@ -63,7 +63,7 @@ def test_openrouter_spec_is_gateway() -> None:
 def test_openrouter_sets_default_attribution_headers() -> None:
     spec = find_by_name("openrouter")
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        OpenAICompatProvider(
+        OpenAICompatClient(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
             default_model="anthropic/claude-sonnet-4-5",
@@ -80,7 +80,7 @@ def test_openrouter_sets_default_attribution_headers() -> None:
 def test_openrouter_user_headers_override_default_attribution() -> None:
     spec = find_by_name("openrouter")
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        OpenAICompatProvider(
+        OpenAICompatClient(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
             default_model="anthropic/claude-sonnet-4-5",
@@ -109,7 +109,7 @@ async def test_openrouter_keeps_model_name_intact() -> None:
         client_instance = MockClient.return_value
         client_instance.chat.completions.create = mock_create
 
-        provider = OpenAICompatProvider(
+        provider = OpenAICompatClient(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
             default_model="anthropic/claude-sonnet-4-5",
@@ -134,7 +134,7 @@ async def test_aihubmix_strips_model_prefix() -> None:
         client_instance = MockClient.return_value
         client_instance.chat.completions.create = mock_create
 
-        provider = OpenAICompatProvider(
+        provider = OpenAICompatClient(
             api_key="sk-aihub-test-key",
             api_base="https://aihubmix.com/v1",
             default_model="claude-sonnet-4-5",
@@ -159,7 +159,7 @@ async def test_standard_provider_passes_model_through() -> None:
         client_instance = MockClient.return_value
         client_instance.chat.completions.create = mock_create
 
-        provider = OpenAICompatProvider(
+        provider = OpenAICompatClient(
             api_key="sk-deepseek-test-key",
             default_model="deepseek-chat",
             spec=spec,
@@ -183,7 +183,7 @@ async def test_openai_compat_preserves_extra_content_on_tool_calls() -> None:
         client_instance = MockClient.return_value
         client_instance.chat.completions.create = mock_create
 
-        provider = OpenAICompatProvider(
+        provider = OpenAICompatClient(
             api_key="test-key",
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-3.1-pro-preview",
@@ -208,7 +208,7 @@ def test_openai_model_passthrough() -> None:
     """OpenAI models pass through unchanged."""
     spec = find_by_name("openai")
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider(
+        provider = OpenAICompatClient(
             api_key="sk-test-key",
             default_model="gpt-4o",
             spec=spec,

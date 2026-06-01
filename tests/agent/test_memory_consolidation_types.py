@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from nanobot.agent.memory import MemoryStore
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMClient, LLMResponse, ToolCallRequest
 
 
 def _make_messages(message_count: int = 30):
@@ -40,7 +40,7 @@ def _make_tool_response(history_entry, memory_update):
     )
 
 
-class ScriptedProvider(LLMProvider):
+class ScriptedProvider(LLMClient):
     def __init__(self, responses: list[LLMResponse]):
         super().__init__()
         self._responses = list(responses)

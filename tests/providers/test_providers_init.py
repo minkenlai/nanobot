@@ -20,12 +20,12 @@ def test_importing_providers_package_is_lazy(monkeypatch) -> None:
     assert "nanobot.providers.openai_codex_provider" not in sys.modules
     assert "nanobot.providers.azure_openai_provider" not in sys.modules
     assert providers.__all__ == [
-        "LLMProvider",
+        "LLMClient",
         "LLMResponse",
-        "AnthropicProvider",
-        "OpenAICompatProvider",
-        "OpenAICodexProvider",
-        "AzureOpenAIProvider",
+        "AnthropicClient",
+        "OpenAICompatClient",
+        "OpenAICodexClient",
+        "AzureOpenAIClient",
     ]
 
 
@@ -34,7 +34,7 @@ def test_explicit_provider_import_still_works(monkeypatch) -> None:
     monkeypatch.delitem(sys.modules, "nanobot.providers.anthropic_provider", raising=False)
 
     namespace: dict[str, object] = {}
-    exec("from nanobot.providers import AnthropicProvider", namespace)
+    exec("from nanobot.providers import AnthropicClient", namespace)
 
-    assert namespace["AnthropicProvider"].__name__ == "AnthropicProvider"
+    assert namespace["AnthropicClient"].__name__ == "AnthropicClient"
     assert "nanobot.providers.anthropic_provider" in sys.modules

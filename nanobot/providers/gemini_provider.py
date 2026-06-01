@@ -10,10 +10,10 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMClient, LLMResponse, ToolCallRequest
 
 
-class GeminiNativeProvider(LLMProvider):
+class GeminiNativeClient(LLMClient):
     """Native Gemini provider using Google's direct Generative AI API.
 
     Supports native grounding (search/maps) and direct citations.

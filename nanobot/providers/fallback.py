@@ -13,10 +13,10 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from nanobot.providers.base import GenerationSettings, LLMClient, LLMResponse
 
 
-class FallbackProvider(LLMProvider):
+class FallbackClient(LLMClient):
     """Wraps multiple providers in a fallback chain.
 
     On 429/quota errors, advances to the next slot.
@@ -27,9 +27,9 @@ class FallbackProvider(LLMProvider):
                The first entry is the primary; subsequent entries are fallbacks.
     """
 
-    def __init__(self, slots: list[tuple[LLMProvider, str, str, str]]) -> None:
+    def __init__(self, slots: list[tuple[LLMClient, str, str, str]]) -> None:
         if not slots:
-            raise ValueError("FallbackProvider requires at least one slot")
+            raise ValueError("FallbackClient requires at least one slot")
         # Don't call super().__init__() with api_key/api_base — we delegate to slots.
         self.api_key = None
         self.api_base = None
@@ -38,13 +38,26 @@ class FallbackProvider(LLMProvider):
         self._slot_reset_timezones = [s[3] for s in slots]
         self._reset_at: datetime | None = None
         self._failed_slot_reset_times: dict[int, datetime] = {}
-        # Inherit generation settings from the primary slot's provider.
-        self.generation: GenerationSettings = slots[0][0].generation
+        # Inherit generation settings from the primary slot's provider,
+        # but use the max context_max across all slots.
+        primary_gen = slots[0][0].generation
+        max_context = None
+        for s in slots:
+            c = s[0].generation.context_max
+            if c is not None:
+                max_context = max(max_context or 0, c)
+
+        self.generation = GenerationSettings(
+            temperature=primary_gen.temperature,
+            max_tokens=primary_gen.max_tokens,
+            reasoning_effort=primary_gen.reasoning_effort,
+            context_max=max_context or primary_gen.context_max,
+        )
         self.debug = slots[0][0].debug
         self.dump_dir = slots[0][0].dump_dir
 
     # ------------------------------------------------------------------
-    # LLMProvider abstract method implementations
+    # LLMClient abstract method implementations
     # ------------------------------------------------------------------
 
     async def chat(
@@ -108,7 +121,7 @@ class FallbackProvider(LLMProvider):
                     if is_max_tokens_issue and current_max_tokens > 1024:
                         current_max_tokens //= 2
                         logger.warning(
-                            f"FallbackProvider: Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
+                            f"FallbackClient: Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
                         )
                         continue
 
@@ -128,7 +141,14 @@ class FallbackProvider(LLMProvider):
                                 if self._failed_slot_reset_times
                                 else None
                             )
-                            self.generation = self._slots[effective_index][0].generation
+                            max_context = self.generation.context_max
+                            new_gen = self._slots[effective_index][0].generation
+                            self.generation = GenerationSettings(
+                                temperature=new_gen.temperature,
+                                max_tokens=new_gen.max_tokens,
+                                reasoning_effort=new_gen.reasoning_effort,
+                                context_max=max_context,
+                            )
                             new_id = self._slots[effective_index][2]
                             fallback_msg = (
                                 f"⚠️ Model quota hit on {old_id}. Switching to fallback: {new_id}."
@@ -151,7 +171,7 @@ class FallbackProvider(LLMProvider):
                 ):
                     new_id = self._slots[effective_index + 1][2]
                     logger.warning(
-                        "FallbackProvider: {} unreachable, trying {} for this request: {!r}",
+                        "FallbackClient: {} unreachable, trying {} for this request: {!r}",
                         slot_id,
                         new_id,
                         exc,
@@ -212,7 +232,7 @@ class FallbackProvider(LLMProvider):
                     if is_max_tokens_issue and current_max_tokens > 1024:
                         current_max_tokens //= 2
                         logger.warning(
-                            f"FallbackProvider (stream): Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
+                            f"FallbackClient (stream): Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
                         )
                         continue
 
@@ -232,7 +252,14 @@ class FallbackProvider(LLMProvider):
                                 if self._failed_slot_reset_times
                                 else None
                             )
-                            self.generation = self._slots[effective_index][0].generation
+                            max_context = self.generation.context_max
+                            new_gen = self._slots[effective_index][0].generation
+                            self.generation = GenerationSettings(
+                                temperature=new_gen.temperature,
+                                max_tokens=new_gen.max_tokens,
+                                reasoning_effort=new_gen.reasoning_effort,
+                                context_max=max_context,
+                            )
                             new_id = self._slots[effective_index][2]
                             fallback_msg = (
                                 f"⚠️ Model quota hit on {old_id}. Switching to fallback: {new_id}."
@@ -253,7 +280,7 @@ class FallbackProvider(LLMProvider):
                 ):
                     new_id = self._slots[effective_index + 1][2]
                     logger.warning(
-                        "FallbackProvider: {} unreachable, trying {} for this request: {!r}",
+                        "FallbackClient: {} unreachable, trying {} for this request: {!r}",
                         slot_id,
                         new_id,
                         exc,
@@ -296,8 +323,14 @@ class FallbackProvider(LLMProvider):
             self._active_index = 0
             self._reset_at = None
             self._failed_slot_reset_times = {}  # Clear all failed slots on reset to primary
-            # Restore generation settings to the primary slot.
-            self.generation = self._slots[0][0].generation
+            # Restore generation settings to the primary slot, keeping the max context_max
+            max_context = self.generation.context_max
+            self.generation = GenerationSettings(
+                temperature=self._slots[0][0].generation.temperature,
+                max_tokens=self._slots[0][0].generation.max_tokens,
+                reasoning_effort=self._slots[0][0].generation.reasoning_effort,
+                context_max=max_context,
+            )
             return f"✅ Quota window reset. Switching back to primary: {self.active_identifier}."
         return None
 

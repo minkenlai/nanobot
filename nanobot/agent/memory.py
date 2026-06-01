@@ -15,7 +15,7 @@ from loguru import logger
 from nanobot.utils.helpers import ensure_dir, estimate_message_tokens, estimate_prompt_tokens_chain
 
 if TYPE_CHECKING:
-    from nanobot.providers.base import LLMProvider
+    from nanobot.providers.base import LLMClient
     from nanobot.session.manager import Session, SessionManager
 
 
@@ -129,7 +129,7 @@ class MemoryStore:
     async def consolidate(
         self,
         messages: list[dict],
-        provider: LLMProvider,
+        provider: LLMClient,
         model: str,
     ) -> bool:
         """Consolidate the provided message chunk into MEMORY.md + HISTORY.md."""
@@ -254,7 +254,7 @@ class MemoryConsolidator:
     def __init__(
         self,
         workspace: Path,
-        provider: LLMProvider,
+        provider: LLMClient,
         model: str,
         sessions: SessionManager,
         context_window_tokens: int,
@@ -266,7 +266,17 @@ class MemoryConsolidator:
         self.provider = provider
         self.model = model
         self.sessions = sessions
-        self.context_window_tokens = context_window_tokens
+
+        # Override context_window_tokens with provider's max if available
+        provider_context_max = (
+            getattr(provider.generation, "context_max", None)
+            if hasattr(provider, "generation")
+            else None
+        )
+        self.context_window_tokens = (
+            provider_context_max if provider_context_max is not None else context_window_tokens
+        )
+
         self.max_completion_tokens = max_completion_tokens
         self._build_messages = build_messages
         self._get_tool_definitions = get_tool_definitions

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 if TYPE_CHECKING:
-    from nanobot.providers.base import LLMProvider
+    from nanobot.providers.base import LLMClient
 
 _EVALUATE_TOOL = [
     {
@@ -53,7 +53,7 @@ _SYSTEM_PROMPT = (
 async def evaluate_response(
     response: str,
     task_context: str,
-    provider: LLMProvider,
+    provider: LLMClient,
     model: str,
 ) -> bool:
     """Decide whether a background-task result should be delivered to the user.

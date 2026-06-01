@@ -93,11 +93,9 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
         json.dumps(
             {
                 "channels": {
-                    "qq": {
+                    "telegram": {
                         "enabled": False,
-                        "appId": "",
-                        "secret": "",
-                        "allowFrom": [],
+                        "botToken": "",
                     }
                 }
             }
@@ -112,13 +110,11 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "nanobot.channels.registry.discover_all",
         lambda: {
-            "qq": SimpleNamespace(
+            "telegram": SimpleNamespace(
                 default_config=lambda: {
                     "enabled": False,
-                    "appId": "",
-                    "secret": "",
-                    "allowFrom": [],
-                    "msgFormat": "plain",
+                    "botToken": "",
+                    "msgFormat": "markdown",
                 }
             )
         },
@@ -133,4 +129,4 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
 
     assert result.exit_code == 0
     saved = json.loads(config_path.read_text(encoding="utf-8"))
-    assert saved["channels"]["qq"]["msgFormat"] == "plain"
+    assert saved["channels"]["telegram"]["msgFormat"] == "markdown"

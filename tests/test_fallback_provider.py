@@ -1,4 +1,4 @@
-"""Tests for FallbackProvider — quota-aware model fallback chain."""
+"""Tests for FallbackClient — quota-aware model fallback chain."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nanobot.providers.base import GenerationSettings, LLMResponse
-from nanobot.providers.fallback import FallbackProvider
+from nanobot.providers.fallback import FallbackClient
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -19,7 +19,7 @@ from nanobot.providers.fallback import FallbackProvider
 def _make_mock_provider(
     model: str, response: LLMResponse | None = None, side_effect=None, reset_timezone: str = "UTC"
 ):
-    """Return a mock LLMProvider that returns *response* or raises *side_effect*."""
+    """Return a mock LLMClient that returns *response* or raises *side_effect*."""
     provider = MagicMock()
     provider.get_default_model.return_value = model
     provider.generation = GenerationSettings(temperature=0.7, max_tokens=4096)
@@ -50,11 +50,11 @@ def _server_error(msg: str = "500 Internal Server Error"):
 
 @pytest.mark.asyncio
 async def test_chat_switches_to_next_slot_on_quota_error():
-    """On a 429 error, FallbackProvider advances to the next slot and retries."""
+    """On a 429 error, FallbackClient advances to the next slot and retries."""
     primary = _make_mock_provider("primary-model", side_effect=_quota_error())
     fallback = _make_mock_provider("fallback-model")
 
-    fp = FallbackProvider(
+    fp = FallbackClient(
         [
             (primary, "primary-model", "primary-model", "UTC"),
             (fallback, "fallback-model", "fallback-model", "UTC"),
@@ -89,7 +89,7 @@ async def test_chat_reraises_non_quota_error_without_switching():
     primary = _make_mock_provider("primary-model", side_effect=_server_error())
     fallback = _make_mock_provider("fallback-model")
 
-    fp = FallbackProvider(
+    fp = FallbackClient(
         [
             (primary, "primary-model", "primary-model", "UTC"),
             (fallback, "fallback-model", "fallback-model", "UTC"),
@@ -116,7 +116,7 @@ async def test_chat_resets_to_primary_after_quota_window_expires():
     primary_first = _make_mock_provider("primary-model", side_effect=_quota_error())
     fallback = _make_mock_provider("fallback-model")
 
-    fp = FallbackProvider(
+    fp = FallbackClient(
         [
             (primary_first, "primary-model", "primary-model", "UTC"),
             (fallback, "fallback-model", "fallback-model", "UTC"),
@@ -156,7 +156,7 @@ async def test_chat_resets_to_primary_after_quota_window_expires():
 
 @pytest.mark.asyncio
 async def test_chat_resets_at_pacific_midnight():
-    """FallbackProvider correctly calculates reset time for non-UTC timezones."""
+    """FallbackClient correctly calculates reset time for non-UTC timezones."""
     from zoneinfo import ZoneInfo
 
     primary = _make_mock_provider(
@@ -165,7 +165,7 @@ async def test_chat_resets_at_pacific_midnight():
     fallback = _make_mock_provider("fallback-model", reset_timezone="America/Los_Angeles")
 
     # Reset in America/Los_Angeles
-    fp = FallbackProvider(
+    fp = FallbackClient(
         [
             (primary, "primary-model", "primary-model", "America/Los_Angeles"),
             (fallback, "fallback-model", "fallback-model", "America/Los_Angeles"),
@@ -216,7 +216,7 @@ async def test_chat_stream_yields_notification_before_response():
     fallback.generation = GenerationSettings()
     fallback.chat_stream = _fallback_stream
 
-    fp = FallbackProvider(
+    fp = FallbackClient(
         [
             (primary, "primary-model", "primary-model", "UTC"),
             (fallback, "fallback-model", "fallback-model", "UTC"),
@@ -252,7 +252,7 @@ async def test_chat_reraises_quota_error_when_no_next_slot():
     """With a single slot, a quota error must be re-raised (no fallback available)."""
     primary = _make_mock_provider("only-model", side_effect=_quota_error())
 
-    fp = FallbackProvider([(primary, "only-model", "only-model", "UTC")])
+    fp = FallbackClient([(primary, "only-model", "only-model", "UTC")])
 
     with pytest.raises(RuntimeError, match="429"):
         await fp.chat(messages=[{"role": "user", "content": "hi"}])
@@ -294,14 +294,14 @@ def test_make_provider_raises_on_unknown_fallback_model_key():
 
 
 # ---------------------------------------------------------------------------
-# Additional: FallbackProvider constructor rejects empty slots
+# Additional: FallbackClient constructor rejects empty slots
 # ---------------------------------------------------------------------------
 
 
 def test_fallback_provider_requires_at_least_one_slot():
-    """FallbackProvider must raise ValueError when constructed with an empty slots list."""
+    """FallbackClient must raise ValueError when constructed with an empty slots list."""
     with pytest.raises(ValueError, match="at least one slot"):
-        FallbackProvider([])
+        FallbackClient([])
 
 
 # ---------------------------------------------------------------------------
@@ -311,12 +311,12 @@ def test_fallback_provider_requires_at_least_one_slot():
 
 @pytest.mark.asyncio
 async def test_chat_advances_through_multiple_quota_errors():
-    """FallbackProvider advances through all quota-failing slots until one succeeds."""
+    """FallbackClient advances through all quota-failing slots until one succeeds."""
     p1 = _make_mock_provider("model-a", side_effect=_quota_error("429 quota"))
     p2 = _make_mock_provider("model-b", side_effect=_quota_error("resource_exhausted"))
     p3 = _make_mock_provider("model-c")
 
-    fp = FallbackProvider(
+    fp = FallbackClient(
         [
             (p1, "model-a", "model-a", "UTC"),
             (p2, "model-b", "model-b", "UTC"),
@@ -353,7 +353,7 @@ async def test_chat_concurrent_requests_dont_skip_slots():
     p2 = _make_mock_provider("model-b")
     p3 = _make_mock_provider("model-c")
 
-    fp = FallbackProvider(
+    fp = FallbackClient(
         [
             (p1, "model-a", "model-a", "UTC"),
             (p2, "model-b", "model-b", "UTC"),

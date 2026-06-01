@@ -4,13 +4,13 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
+from nanobot.providers.azure_openai_provider import AzureOpenAIClient
 from nanobot.providers.base import LLMResponse
 
 
 def test_azure_openai_provider_init():
-    """Test AzureOpenAIProvider initialization without deployment_name."""
-    provider = AzureOpenAIProvider(
+    """Test AzureOpenAIClient initialization without deployment_name."""
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o-deployment",
@@ -23,19 +23,19 @@ def test_azure_openai_provider_init():
 
 
 def test_azure_openai_provider_init_validation():
-    """Test AzureOpenAIProvider initialization validation."""
+    """Test AzureOpenAIClient initialization validation."""
     # Missing api_key
     with pytest.raises(ValueError, match="Azure OpenAI api_key is required"):
-        AzureOpenAIProvider(api_key="", api_base="https://test.com")
+        AzureOpenAIClient(api_key="", api_base="https://test.com")
 
     # Missing api_base
     with pytest.raises(ValueError, match="Azure OpenAI api_base is required"):
-        AzureOpenAIProvider(api_key="test", api_base="")
+        AzureOpenAIClient(api_key="test", api_base="")
 
 
 def test_build_chat_url():
     """Test Azure OpenAI URL building with different deployment names."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o",
@@ -64,7 +64,7 @@ def test_build_chat_url():
 
 def test_build_chat_url_api_base_without_slash():
     """Test URL building when api_base doesn't end with slash."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",  # No trailing slash
         default_model="gpt-4o",
@@ -77,7 +77,7 @@ def test_build_chat_url_api_base_without_slash():
 
 def test_build_headers():
     """Test Azure OpenAI header building with api-key authentication."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-api-key-123",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o",
@@ -91,7 +91,7 @@ def test_build_headers():
 
 def test_prepare_request_payload():
     """Test request payload preparation with Azure OpenAI 2024-10-21 compliance."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o",
@@ -125,7 +125,7 @@ def test_prepare_request_payload():
 
 def test_prepare_request_payload_sanitizes_messages():
     """Test Azure payload strips non-standard message keys before sending."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o",
@@ -166,7 +166,7 @@ def test_prepare_request_payload_sanitizes_messages():
 @pytest.mark.asyncio
 async def test_chat_success():
     """Test successful chat request using model as deployment name."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o-deployment",
@@ -212,7 +212,7 @@ async def test_chat_success():
 @pytest.mark.asyncio
 async def test_chat_uses_default_model_when_no_model_provided():
     """Test that chat uses default_model when no model is specified."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="default-deployment",
@@ -246,7 +246,7 @@ async def test_chat_uses_default_model_when_no_model_provided():
 @pytest.mark.asyncio
 async def test_chat_with_tool_calls():
     """Test chat request with tool calls in response."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o",
@@ -299,7 +299,7 @@ async def test_chat_with_tool_calls():
 @pytest.mark.asyncio
 async def test_chat_api_error():
     """Test chat request API error handling."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o",
@@ -326,7 +326,7 @@ async def test_chat_api_error():
 @pytest.mark.asyncio
 async def test_chat_connection_error():
     """Test chat request connection error handling."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o",
@@ -347,7 +347,7 @@ async def test_chat_connection_error():
 
 def test_parse_response_malformed():
     """Test response parsing with malformed data."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o",
@@ -364,7 +364,7 @@ def test_parse_response_malformed():
 
 def test_get_default_model():
     """Test get_default_model method."""
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="my-custom-deployment",
@@ -378,7 +378,7 @@ if __name__ == "__main__":
     print("Running basic Azure OpenAI provider tests...")
 
     # Test initialization
-    provider = AzureOpenAIProvider(
+    provider = AzureOpenAIClient(
         api_key="test-key",
         api_base="https://test-resource.openai.azure.com",
         default_model="gpt-4o-deployment",
