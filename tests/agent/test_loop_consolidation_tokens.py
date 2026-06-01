@@ -28,6 +28,8 @@ def _make_loop(tmp_path, *, estimated_tokens: int, context_window_tokens: int) -
     )
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.memory_consolidator._SAFETY_BUFFER = 0
+    # Mock registry.get_runner to return the existing runner (avoids provider build)
+    loop.registry.get_runner = MagicMock(return_value=loop.runner)
     return loop
 
 
@@ -81,7 +83,7 @@ async def test_prompt_above_threshold_archives_until_next_user_boundary(
         memory_module, "estimate_message_tokens", lambda message: token_map[message["content"]]
     )
 
-    await loop.memory_consolidator.maybe_consolidate_by_tokens(session)
+    await loop.memory_consolidator.maybe_consolidate_by_tokens(session, loop.context_window_tokens)
 
     archived_chunk = loop.memory_consolidator.consolidate_messages.await_args.args[0]
     assert [message["content"] for message in archived_chunk] == ["u1", "a1", "u2", "a2"]
@@ -119,7 +121,7 @@ async def test_consolidation_loops_until_target_met(tmp_path, monkeypatch) -> No
     loop.memory_consolidator.estimate_session_prompt_tokens = mock_estimate  # type: ignore[method-assign]
     monkeypatch.setattr(memory_module, "estimate_message_tokens", lambda _m: 100)
 
-    await loop.memory_consolidator.maybe_consolidate_by_tokens(session)
+    await loop.memory_consolidator.maybe_consolidate_by_tokens(session, loop.context_window_tokens)
 
     assert loop.memory_consolidator.consolidate_messages.await_count == 2
     assert session.last_consolidated == 6
@@ -158,7 +160,7 @@ async def test_consolidation_continues_below_trigger_until_half_target(
     loop.memory_consolidator.estimate_session_prompt_tokens = mock_estimate  # type: ignore[method-assign]
     monkeypatch.setattr(memory_module, "estimate_message_tokens", lambda _m: 100)
 
-    await loop.memory_consolidator.maybe_consolidate_by_tokens(session)
+    await loop.memory_consolidator.maybe_consolidate_by_tokens(session, loop.context_window_tokens)
 
     assert loop.memory_consolidator.consolidate_messages.await_count == 2
     assert session.last_consolidated == 6

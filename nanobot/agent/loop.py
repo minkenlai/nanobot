@@ -648,7 +648,9 @@ class AgentLoop:
         logger.info("Processing system message for {}", address)
         key = address.to_uri()
         session = self.sessions.get_or_create(key)
-        await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+        await self.memory_consolidator.maybe_consolidate_by_tokens(
+            session, self.context_window_tokens
+        )
         self._set_tool_context(address, key, msg.metadata.get("message_id"))
 
         history = session.get_history(max_messages=0)
@@ -681,13 +683,42 @@ class AgentLoop:
 
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)
-        self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+        self._schedule_background(
+            self.memory_consolidator.maybe_consolidate_by_tokens(
+                session, self.context_window_tokens
+            )
+        )
         final_content = self._maybe_add_frugality_nudge(session, final_content)
 
         return OutboundMessage(
             address=address,
             content=final_content or "Background task completed.",
         )
+
+    def _apply_agent_profile(self, profile_name: str | None) -> tuple[AgentRunner, bool]:
+        """Atomically update the runner and constraints. Returns (runner, success)."""
+        target_profile = profile_name or "defaults"
+        success = True
+        try:
+            runner = self.registry.get_runner(target_profile)
+        except ValueError:
+            logger.warning("Invalid agent profile {}: falling back to defaults", target_profile)
+            runner = self.registry.get_runner("defaults")
+            target_profile = "defaults"
+            success = False
+
+        if self.config.agents and target_profile in self.config.agents:
+            profile_cfg = self.config.agents[target_profile]
+            # Update window tokens (The "Ceiling")
+            if "contextWindowTokens" in profile_cfg:
+                self.context_window_tokens = profile_cfg["contextWindowTokens"]
+            elif hasattr(runner.provider.generation, "context_max"):
+                self.context_window_tokens = runner.provider.generation.context_max
+            # Update max generation tokens (The "Floor")
+            if "maxTokens" in profile_cfg:
+                self.max_tokens = profile_cfg["maxTokens"]
+
+        return runner, success
 
     async def _process_user_message(
         self,
@@ -710,7 +741,28 @@ class AgentLoop:
         if result := await self.commands.dispatch(ctx):
             return result
 
-        await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+        # Resolve agent profile override and synchronize constraints (Window/Limit)
+        # This MUST happen before consolidation and build_messages so that the correct
+        # truncation limit is used for both session pruning and message building.
+        agent_profile = msg.metadata.get("agent_profile")
+        agent_runner, success = self._apply_agent_profile(agent_profile)
+
+        if not success and agent_profile:
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    address=msg.address,
+                    content=f"⚠️ The pinned profile `{agent_profile}` has issues. Falling back to default agent.",
+                    metadata={
+                        "system_event": "pin_invalid",
+                        "message_id": msg.metadata.get("message_id"),
+                    },
+                )
+            )
+
+        # Consolidate with the correct context window tokens (after profile resolution)
+        await self.memory_consolidator.maybe_consolidate_by_tokens(
+            session, self.context_window_tokens
+        )
         self._set_tool_context(msg.address, key, msg.metadata.get("message_id"))
 
         if message_tool := self.tools.get("message"):
@@ -728,26 +780,6 @@ class AgentLoop:
 
         progress_cb = on_progress or self._make_progress_callback(msg.address, msg.metadata)
 
-        # Resolve agent profile override from metadata
-        agent_profile = msg.metadata.get("agent_profile")
-        agent_runner = None
-        if agent_profile and self.config.agents:
-            try:
-                agent_runner = self.registry.get_runner(agent_profile)
-                logger.info("Overriding agent profile for turn: {}", agent_profile)
-            except ValueError as e:
-                logger.warning("Invalid agent profile requested in metadata: {}", e)
-                await self.bus.publish_outbound(
-                    OutboundMessage(
-                        address=msg.address,
-                        content=f"⚠️ The pinned profile `{agent_profile}` has issues. Falling back to default agent.",
-                        metadata={
-                            "system_event": "pin_invalid",
-                            "message_id": msg.metadata.get("message_id"),
-                        },
-                    )
-                )
-
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages,
             address=msg.address,
@@ -763,7 +795,11 @@ class AgentLoop:
 
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)
-        self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+        self._schedule_background(
+            self.memory_consolidator.maybe_consolidate_by_tokens(
+                session, self.context_window_tokens
+            )
+        )
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None

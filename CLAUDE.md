@@ -33,7 +33,7 @@ This project is using python3 .venv
 ### Message Flow
 
 ```
-Chat Channel → MessageBus → AgentLoop → AgentRegistry → LLMProvider → ToolRegistry → MessageBus → Chat Channel
+Chat Channel → MessageBus → AgentLoop → AgentRegistry → LLMClient → ToolRegistry → MessageBus → Chat Channel
 ```
 
 Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (channel name + path segments). `AgentLoop` (`nanobot/agent/loop.py`) is the core orchestrator, which now leverages an optional `AgentRegistry`. It uses the registry to pull specialized Runners/Providers, or uses an explicitly supplied one. Message dispatch is split into `_process_system_message()` and `_process_user_message()` with a shared `_make_progress_callback()` factory for bus publishing. After each turn, `MemoryConsolidator` stages deltas to `STAGING.md` (non-destructive pipeline).
@@ -61,9 +61,9 @@ Messages (`InboundMessage`, `OutboundMessage`) use the `Address` interface (chan
 
 **To add a new provider**: (1) add a `ProviderSpec` to `PROVIDERS` in `registry.py`, (2) add a config field to `ProvidersConfig` in `nanobot/config/schema.py`.
 
-Backend implementations include: `AnthropicProvider`, `OpenAICompatProvider`, `AzureOpenAIProvider`, and `GeminiNativeProvider`. A special `FallbackProvider` wraps these, providing quota-awareness and automatic fallback chains that reset daily.
+Backend implementations include: `AnthropicClient`, `OpenAICompatClient`, `AzureOpenAIClient`, and `GeminiNativeClient`. A special `FallbackClient` wraps these, providing quota-awareness and automatic fallback chains that reset daily.
 
-**FallbackProvider failure modes:**
+**FallbackClient failure modes:**
 - **Quota exhaustion** → permanent slot advance (`self._active_index`); next reset scheduled per `quota_reset_timezone`
 - **Connectivity/timeout on local slot** → request-scoped fallback only (`effective_index`); next request retries the local provider first
 

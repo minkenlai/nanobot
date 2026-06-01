@@ -345,14 +345,23 @@ class MemoryConsolidator:
                 return True
         return True
 
-    async def maybe_consolidate_by_tokens(self, session: Session) -> None:
-        """Loop: archive old messages until prompt fits within safe budget."""
-        if not session.messages or self.context_window_tokens <= 0:
+    async def maybe_consolidate_by_tokens(
+        self, session: Session, context_window_tokens: int
+    ) -> None:
+        """Archive old messages until prompt fits within safe budget.
+
+        context_window_tokens is the *chat session's* context ceiling (from the
+        active agent profile), used to calculate consolidation thresholds and
+        how much history to keep.  This is distinct from the consolidator's own
+        provider context limit, which constrains how much the consolidator can
+        process in a single LLM call.
+        """
+        if not session.messages or context_window_tokens <= 0:
             return
 
         lock = self.get_lock(session.key)
         async with lock:
-            budget = self.context_window_tokens - self.max_completion_tokens - self._SAFETY_BUFFER
+            budget = context_window_tokens - self.max_completion_tokens - self._SAFETY_BUFFER
             target = budget // 2
             estimated, source = self.estimate_session_prompt_tokens(session)
             if estimated <= 0:

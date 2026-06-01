@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -83,6 +83,8 @@ async def test_loop_error_logging_on_llm_error(tmp_path: Path):
 
     loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
     loop._connect_mcp = AsyncMock()
+    # Mock registry.get_runner to avoid provider build
+    loop.registry.get_runner = MagicMock(return_value=loop.runner)
 
     await loop.run()
     if loop._active_tasks:

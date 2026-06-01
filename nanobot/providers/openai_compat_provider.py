@@ -125,6 +125,11 @@ class OpenAICompatClient(LLMClient):
     registry lookups needed.
     """
 
+    # Shared semaphores keyed by provider name so all client instances for
+    # the same provider serialize requests (critical for local single-GPU
+    # providers where concurrent requests cause model reloads).
+    _semaphores: dict[str, asyncio.Semaphore] = {}
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -156,9 +161,12 @@ class OpenAICompatClient(LLMClient):
             timeout=http_timeout,
         )
         max_concurrent = spec.max_concurrent if spec else 0
-        self._semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(max_concurrent) if max_concurrent > 0 else None
-        )
+        self._semaphore: asyncio.Semaphore | None = None
+        if max_concurrent > 0 and spec:
+            provider_key = spec.name
+            if provider_key not in OpenAICompatClient._semaphores:
+                OpenAICompatClient._semaphores[provider_key] = asyncio.Semaphore(max_concurrent)
+            self._semaphore = OpenAICompatClient._semaphores[provider_key]
 
     def _setup_env(self, api_key: str, api_base: str | None) -> None:
         """Set environment variables based on provider spec."""
