@@ -1247,7 +1247,7 @@ class TelegramChannel(BaseChannel):
             # Lazy-fill topic mapping
             cache_key = f"{message.chat_id}:{thread_id}"
             if cache_key not in self._topic_pins:
-                self._topic_pins[cache_key] = (None, None)
+                self._topic_pins[cache_key] = (None, None, None)
                 # Note: we don't save to disk on lazy-fill to avoid excessive writes
                 # but it will appear in /topics for the current session.
 
@@ -1329,7 +1329,7 @@ class TelegramChannel(BaseChannel):
             # Lazy-fill topic mapping
             cache_key = f"{chat_id}:{thread_id}"
             if cache_key not in self._topic_pins:
-                self._topic_pins[cache_key] = (None, None)
+                self._topic_pins[cache_key] = (None, None, None)
 
             profile = await self._get_topic_profile_pin(chat_id, thread_id)
             if profile:

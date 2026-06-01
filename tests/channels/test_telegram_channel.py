@@ -1193,3 +1193,51 @@ async def test_send_delta_stream_end_stops_typing_by_chat_id() -> None:
     # The typing task keyed by chat_id should be gone and cancellation requested.
     assert "-1003434604734" not in channel._typing_tasks
     assert dummy_task.cancelling() > 0 or dummy_task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_topic_lazy_fill_creates_3_tuple() -> None:
+    """Lazy-fill of _topic_pins for a new topic must create a 3-tuple.
+
+    Regression: a 2-tuple (None, None) caused 'not enough values to unpack'
+    when _get_topic_profile_pin or _on_forum_topic_created tried to unpack 3 values.
+    """
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+
+    chat_id = -100123
+    thread_id = 42
+    cache_key = f"{chat_id}:{thread_id}"
+
+    # Ensure the topic is not yet cached.
+    assert cache_key not in channel._topic_pins
+
+    # Simulate lazy-fill by calling _forward_command with a topic message.
+    message = SimpleNamespace(
+        chat_id=chat_id,
+        message_thread_id=thread_id,
+        text="/status",
+        message_id=1,
+        reply_to_message=None,
+        chat=SimpleNamespace(type="group", is_forum=False),
+    )
+    update = SimpleNamespace(
+        message=message,
+        effective_user=SimpleNamespace(id=1, username="a", first_name="Alice"),
+    )
+
+    # _forward_command calls _handle_message; mock it to avoid bus dependency.
+    channel._handle_message = AsyncMock()
+
+    await channel._forward_command(update, None)
+
+    # The lazy-fill should have created a 3-tuple.
+    assert cache_key in channel._topic_pins
+    entry = channel._topic_pins[cache_key]
+    assert len(entry) == 3, f"Expected 3-tuple, got {len(entry)}-tuple: {entry}"
+
+    # Verify unpacking works (this is what _get_topic_profile_pin does).
+    _, profile, _ = entry
+    assert profile is None
