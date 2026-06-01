@@ -39,6 +39,7 @@ class ModelConfig(Base):
     provider: str = "auto"
     temperature: float | None = None
     max_tokens: int | None = None
+    context_max: int | None = None
     reasoning_effort: str | None = None
     prefill: bool | None = None
 
