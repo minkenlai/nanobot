@@ -27,7 +27,7 @@ async def test_loop_error_logging_on_exception(tmp_path: Path):
     bus.consume_inbound = mock_consume
 
     provider = AsyncMock()
-    provider.get_default_model.return_value = "test-model"
+    provider.get_default_model = MagicMock(return_value="test-model")
 
     loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
     # Mock connect_mcp to avoid hangs
@@ -75,7 +75,7 @@ async def test_loop_error_logging_on_llm_error(tmp_path: Path):
     bus.consume_inbound = mock_consume
 
     provider = AsyncMock()
-    provider.get_default_model.return_value = "test-model"
+    provider.get_default_model = MagicMock(return_value="test-model")
     provider.chat_with_retry = AsyncMock(
         return_value=LLMResponse(content="Rate limit", finish_reason="error")
     )
