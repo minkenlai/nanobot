@@ -73,21 +73,21 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     agent_id = session.metadata.get("agent", "defaults")
     pinned_profile = msg.metadata.get("agent_profile")
 
-    # Resolve context window tokens from the pinned profile (same logic as _apply_agent_profile)
+    # Resolve context window tokens from the pinned profile
     # This is needed because slash commands are dispatched BEFORE _apply_agent_profile runs,
     # so loop.context_window_tokens may still hold the value from the previous message.
     window = getattr(loop, "context_window_tokens", 64000)
     if pinned_profile and loop.config.agents and pinned_profile in loop.config.agents:
         profile_cfg = loop.config.agents[pinned_profile]
-        if "contextWindowTokens" in profile_cfg:
-            window = profile_cfg["contextWindowTokens"]
-        else:
-            try:
-                runner = loop.registry.get_runner(pinned_profile)
-                if hasattr(runner.provider.generation, "context_max"):
-                    window = runner.provider.generation.context_max
-            except Exception:
-                pass
+        profile_limit = profile_cfg.get("contextWindowTokens")
+        try:
+            from nanobot.utils.helpers import resolve_context_window
+
+            runner = loop.registry.get_runner(pinned_profile)
+            provider_max = getattr(runner.provider.generation, "context_max", None)
+            window = resolve_context_window(profile_limit, provider_max, window)
+        except Exception:
+            window = profile_limit or window
 
     # Context Estimation
     try:

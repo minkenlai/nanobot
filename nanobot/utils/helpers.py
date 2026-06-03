@@ -311,3 +311,21 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
         for name in added:
             Console().print(f"  [dim]Created {name}[/dim]")
     return added
+
+
+def resolve_context_window(
+    profile_limit: int | None,
+    provider_max: int | None,
+    fallback: int,
+) -> int:
+    """Resolve effective context window from profile limit and provider max.
+
+    Models without a configured context_max are ignored, not treated as infinite.
+    """
+    if provider_max is not None and profile_limit:
+        return min(profile_limit, provider_max)
+    elif profile_limit:
+        return profile_limit
+    elif provider_max is not None:
+        return provider_max
+    return fallback
