@@ -322,10 +322,10 @@ def resolve_context_window(
 
     Models without a configured context_max are ignored, not treated as infinite.
     """
-    if provider_max is not None and profile_limit:
+    if isinstance(provider_max, int) and profile_limit:
         return min(profile_limit, provider_max)
     elif profile_limit:
         return profile_limit
-    elif provider_max is not None:
+    elif isinstance(provider_max, int):
         return provider_max
     return fallback

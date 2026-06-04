@@ -5,6 +5,7 @@ import pytest
 import nanobot.agent.memory as memory_module
 from nanobot.agent.loop import AgentLoop
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import AgentDefaults, AgentsConfig, Config
 from nanobot.providers.base import LLMResponse
 
 
@@ -23,6 +24,9 @@ def _make_loop(tmp_path, *, estimated_tokens: int, context_window_tokens: int) -
         bus=MessageBus(),
         provider=provider,
         workspace=tmp_path,
+        config=Config(
+            agents=AgentsConfig(defaults=AgentDefaults(context_window_tokens=context_window_tokens))
+        ),
         model="test-model",
         context_window_tokens=context_window_tokens,
     )

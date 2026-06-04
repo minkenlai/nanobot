@@ -44,12 +44,10 @@ async def test_cmd_status_pinned_profile_context_window():
     loop.context_window_tokens = 64000
 
     # Configure a pinned profile with a different context window
-    loop.config.agents = {
-        "researcher": {
-            "model": "claude-sonnet-4-20250514",
-            "contextWindowTokens": 131072,
-        }
-    }
+    # Must use hasattr-compatible attributes on the AgentsConfig, not a dict
+    from nanobot.config.schema import AgentDefaults
+
+    setattr(loop.config.agents, "researcher", AgentDefaults(context_window_tokens=131072))
 
     session = MagicMock()
     session.messages = [{"role": "user"}] * 3
@@ -129,15 +127,18 @@ async def test_cmd_status_pinned_profile_falls_back_to_provider_max():
     """When profile has no contextWindowTokens, fall back to provider's context_max."""
     from nanobot.command.builtin import cmd_status
 
-    loop, _bus = _make_loop()
+    loop, _bot = _make_loop()
     loop.context_window_tokens = 64000
 
-    # Profile without explicit contextWindowTokens
-    loop.config.agents = {
-        "deep": {
-            "model": "claude-opus-4-20250514",
-        }
-    }
+    # Profile without explicit contextWindowTokens - use AgentDefaults
+    from nanobot.config.schema import AgentDefaults
+
+    # context_window_tokens=0 means "no explicit limit" so resolve_context_window falls back to provider_max
+    setattr(
+        loop.config.agents,
+        "deep",
+        AgentDefaults(model="claude-opus-4-20250514", context_window_tokens=0),
+    )
 
     # Mock registry.get_runner to return a runner with provider context_max
     mock_runner = MagicMock()

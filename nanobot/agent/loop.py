@@ -707,18 +707,27 @@ class AgentLoop:
             target_profile = "defaults"
             success = False
 
-        if self.config.agents and target_profile in self.config.agents:
+        if self.config.agents and hasattr(self.config.agents, target_profile):
             from nanobot.utils.helpers import resolve_context_window
 
-            profile_cfg = self.config.agents[target_profile]
+            profile_cfg = getattr(self.config.agents, target_profile)
             provider_max = getattr(runner.provider.generation, "context_max", None)
-            profile_limit = profile_cfg.get("contextWindowTokens")
+            profile_limit = (
+                profile_cfg.get("contextWindowTokens")
+                if isinstance(profile_cfg, dict)
+                else getattr(profile_cfg, "context_window_tokens", None)
+            )
             self.context_window_tokens = resolve_context_window(
                 profile_limit, provider_max, self.context_window_tokens
             )
             # Update max generation tokens (The "Floor")
-            if "maxTokens" in profile_cfg:
-                self.max_tokens = profile_cfg["maxTokens"]
+            max_tokens = (
+                profile_cfg.get("maxTokens")
+                if isinstance(profile_cfg, dict)
+                else getattr(profile_cfg, "max_tokens", None)
+            )
+            if max_tokens:
+                self.max_tokens = max_tokens
 
         return runner, success
 

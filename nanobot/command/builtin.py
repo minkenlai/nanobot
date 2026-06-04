@@ -77,9 +77,15 @@ async def cmd_status(ctx: CommandContext) -> OutboundMessage:
     # This is needed because slash commands are dispatched BEFORE _apply_agent_profile runs,
     # so loop.context_window_tokens may still hold the value from the previous message.
     window = getattr(loop, "context_window_tokens", 64000)
-    if pinned_profile and loop.config.agents and pinned_profile in loop.config.agents:
-        profile_cfg = loop.config.agents[pinned_profile]
-        profile_limit = profile_cfg.get("contextWindowTokens")
+    if pinned_profile:
+        profile_limit = None
+        try:
+            # Use get_agent to properly handle Pydantic extra fields
+            profile_cfg = loop.config.agents.get_agent(pinned_profile)
+            profile_limit = getattr(profile_cfg, "context_window_tokens", None)
+        except (ValueError, AttributeError):
+            pass
+
         try:
             from nanobot.utils.helpers import resolve_context_window
 
