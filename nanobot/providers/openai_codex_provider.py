@@ -91,6 +91,7 @@ class OpenAICodexClient(LLMClient):
         temperature: float = 1.0,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         return await self._call_codex(messages, tools, model, reasoning_effort, tool_choice)
 
@@ -104,6 +105,7 @@ class OpenAICodexClient(LLMClient):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         return await self._call_codex(
             messages, tools, model, reasoning_effort, tool_choice, on_content_delta

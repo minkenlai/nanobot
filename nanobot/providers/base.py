@@ -213,6 +213,7 @@ class LLMClient(ABC):
         temperature: float = 1.0,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         """
         Send a chat completion request.
@@ -224,6 +225,7 @@ class LLMClient(ABC):
             max_tokens: Maximum tokens in response.
             temperature: Sampling temperature.
             tool_choice: Tool selection strategy ("auto", "required", or specific tool dict).
+            prompt_tokens: Estimated prompt token count (used by FallbackClient for routing).
 
         Returns:
             LLMResponse with content and/or tool calls.
@@ -289,6 +291,7 @@ class LLMClient(ABC):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         """Stream a chat completion, calling *on_content_delta* for each text chunk.
 
@@ -305,6 +308,7 @@ class LLMClient(ABC):
             temperature=temperature,
             reasoning_effort=reasoning_effort,
             tool_choice=tool_choice,
+            prompt_tokens=prompt_tokens,
         )
         if on_content_delta and response.content:
             await on_content_delta(response.content)
@@ -333,6 +337,7 @@ class LLMClient(ABC):
         reasoning_effort: object = _SENTINEL,
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         """Call chat_stream() with retry on transient provider failures."""
         if max_tokens is self._SENTINEL:
@@ -351,6 +356,7 @@ class LLMClient(ABC):
             reasoning_effort=reasoning_effort,
             tool_choice=tool_choice,
             on_content_delta=on_content_delta,
+            prompt_tokens=prompt_tokens,
         )
 
         for attempt, delay in enumerate(self._CHAT_RETRY_DELAYS, start=1):
@@ -388,6 +394,7 @@ class LLMClient(ABC):
         temperature: object = _SENTINEL,
         reasoning_effort: object = _SENTINEL,
         tool_choice: str | dict[str, Any] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         """Call chat() with retry on transient provider failures.
 
@@ -410,6 +417,7 @@ class LLMClient(ABC):
             temperature=temperature,
             reasoning_effort=reasoning_effort,
             tool_choice=tool_choice,
+            prompt_tokens=prompt_tokens,
         )
 
         for attempt, delay in enumerate(self._CHAT_RETRY_DELAYS, start=1):

@@ -26,8 +26,9 @@ def _make_loop():
         patch("nanobot.agent.loop.ContextBuilder"),
         patch("nanobot.agent.loop.SessionManager"),
         patch("nanobot.agent.loop.SubagentManager"),
-        patch("nanobot.agent.loop.MemoryConsolidator"),
+        patch("nanobot.agent.loop.MemoryConsolidator") as mock_consolidator,
     ):
+        mock_consolidator.return_value.estimate_session_prompt_tokens.return_value = (0, "mock")
         loop = AgentLoop(bus=bus, provider=provider, workspace=workspace)
     return loop, bus
 

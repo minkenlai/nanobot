@@ -69,8 +69,13 @@ class FallbackClient(LLMClient):
         temperature: float = 1.0,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
-        """Delegate to the active slot, falling back on quota or local connectivity errors."""
+        """Delegate to the active slot, falling back on quota or local connectivity errors.
+
+        If *prompt_tokens* is provided and exceeds a slot's context_max, that slot
+        is proactively skipped in favor of a larger-context fallback.
+        """
         notification = self._check_reset()
         current_max_tokens = max_tokens
         # effective_index tracks which slot to use for *this* request.
@@ -80,6 +85,29 @@ class FallbackClient(LLMClient):
 
         while True:
             provider, slot_model, slot_id, _ = self._slots[effective_index]
+
+            # Context-aware routing: skip slots whose context window is too small.
+            if prompt_tokens is not None:
+                slot_max = provider.generation.context_max
+                if slot_max is not None and prompt_tokens > slot_max:
+                    logger.warning(
+                        "FallbackProvider: Skipping slot %s (model=%s) — "
+                        "prompt %d tokens > context max %d",
+                        slot_id,
+                        slot_model,
+                        prompt_tokens,
+                        slot_max,
+                    )
+                    if effective_index < len(self._slots) - 1:
+                        effective_index += 1
+                        continue
+                    logger.warning(
+                        "FallbackProvider: Prompt %d tokens exceeds all slot limits; "
+                        "attempting last slot (%s) anyway.",
+                        prompt_tokens,
+                        slot_id,
+                    )
+
             try:
                 response = await provider.chat(
                     messages=messages,
@@ -89,6 +117,7 @@ class FallbackClient(LLMClient):
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
                     tool_choice=tool_choice,
+                    prompt_tokens=prompt_tokens,
                 )
                 # Success - return response.
                 if notification and response.content is not None:

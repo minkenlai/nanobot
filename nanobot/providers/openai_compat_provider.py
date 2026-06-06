@@ -684,6 +684,7 @@ class OpenAICompatClient(LLMClient):
         temperature: float = 1.0,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         kwargs = self._build_kwargs(
             messages,
@@ -708,6 +709,7 @@ class OpenAICompatClient(LLMClient):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         kwargs = self._build_kwargs(
             messages,

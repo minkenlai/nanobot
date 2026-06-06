@@ -58,7 +58,7 @@ class AgentRunner:
     def __init__(self, provider: LLMClient):
         self.provider = provider
 
-    async def run(self, spec: AgentRunSpec) -> AgentRunResult:
+    async def run(self, spec: AgentRunSpec, prompt_tokens: int | None = None) -> AgentRunResult:
         hook = spec.hook or AgentHook()
         messages = list(spec.initial_messages)
         final_content: str | None = None
@@ -75,6 +75,7 @@ class AgentRunner:
                 "messages": messages,
                 "tools": spec.tools.get_definitions(),
                 "model": spec.model,
+                "prompt_tokens": prompt_tokens,
             }
             if spec.temperature is not None:
                 kwargs["temperature"] = spec.temperature

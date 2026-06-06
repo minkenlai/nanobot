@@ -121,6 +121,7 @@ class AzureOpenAIClient(LLMClient):
         temperature: float = 1.0,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         """
         Send a chat completion request to Azure OpenAI.
@@ -224,6 +225,7 @@ class AzureOpenAIClient(LLMClient):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         """Stream a chat completion via Azure OpenAI SSE."""
         deployment_name = model or self.default_model

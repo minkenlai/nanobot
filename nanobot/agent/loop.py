@@ -423,6 +423,10 @@ class AgentLoop:
             runner = self.runner
             model = self.model
 
+        # Estimate prompt tokens to enable proactive routing in FallbackProvider
+        session = self.sessions.get_or_create(session_key)
+        prompt_tokens, _ = self.memory_consolidator.estimate_session_prompt_tokens(session)
+
         result = await runner.run(
             AgentRunSpec(
                 initial_messages=initial_messages,
@@ -432,7 +436,8 @@ class AgentLoop:
                 hook=_LoopHook(),
                 error_message="Sorry, I encountered an error calling the AI model.",
                 concurrent_tools=True,
-            )
+            ),
+            prompt_tokens=prompt_tokens,
         )
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":

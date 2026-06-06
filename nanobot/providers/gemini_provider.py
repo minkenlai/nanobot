@@ -112,6 +112,7 @@ class GeminiNativeClient(LLMClient):
         temperature: float = 1.0,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         model_name = model or self.default_model
         if "/" in model_name:
