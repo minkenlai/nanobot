@@ -66,6 +66,7 @@ Backend implementations include: `AnthropicClient`, `OpenAICompatClient`, `Azure
 **FallbackClient failure modes:**
 - **Quota exhaustion** → permanent slot advance (`self._active_index`); next reset scheduled per `quota_reset_timezone`
 - **Connectivity/timeout on local slot** → request-scoped fallback only (`effective_index`); next request retries the local provider first
+- **Context Overflow (Proactive)** → If `prompt_tokens` is provided, slots whose `context_max` is exceeded are proactively skipped in favor of larger-context fallbacks.
 
 **Provider resolution** (`nanobot/config/schema.py`): `_match_provider` and all public resolution methods (`get_provider`, `get_api_base`, etc.) accept an explicit `provider_override` parameter. When `provider_override == "auto"`, resolution first checks `agent_config.provider` before falling back to keyword-based model matching. Pass `mc.provider` when resolving per-slot settings to avoid agent-level defaults leaking into per-model lookups. Note: `llama`/`llama.cpp` are NOT in inferencia's keywords (removed to prevent false-positive detection on `llama3.2`, etc.).
 
