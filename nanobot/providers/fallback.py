@@ -212,6 +212,22 @@ class FallbackClient(LLMClient):
                     )
                     continue
 
+                # Context exceeded error → request-scoped fallback to next slot.
+                if self._is_context_exceeded_error(exc) and effective_index < len(self._slots) - 1:
+                    new_id = self._slots[effective_index + 1][2]
+                    logger.warning(
+                        "FallbackClient: context exceeded on {}, trying {}: {!r}",
+                        slot_id,
+                        new_id,
+                        exc,
+                    )
+                    effective_index += 1
+                    fallback_msg = f"⚠️ {slot_id} context exceeded. Using {new_id} for this request."
+                    notification = (
+                        (notification + "\n" + fallback_msg) if notification else fallback_msg
+                    )
+                    continue
+
                 raise
 
     async def chat_stream(
@@ -224,6 +240,7 @@ class FallbackClient(LLMClient):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+        prompt_tokens: int | None = None,
     ) -> LLMResponse:
         """Stream from the active slot, falling back on quota or local connectivity errors."""
         notification = self._check_reset()
@@ -233,6 +250,29 @@ class FallbackClient(LLMClient):
 
         while True:
             provider, slot_model, slot_id, _ = self._slots[effective_index]
+
+            # Context-aware routing: skip slots whose context window is too small.
+            if prompt_tokens is not None:
+                slot_max = provider.generation.context_max
+                if slot_max is not None and prompt_tokens > slot_max:
+                    logger.warning(
+                        "FallbackProvider (stream): Skipping slot %s (model=%s) — "
+                        "prompt %d tokens > context max %d",
+                        slot_id,
+                        slot_model,
+                        prompt_tokens,
+                        slot_max,
+                    )
+                    if effective_index < len(self._slots) - 1:
+                        effective_index += 1
+                        continue
+                    logger.warning(
+                        "FallbackProvider (stream): Prompt %d tokens exceeds all slot limits; "
+                        "attempting last slot (%s) anyway.",
+                        prompt_tokens,
+                        slot_id,
+                    )
+
             try:
                 # Deliver any pending notification as a leading delta.
                 if notification and on_content_delta:
@@ -248,7 +288,26 @@ class FallbackClient(LLMClient):
                     reasoning_effort=reasoning_effort,
                     tool_choice=tool_choice,
                     on_content_delta=on_content_delta,
+                    prompt_tokens=prompt_tokens,
                 )
+                if notification and response.content:
+                    response = LLMResponse(
+                        content=notification + "\n\n" + response.content,
+                        tool_calls=response.tool_calls,
+                        finish_reason=response.finish_reason,
+                        usage=response.usage,
+                        reasoning_content=response.reasoning_content,
+                        thinking_blocks=response.thinking_blocks,
+                    )
+                elif notification and response.content is None:
+                    response = LLMResponse(
+                        content=notification,
+                        tool_calls=response.tool_calls,
+                        finish_reason=response.finish_reason,
+                        usage=response.usage,
+                        reasoning_content=response.reasoning_content,
+                        thinking_blocks=response.thinking_blocks,
+                    )
                 return response
             except asyncio.CancelledError:
                 raise
@@ -316,6 +375,22 @@ class FallbackClient(LLMClient):
                     )
                     effective_index += 1
                     fallback_msg = f"⚠️ {slot_id} unavailable. Using {new_id} for this request."
+                    notification = (
+                        (notification + "\n" + fallback_msg) if notification else fallback_msg
+                    )
+                    continue
+
+                # Context exceeded error → request-scoped fallback to next slot.
+                if self._is_context_exceeded_error(exc) and effective_index < len(self._slots) - 1:
+                    new_id = self._slots[effective_index + 1][2]
+                    logger.warning(
+                        "FallbackClient: context exceeded on {}, trying {}: {!r}",
+                        slot_id,
+                        new_id,
+                        exc,
+                    )
+                    effective_index += 1
+                    fallback_msg = f"⚠️ {slot_id} context exceeded. Using {new_id} for this request."
                     notification = (
                         (notification + "\n" + fallback_msg) if notification else fallback_msg
                     )
@@ -410,3 +485,26 @@ class FallbackClient(LLMClient):
             return True
         msg = str(exc).lower()
         return "timeout" in msg or "timed out" in msg or "connection" in msg
+
+    @staticmethod
+    def _is_context_exceeded_error(exc: Exception) -> bool:
+        """Return True for context-window / max-tokens exceeded errors."""
+        msg = str(exc).lower()
+        return any(
+            k in msg
+            for k in [
+                "exceed max ctx",
+                "max ctx",
+                "context length",
+                "context_length",
+                "maximum context",
+                "prompt too long",
+                "input too long",
+                "input is too long",
+                "request is too large",
+                "model not found" + "context",  # some providers return this
+                "invalid request" + "context",
+                "invalid_request_error",
+                "too many tokens",
+            ]
+        )
