@@ -84,6 +84,23 @@ class HeartbeatService:
                 return None
         return None
 
+    @staticmethod
+    def _has_actionable_content(content: str) -> bool:
+        """Deterministic check: does HEARTBEAT.md contain actionable tasks?
+
+        Returns False if the file only has headers, comments, and blank lines.
+        """
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                continue
+            if stripped.startswith("<!--") and stripped.endswith("-->"):
+                continue
+            return True
+        return False
+
     async def _decide(self, content: str) -> tuple[str, str]:
         """Phase 1: ask LLM to decide skip/run via virtual tool call.
 
@@ -155,6 +172,10 @@ class HeartbeatService:
         content = self._read_heartbeat_file()
         if not content:
             logger.debug("Heartbeat: HEARTBEAT.md missing or empty")
+            return
+
+        if not self._has_actionable_content(content):
+            logger.debug("Heartbeat: no actionable content (deterministic skip)")
             return
 
         logger.info("Heartbeat: checking for tasks...")

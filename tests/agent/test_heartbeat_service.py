@@ -297,3 +297,40 @@ async def test_decide_prompt_includes_current_time(tmp_path) -> None:
     user_msg = captured_messages[1]
     assert user_msg["role"] == "user"
     assert "Current Time:" in user_msg["content"]
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_returns_false_for_empty() -> None:
+    assert HeartbeatService._has_actionable_content("") is False
+    assert HeartbeatService._has_actionable_content("\n\n\n") is False
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_returns_false_for_headers_only() -> None:
+    content = "# Heartbeat Tasks\n\n## Active Tasks\n\n<!-- Add your periodic tasks below -->\n\n## Completed\n"
+    assert HeartbeatService._has_actionable_content(content) is False
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_returns_true_for_task() -> None:
+    content = "# Heartbeat Tasks\n\n## Active Tasks\n\n- [ ] check deployments\n"
+    assert HeartbeatService._has_actionable_content(content) is True
+
+
+@pytest.mark.asyncio
+async def test_tick_skips_llm_call_when_no_actionable_content(tmp_path) -> None:
+    """Deterministic heuristic skips _decide (no LLM call) when file is headers-only."""
+    (tmp_path / "HEARTBEAT.md").write_text(
+        "# Heartbeat Tasks\n\n## Active Tasks\n\n<!-- nothing here -->\n\n## Completed\n",
+        encoding="utf-8",
+    )
+
+    provider = DummyProvider([])
+    service = HeartbeatService(
+        workspace=tmp_path,
+        provider=provider,
+        model="openai/gpt-4o-mini",
+    )
+
+    await service._tick()
+    assert provider.calls == 0
