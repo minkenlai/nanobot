@@ -130,7 +130,9 @@ async def test_trigger_now_returns_none_when_decision_is_skip(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_tick_notifies_when_evaluator_says_yes(tmp_path, monkeypatch) -> None:
     """Phase 1 run -> Phase 2 execute -> Phase 3 evaluate=notify -> on_notify called."""
-    (tmp_path / "HEARTBEAT.md").write_text("- [ ] check deployments", encoding="utf-8")
+    (tmp_path / "HEARTBEAT.md").write_text(
+        "## Active Tasks\n\n- [ ] check deployments", encoding="utf-8"
+    )
 
     provider = DummyProvider(
         [
@@ -178,7 +180,9 @@ async def test_tick_notifies_when_evaluator_says_yes(tmp_path, monkeypatch) -> N
 @pytest.mark.asyncio
 async def test_tick_suppresses_when_evaluator_says_no(tmp_path, monkeypatch) -> None:
     """Phase 1 run -> Phase 2 execute -> Phase 3 evaluate=silent -> on_notify NOT called."""
-    (tmp_path / "HEARTBEAT.md").write_text("- [ ] check status", encoding="utf-8")
+    (tmp_path / "HEARTBEAT.md").write_text(
+        "## Active Tasks\n\n- [ ] check status", encoding="utf-8"
+    )
 
     provider = DummyProvider(
         [
@@ -334,3 +338,45 @@ async def test_tick_skips_llm_call_when_no_actionable_content(tmp_path) -> None:
 
     await service._tick()
     assert provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_multiline_comment_is_not_actionable() -> None:
+    """Multi-line HTML comments must not be treated as actionable content."""
+    content = "# Heartbeat Tasks\n\n## Active Tasks\n\n<!--\nAdd your periodic tasks below this line\n-->\n\n## Completed\n"
+    assert HeartbeatService._has_actionable_content(content) is False
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_task_after_multiline_comment_is_actionable() -> None:
+    """Content after a multi-line HTML comment must be detected as actionable."""
+    content = "# Heartbeat Tasks\n\n## Active Tasks\n\n<!--\nplaceholder\n-->\n\n- [ ] check deployments\n"
+    assert HeartbeatService._has_actionable_content(content) is True
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_inline_comment_with_content() -> None:
+    """A line with text before an inline comment is actionable."""
+    content = "## Active Tasks\n\n- [ ] review PRs <!-- pending -->\n"
+    assert HeartbeatService._has_actionable_content(content) is True
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_ignores_content_before_active_tasks() -> None:
+    """Tasks listed before the Active Tasks section are ignored."""
+    content = "- [ ] old task\n\n## Active Tasks\n\n"
+    assert HeartbeatService._has_actionable_content(content) is False
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_fallback_uses_whole_file() -> None:
+    """File without an Active Tasks section falls back to the entire file."""
+    content = "# Heartbeat Tasks\n\n- [ ] deploy service\n"
+    assert HeartbeatService._has_actionable_content(content) is True
+
+
+@pytest.mark.asyncio
+async def test_has_actionable_content_fallback_empty_returns_false() -> None:
+    """File without an Active Tasks section and no content is not actionable."""
+    content = "# Heartbeat Tasks\n\n"
+    assert HeartbeatService._has_actionable_content(content) is False

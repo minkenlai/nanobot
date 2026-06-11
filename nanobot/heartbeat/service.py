@@ -88,17 +88,58 @@ class HeartbeatService:
     def _has_actionable_content(content: str) -> bool:
         """Deterministic check: does HEARTBEAT.md contain actionable tasks?
 
-        Returns False if the file only has headers, comments, and blank lines.
+        Only considers content within the "## Active Tasks" section (stops at
+        the next ## header). Returns False if the section only has comments
+        and blank lines. Handles both single-line and multi-line HTML comments.
         """
+        # Isolate the "## Active Tasks" section, fallback to entire file
+        idx = content.find("## Active Tasks")
+        if idx != -1:
+            header_end = content.index("\n", idx) + 1
+            content = content[header_end:]
+
+        # Only look at lines until the next ## section header
+        section_lines: list[str] = []
         for line in content.splitlines():
             stripped = line.strip()
-            if not stripped:
+            if stripped.startswith("##"):
+                break
+            section_lines.append(line)
+
+        in_comment = False
+        for line in section_lines:
+            stripped = line.strip()
+            if not stripped and not in_comment:
                 continue
-            if stripped.startswith("#"):
+            # Scan for comment openers and closers, preserving non-comment text
+            remaining = stripped
+            while remaining:
+                if in_comment:
+                    end = remaining.find("-->")
+                    if end != -1:
+                        remaining = remaining[end + 3 :]
+                        in_comment = False
+                    else:
+                        break
+                else:
+                    start = remaining.find("<!--")
+                    if start != -1:
+                        # Check if there's meaningful text before the comment
+                        before = remaining[:start].strip()
+                        if before and not before.startswith("#"):
+                            return True
+                        remaining = remaining[start:]
+                        in_comment = True
+                    else:
+                        # No comment opener — remaining is the full line to check
+                        break
+            if in_comment:
                 continue
-            if stripped.startswith("<!--") and stripped.endswith("-->"):
-                continue
-            return True
+            # Check what's left after stripping comments
+            if remaining:
+                remaining = remaining.strip()
+                if remaining and not remaining.startswith("#"):
+                    return True
         return False
 
     async def _decide(self, content: str) -> tuple[str, str]:
