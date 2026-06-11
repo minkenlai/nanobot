@@ -18,6 +18,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     msg = ctx.msg
     content = "**Available Commands:**\n"
     content += "- `/new`: Start a fresh conversation (clears context)\n"
+    content += "- `/compact [N]`: Consolidate history, keeping last N messages\n"
     content += "- `/help`: Show this help\n"
     content += "- `/status`: Show system status and version\n"
     content += "- `/tasks`: List current and recent background tasks\n"
@@ -241,6 +242,47 @@ async def cmd_halt(ctx: CommandContext) -> OutboundMessage:
     return OutboundMessage(address=msg.address, content="👋 Goodbye! Halting...")
 
 
+async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
+    """Manually consolidate session history, keeping the last N messages.
+    Usage: `/compact [N]`
+    """
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+
+    # Parse N from raw input
+    n_keep = 5
+    parts = (ctx.raw or "").split()
+    if len(parts) > 1:
+        try:
+            n_keep = abs(int(parts[1]))
+        except ValueError:
+            pass
+
+    # Calculate boundary: keep the last N messages
+    # We consolidate everything from the last checkpoint up to the keep-limit
+    end_idx = max(0, len(session.messages) - n_keep)
+    chunk = session.messages[session.last_consolidated : end_idx]
+
+    if not chunk:
+        return OutboundMessage(
+            address=ctx.msg.address,
+            content=f"Nothing to summarize (last {n_keep} messages already cover the current session).",
+        )
+
+    # Use the existing consolidation pipeline
+    # archive_messages ensures the chunk is summarized and stored in MEMORY/HISTORY
+    await loop.memory_consolidator.archive_messages(chunk)
+
+    # Update the session pointer so these messages aren't processed again
+    session.last_consolidated = end_idx
+    loop.sessions.save(session)
+
+    return OutboundMessage(
+        address=ctx.msg.address,
+        content=f"✅ Consolidated history up to the last {n_keep} messages.",
+    )
+
+
 async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     """Start a fresh session."""
     loop = ctx.loop
@@ -360,6 +402,7 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
 def register_builtin_commands(router: CommandRouter) -> None:
     """Register all builtin commands."""
     router.exact("/new", cmd_new)
+    router.exact("/compact", cmd_compact)
     router.exact("/help", cmd_help)
     router.exact("/status", cmd_status)
     router.priority("/stop", cmd_stop)
