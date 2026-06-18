@@ -693,7 +693,6 @@ class AgentLoop:
                 session, self.context_window_tokens
             )
         )
-        final_content = self._maybe_add_frugality_nudge(session, final_content)
 
         return OutboundMessage(
             address=address,

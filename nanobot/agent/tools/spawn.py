@@ -1,6 +1,6 @@
 """Spawn tool for creating background subagents."""
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from nanobot.agent.tools.base import Tool
 from nanobot.bus.events import Address
@@ -83,12 +83,36 @@ class SpawnTool(Tool):
                     "type": "string",
                     "description": agent_desc,
                 },
+                "context_scope": {
+                    "type": "string",
+                    "enum": ["full", "technical", "minimal"],
+                    "description": (
+                        "How much context to give the subagent. "
+                        "'full' includes SOUL.md, USER.md, and SUBAGENT.md (default). "
+                        "'technical' includes only SUBAGENT.md. "
+                        "'minimal' includes no persona files."
+                    ),
+                },
+                "included_skills": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional list of skill names to include for the subagent. "
+                        "If omitted or null, all available skills are included."
+                    ),
+                },
             },
             "required": ["task"],
         }
 
     async def execute(
-        self, task: str, label: str | None = None, agent: str | None = None, **kwargs: Any
+        self,
+        task: str,
+        label: str | None = None,
+        agent: str | None = None,
+        context_scope: Literal["full", "technical", "minimal"] = "full",
+        included_skills: list[str] | None = None,
+        **kwargs: Any,
     ) -> str:
         """Spawn a subagent to execute the given task."""
         return await self._manager.spawn(
@@ -97,4 +121,6 @@ class SpawnTool(Tool):
             agent=agent,
             origin=self._origin,
             session_key=self._session_key,
+            context_scope=context_scope,
+            included_skills=included_skills,
         )

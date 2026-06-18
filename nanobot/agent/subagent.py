@@ -13,7 +13,7 @@ from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
@@ -85,6 +85,8 @@ class SubagentManager:
         agent: str | None = None,
         origin: Address | None = None,
         session_key: str | None = None,
+        context_scope: Literal["full", "technical", "minimal"] = "full",
+        included_skills: list[str] | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         task_id = str(uuid.uuid4())[:8]
@@ -102,7 +104,15 @@ class SubagentManager:
         )
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, agent)
+            self._run_subagent(
+                task_id,
+                task,
+                display_label,
+                origin,
+                agent,
+                context_scope,
+                included_skills,
+            )
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -127,6 +137,8 @@ class SubagentManager:
         label: str,
         origin: Address,
         agent: str | None = None,
+        context_scope: Literal["full", "technical", "minimal"] = "full",
+        included_skills: list[str] | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         agent_name = agent or "defaults"
@@ -205,7 +217,7 @@ class SubagentManager:
             tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
             tools.register(WebFetchTool(proxy=self.web_proxy))
 
-            system_prompt = self._build_subagent_prompt()
+            system_prompt = self._build_subagent_prompt(context_scope, included_skills)
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
@@ -355,15 +367,35 @@ Result:
             lines.append(f"- {result.error}")
         return "\n".join(lines) or (result.error or "Error: subagent execution failed.")
 
-    def _build_subagent_prompt(self) -> str:
-        """Build a focused system prompt for the subagent."""
+    # Context scope → which core files to include
+    _SCOPE_FILES: dict[str, list[str]] = {
+        "full": ["SOUL.md", "USER.md", "SUBAGENT.md"],
+        "technical": ["SUBAGENT.md"],
+        "minimal": [],
+    }
+
+    def _build_subagent_prompt(
+        self,
+        context_scope: Literal["full", "technical", "minimal"] = "full",
+        included_skills: list[str] | None = None,
+    ) -> str:
+        """Build a focused system prompt for the subagent.
+
+        Args:
+            context_scope: Controls which persona files are included.
+                'full' = SOUL.md + USER.md + SUBAGENT.md
+                'technical' = SUBAGENT.md only
+                'minimal' = no persona files
+            included_skills: Optional whitelist of skill names.
+                If None, all available skills are included.
+        """
         from nanobot.agent.context import ContextBuilder
         from nanobot.agent.skills import SkillsLoader
 
-        time_ctx = ContextBuilder._build_runtime_context(None, None)
+        runtime_ctx = ContextBuilder._build_runtime_context(None, None)
 
-        # Load core persona and guidelines if they exist
-        core_files = ["SOUL.md", "USER.md", "SUBAGENT.md"]
+        # Determine which core files to load based on context_scope
+        core_files = self._SCOPE_FILES.get(context_scope, self._SCOPE_FILES["full"])
         core_parts = []
         for cf in core_files:
             p = self.workspace / cf
@@ -377,7 +409,7 @@ Result:
         parts = [
             f"""# Subagent
 
-{time_ctx}
+{runtime_ctx}
 
 You are a subagent spawned by the main agent to complete a specific task.
 Stay focused on the assigned task. Your final response will be reported back to the main agent.
@@ -391,13 +423,53 @@ Tools like 'read_file' and 'web_fetch' can return native image content. Read vis
         if core_parts:
             parts.append("## Core Persona & Guidelines\n\n" + "\n\n".join(core_parts))
 
-        skills_summary = SkillsLoader(self.workspace).build_skills_summary()
+        # Build skills summary, optionally filtered by included_skills
+        loader = SkillsLoader(self.workspace)
+        if included_skills is not None:
+            # Whitelist mode: only include named skills
+            all_skills = loader.list_skills(filter_unavailable=False)
+            filtered = [s for s in all_skills if s["name"] in included_skills]
+            skills_summary = self._build_skills_xml(loader, filtered)
+        else:
+            # Default: include all skills
+            skills_summary = loader.build_skills_summary()
+
         if skills_summary:
             parts.append(
                 f"## Skills\n\nRead SKILL.md with read_file to use a skill.\n\n{skills_summary}"
             )
 
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _build_skills_xml(loader: SkillsLoader, skills: list[dict[str, str]]) -> str:
+        """Build XML-formatted skills summary for a filtered skill list."""
+        if not skills:
+            return ""
+
+        def escape_xml(s: str) -> str:
+            return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        lines = ["<skills>"]
+        for s in skills:
+            name = s["name"]
+            desc = escape_xml(loader._get_skill_description(name))
+            skill_meta = loader._get_skill_meta(name)
+            available = loader._check_requirements(skill_meta)
+
+            lines.append(f'  <skill available="{str(available).lower()}">')
+            lines.append(f"    <name>{escape_xml(name)}</name>")
+            lines.append(f"    <description>{desc}</description>")
+            lines.append(f"    <location>{s['path']}</location>")
+
+            if not available:
+                missing = loader._get_missing_requirements(skill_meta)
+                if missing:
+                    lines.append(f"    <requires>{escape_xml(missing)}</requires>")
+
+            lines.append("  </skill>")
+        lines.append("</skills>")
+        return "\n".join(lines)
 
     async def cancel_by_session(self, session_key: str) -> int:
         """Cancel all subagents for the given session. Returns count cancelled."""
