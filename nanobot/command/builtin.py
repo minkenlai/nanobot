@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import traceback
@@ -8,6 +9,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from nanobot.bus.events import OutboundMessage
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nanobot.command import CommandContext, CommandRouter
@@ -263,7 +266,18 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
     end_idx = max(0, len(session.messages) - n_keep)
     chunk = session.messages[session.last_consolidated : end_idx]
 
+    logger.info(
+        "cmd_compact: session=%s, total=%d, last_consolidated=%d, end_idx=%d, chunk_size=%d, n_keep=%d",
+        session.key,
+        len(session.messages),
+        session.last_consolidated,
+        end_idx,
+        len(chunk),
+        n_keep,
+    )
+
     if not chunk:
+        logger.info("cmd_compact: nothing to consolidate for session %s", session.key)
         return OutboundMessage(
             address=ctx.msg.address,
             content=f"Nothing to summarize (last {n_keep} messages already cover the current session).",
@@ -276,6 +290,12 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
     # Update the session pointer so these messages aren't processed again
     session.last_consolidated = end_idx
     loop.sessions.save(session)
+
+    logger.info(
+        "cmd_compact: consolidated %d messages for session %s",
+        len(chunk),
+        session.key,
+    )
 
     return OutboundMessage(
         address=ctx.msg.address,
