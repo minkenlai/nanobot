@@ -17,6 +17,8 @@ from typing import Any
 
 from pydantic.alias_generators import to_snake
 
+from nanobot.providers.base import ModelCapabilities
+
 
 @dataclass(frozen=True)
 class ProviderSpec:
@@ -382,3 +384,37 @@ def find_by_name(name: str) -> ProviderSpec | None:
         if spec.name == normalized:
             return spec
     return None
+
+
+# ---------------------------------------------------------------------------
+# Capability resolver
+# ---------------------------------------------------------------------------
+
+
+def get_capabilities(model_id: str) -> "ModelCapabilities":
+    """Resolve capabilities for *model_id* from the active configuration.
+
+    Normalization strips any provider prefix (``"openrouter/gpt-4o"`` → ``"gpt-4o"``)
+    before looking up the canonical key in ``config.capabilities``.
+
+    Returns ``ModelCapabilities(False, False, False)`` when the model is not
+    found in the map.
+    """
+    from nanobot.config.loader import load_config
+
+    # Strip provider prefix: "openrouter/gpt-4o" → "gpt-4o"
+    normalized = model_id.split("/", 1)[-1].lower()
+
+    config = load_config()
+    caps = config.capabilities
+
+    # Exact match
+    if normalized in caps:
+        return caps[normalized]
+
+    # Prefix match (longest wins): "gemma4-12b-it-qat" → "gemma4-12b"
+    best = max((key for key in caps if normalized.startswith(key)), key=len, default=None)
+    if best is not None:
+        return caps[best]
+
+    return ModelCapabilities()

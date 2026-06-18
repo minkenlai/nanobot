@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from pydantic import BaseModel
 
 
 @dataclass
@@ -59,6 +60,16 @@ class LLMResponse:
     def has_tool_calls(self) -> bool:
         """Check if response contains tool calls."""
         return len(self.tool_calls) > 0
+
+
+class ModelCapabilities(BaseModel):
+    """Capabilities a model natively supports."""
+
+    audio: bool = False
+    vision: bool = False
+    reasoning: bool = False
+
+    model_config = {"frozen": True}
 
 
 @dataclass(frozen=True)
@@ -450,3 +461,9 @@ class LLMClient(ABC):
     def get_default_model(self) -> str:
         """Get the default model for this provider."""
         pass
+
+    def get_model_capabilities(self, model: str) -> ModelCapabilities:
+        """Resolve the capabilities for *model* from the active config."""
+        from .registry import get_capabilities
+
+        return get_capabilities(model)

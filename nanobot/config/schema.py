@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
+from nanobot.providers.base import ModelCapabilities
+
 
 class Base(BaseModel):
     """Base model that accepts both camelCase and snake_case keys."""
@@ -226,6 +228,33 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+def get_default_capabilities() -> dict[str, ModelCapabilities]:
+    """Return the built-in capability map for well-known models.
+
+    Users can override or extend this map via ``config.json`` by setting
+    the top-level ``capabilities`` field.
+    """
+    return {
+        # Gemma 4 Family
+        "gemma4-e4b": ModelCapabilities(audio=True, vision=True),
+        "gemma4-e4b-udq8": ModelCapabilities(audio=True, vision=True),
+        "gemma4-e4b-bf16": ModelCapabilities(audio=True, vision=True),
+        "gemma4-12b": ModelCapabilities(audio=True, vision=True),
+        "gemma4-31b": ModelCapabilities(audio=False, vision=True),
+        "gemma4-26b": ModelCapabilities(audio=False, vision=True),
+        # Qwen Family
+        "qwen36-27b-mm": ModelCapabilities(audio=False, vision=True),
+        "qwen36-35b-udiq4": ModelCapabilities(audio=False, vision=True),
+        "qwen35-9b": ModelCapabilities(audio=False, vision=True),
+        "qwen35-9b-coder": ModelCapabilities(audio=False, vision=True),
+        # Cloud / General
+        "gpt-4o": ModelCapabilities(audio=True, vision=True),
+        "gpt-4o-mini": ModelCapabilities(audio=True, vision=True),
+        "claude-3-5-sonnet": ModelCapabilities(vision=True),
+        "deepseek-r1": ModelCapabilities(reasoning=True),
+    }
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -238,6 +267,10 @@ class Config(BaseSettings):
     repl: ReplConfig = Field(default_factory=ReplConfig)
     frugality: FrugalityConfig = Field(default_factory=FrugalityConfig)
     debug_llm: bool = False  # Log full responses and dump them to files in workspace/logs/llm_dumps
+    capabilities: dict[str, ModelCapabilities] = Field(
+        default_factory=get_default_capabilities,
+        description="Mapping of canonical model IDs to their native capabilities.",
+    )
 
     @property
     def workspace_path(self) -> Path:
