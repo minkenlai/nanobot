@@ -458,8 +458,12 @@ class TestMemoryConsolidationTypeHandling:
         content = store.history_file.read_text()
         assert "[RAW]" in content
         assert "10 messages" in content
-        assert "msg0" in content
         assert not store.memory_file.exists()
+
+        recovery_files = list(store.recovery_dir.glob("recovery_*.json"))
+        assert len(recovery_files) == 1
+        recovery_content = recovery_files[0].read_text()
+        assert "msg0" in recovery_content
 
     @pytest.mark.asyncio
     async def test_raw_archive_counter_resets_on_success(self, tmp_path: Path) -> None:

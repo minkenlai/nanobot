@@ -9,10 +9,15 @@ import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
+from uuid import uuid4
 
 from loguru import logger
 
-from nanobot.utils.helpers import ensure_dir, estimate_message_tokens, estimate_prompt_tokens_chain
+from nanobot.utils.helpers import (
+    ensure_dir,
+    estimate_message_tokens,
+    estimate_prompt_tokens_chain,
+)
 
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMClient
@@ -94,6 +99,7 @@ class MemoryStore:
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
         self.staging_file = self.memory_dir / "STAGING.md"
+        self.recovery_dir = ensure_dir(self.memory_dir / "recovery")
         self._consecutive_failures = 0
 
     def read_long_term(self) -> str:
@@ -116,13 +122,14 @@ class MemoryStore:
     def _format_messages(messages: list[dict]) -> str:
         lines = []
         for message in messages:
-            if not message.get("content"):
+            text = MemoryStore._extract_text(message)
+            if not text:
                 continue
             tools = (
                 f" [tools: {', '.join(message['tools_used'])}]" if message.get("tools_used") else ""
             )
             lines.append(
-                f"[{message.get('timestamp', '?')[:16]}] {message['role'].upper()}{tools}: {message['content']}"
+                f"[{message.get('timestamp', '?')[:16]}] {message['role'].upper()}{tools}: {text}"
             )
         return "\n".join(lines)
 
@@ -237,12 +244,22 @@ class MemoryStore:
         return True
 
     def _raw_archive(self, messages: list[dict]) -> None:
-        """Fallback: dump raw messages to HISTORY.md without LLM summarization."""
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-        self.append_history(
-            f"[{ts}] [RAW] {len(messages)} messages\n{self._format_messages(messages)}"
+        """Fallback: dump raw messages to a recovery sidecar file."""
+        ts = datetime.now()
+        file_ts = ts.strftime("%Y%H%M%S")
+        recovery_file = self.recovery_dir / f"recovery_{file_ts}_{uuid4().hex[:8]}.json"
+        recovery_file.write_text(
+            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        logger.warning("Memory consolidation degraded: raw-archived {} messages", len(messages))
+        logger.warning(
+            "Memory consolidation degraded: raw-archived %d messages to %s",
+            len(messages),
+            recovery_file.name,
+        )
+        hist_ts = ts.strftime("%Y-%m-%d %H:%M")
+        self.append_history(
+            f"[{hist_ts}] [RAW] {len(messages)} messages archived to recovery sidecar: {recovery_file.name}"
+        )
 
 
 class MemoryConsolidator:
