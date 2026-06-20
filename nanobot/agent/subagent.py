@@ -77,6 +77,9 @@ class SubagentManager:
         # Ordered registry: running tasks + last N completed/failed tasks
         self._task_registry: dict[str, TaskRecord] = {}
         self._completed_ids: deque[str] = deque(maxlen=_MAX_COMPLETED_RECORDS)
+        # Spawn gates: _pending for this iter, _queued for the next
+        self._pending_gates: dict[str, asyncio.Event] = {}
+        self._queued_gates: dict[str, asyncio.Event] = {}
 
     async def spawn(
         self,
@@ -103,6 +106,10 @@ class SubagentManager:
             started_at=datetime.now(timezone.utc),
         )
 
+        # Gate: subagent waits for main agent to finish at least one iteration
+        gate = asyncio.Event()
+        self._pending_gates[task_id] = gate
+
         bg_task = asyncio.create_task(
             self._run_subagent(
                 task_id,
@@ -112,6 +119,7 @@ class SubagentManager:
                 agent,
                 context_scope,
                 included_skills,
+                gate=gate,
             )
         )
         self._running_tasks[task_id] = bg_task
@@ -120,6 +128,8 @@ class SubagentManager:
 
         def _cleanup(_: asyncio.Task) -> None:
             self._running_tasks.pop(task_id, None)
+            self._pending_gates.pop(task_id, None)
+            self._queued_gates.pop(task_id, None)
             if session_key and (ids := self._session_tasks.get(session_key)):
                 ids.discard(task_id)
                 if not ids:
@@ -139,8 +149,12 @@ class SubagentManager:
         agent: str | None = None,
         context_scope: Literal["full", "technical", "minimal"] = "full",
         included_skills: list[str] | None = None,
+        gate: asyncio.Event | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
+        if gate:
+            await gate.wait()
+
         agent_name = agent or "defaults"
         if agent_name == "defaults":
             runner = self.runner
@@ -484,6 +498,15 @@ Tools like 'read_file' and 'web_fetch' can return native image content. Read vis
             await asyncio.gather(*tasks, return_exceptions=True)
         return len(tasks)
 
+    def release_all_gates(self) -> None:
+        """Release all pending and queued spawn gates (called on agent shutdown)."""
+        for event in self._pending_gates.values():
+            event.set()
+        for event in self._queued_gates.values():
+            event.set()
+        self._pending_gates.clear()
+        self._queued_gates.clear()
+
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""
         return len(self._running_tasks)
@@ -495,3 +518,19 @@ Tools like 'read_file' and 'web_fetch' can return native image content. Read vis
             key=lambda r: r.started_at,
             reverse=True,
         )
+
+    def release_pending_gates(self) -> int:
+        """Staged release of spawn gates to ensure 1-iteration lag.
+        Called by main loop after_iteration.
+        """
+        # 1. Release gates that were queued in the previous iteration
+        count = len(self._queued_gates)
+        for gate in self._queued_gates.values():
+            gate.set()
+        self._queued_gates.clear()
+
+        # 2. Move current pending gates to the queue for the next iteration
+        self._queued_gates.update(self._pending_gates)
+        self._pending_gates.clear()
+
+        return count

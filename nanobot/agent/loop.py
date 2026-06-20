@@ -415,6 +415,11 @@ class AgentLoop:
             ) -> str | None:
                 return loop_self._strip_think(content)
 
+            async def after_iteration(self, context: AgentHookContext) -> None:
+                # Release any subagent spawn gates so they can start
+                # after this iteration completes (avoids model swap thrash)
+                loop_self.subagents.release_pending_gates()
+
         # Use user-pinned agent provider if specified in msg metadata, otherwise default to main runner.
         if agent_runner:
             runner = agent_runner
@@ -600,6 +605,7 @@ class AgentLoop:
     def stop(self) -> None:
         """Stop the agent loop."""
         self._running = False
+        self.subagents.release_all_gates()
         logger.info("Agent loop stopping")
 
     async def _process_message(
