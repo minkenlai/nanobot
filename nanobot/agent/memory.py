@@ -14,6 +14,7 @@ from uuid import uuid4
 from loguru import logger
 
 from nanobot.utils.helpers import (
+    _extract_text,
     ensure_dir,
     estimate_message_tokens,
     estimate_prompt_tokens_chain,
@@ -122,7 +123,7 @@ class MemoryStore:
     def _format_messages(messages: list[dict]) -> str:
         lines = []
         for message in messages:
-            text = MemoryStore._extract_text(message)
+            text = _extract_text(message)
             if not text:
                 continue
             tools = (
