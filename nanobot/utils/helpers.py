@@ -46,6 +46,115 @@ def build_image_content_blocks(
     ]
 
 
+# ---------------------------------------------------------------------------
+# Audio content helpers (Task 2.1 — internal schema extension)
+# ---------------------------------------------------------------------------
+
+_AUDIO_MIME_TYPES = frozenset(
+    (
+        "audio/ogg",
+        "audio/mpeg",
+        "audio/wav",
+        "audio/flac",
+        "audio/mp4",
+        "audio/mp3",
+        "audio/x-m4a",
+        "audio/webm",
+        "audio/aac",
+    )
+)
+
+
+def build_audio_content_block(raw: bytes, mime: str, path: str = "") -> dict[str, Any]:
+    """Build an internal audio content block.
+
+    Schema (consistent with how ``image_url`` blocks are structured):
+
+    .. code-block:: python
+
+        {
+            "type": "audio",
+            "data": "data:<mime>;base64,<base64-payload>",
+            "mime_type": "<mime>",
+            "_meta": {"path": "<file_path>"},   # optional, stripped during sanitization
+        }
+
+    Args:
+        raw: Raw audio bytes (e.g. ogg, mp3, wav).
+        mime: MIME type (e.g. ``"audio/ogg"``).
+        path: Optional file-system path for debug / audit trails.
+
+    Returns:
+        A single content block dict suitable for inclusion in a message's
+        ``content`` list.
+    """
+    b64 = base64.b64encode(raw).decode()
+    block: dict[str, Any] = {
+        "type": "audio",
+        "data": f"data:{mime};base64,{b64}",
+        "mime_type": mime,
+    }
+    if path:
+        block["_meta"] = {"path": path}
+    return block
+
+
+def has_audio_content(messages: list[dict[str, Any]]) -> bool:
+    """Return ``True`` if any message in *messages* contains an audio block.
+
+    Used by the routing logic (Phase 4) to decide whether to target an
+    audio-capable model or fall back to the transcription pipeline.
+    """
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "audio":
+                    return True
+    return False
+
+
+def has_image_content(messages: list[dict[str, Any]]) -> bool:
+    """Return ``True`` if any message in *messages* contains an image block."""
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "image_url":
+                    return True
+    return False
+
+
+def has_multimodal_content(messages: list[dict[str, Any]]) -> bool:
+    """Return ``True`` if any message contains audio or image blocks."""
+    return has_image_content(messages) or has_audio_content(messages)
+
+
+def _extract_text(message: dict) -> str:
+    """Extract text content from a message, handling various content block types."""
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+                elif block.get("type") == "tool_result":
+                    content_val = block.get("content", "")
+                    if isinstance(content_val, list):
+                        for sub_block in content_val:
+                            if isinstance(sub_block, dict) and sub_block.get("type") == "text":
+                                parts.append(sub_block.get("text", ""))
+                    elif isinstance(content_val, str):
+                        parts.append(content_val)
+                elif block.get("type") == "tool_use":
+                    parts.append(f"[tool: {block.get('name', '?')}]")
+        return "\n".join(p for p in parts if p)
+    return str(content) if content else ""
+
+
 def ensure_dir(path: Path) -> Path:
     """Ensure directory exists, return it."""
     path.mkdir(parents=True, exist_ok=True)

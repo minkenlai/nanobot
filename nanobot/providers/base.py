@@ -277,6 +277,35 @@ class LLMClient(ABC):
                 result.append(msg)
         return result if found else None
 
+    @staticmethod
+    def _strip_audio_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+        """Replace audio blocks with text placeholder. Returns None if no audio found.
+
+        Mirrors ``_strip_image_content`` — used when a non-transient error
+        occurs and the target model may not support audio payloads.
+        """
+        found = False
+        result = []
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                new_content = []
+                for b in content:
+                    if isinstance(b, dict) and b.get("type") == "audio":
+                        path = (b.get("_meta") or {}).get("path", "")
+                        mime = b.get("mime_type", "audio/unknown")
+                        placeholder = (
+                            f"[audio: {path} ({mime})]" if path else f"[audio omitted ({mime})]"
+                        )
+                        new_content.append({"type": "text", "text": placeholder})
+                        found = True
+                    else:
+                        new_content.append(b)
+                result.append({**msg, "content": new_content})
+            else:
+                result.append(msg)
+        return result if found else None
+
     async def _safe_chat(self, **kwargs: Any) -> LLMResponse:
         """Call chat() and convert unexpected exceptions to error responses."""
         try:
@@ -383,6 +412,12 @@ class LLMClient(ABC):
                         "Non-transient LLM error with image content, retrying without images"
                     )
                     return await self._safe_chat_stream(**{**kw, "messages": stripped})
+                stripped_audio = self._strip_audio_content(messages)
+                if stripped_audio is not None:
+                    logger.warning(
+                        "Non-transient LLM error with audio content, retrying without audio"
+                    )
+                    return await self._safe_chat_stream(**{**kw, "messages": stripped_audio})
                 return response
 
             logger.warning(
@@ -444,6 +479,12 @@ class LLMClient(ABC):
                         "Non-transient LLM error with image content, retrying without images"
                     )
                     return await self._safe_chat(**{**kw, "messages": stripped})
+                stripped_audio = self._strip_audio_content(messages)
+                if stripped_audio is not None:
+                    logger.warning(
+                        "Non-transient LLM error with audio content, retrying without audio"
+                    )
+                    return await self._safe_chat(**{**kw, "messages": stripped_audio})
                 return response
 
             logger.warning(
