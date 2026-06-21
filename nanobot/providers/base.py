@@ -379,7 +379,13 @@ class LLMClient(ABC):
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
         prompt_tokens: int | None = None,
     ) -> LLMResponse:
-        """Call chat_stream() with retry on transient provider failures."""
+        """Call chat_stream() with retry on transient provider failures.
+
+        Call chain: chat_stream_with_retry() → _safe_chat_stream() → chat_stream()
+        The safe wrapper adds timeout and exception-to-response conversion.
+        Subclasses override chat_stream() (e.g. FallbackClient for context-exceeded fallback).
+        This method handles the retry loop for transient errors (rate limits, etc.).
+        """
         if max_tokens is self._SENTINEL:
             max_tokens = self.generation.max_tokens
         if temperature is self._SENTINEL:
@@ -444,6 +450,10 @@ class LLMClient(ABC):
     ) -> LLMResponse:
         """Call chat() with retry on transient provider failures.
 
+        Call chain: chat_with_retry() → _safe_chat() → chat()
+        The safe wrapper adds timeout and exception-to-response conversion.
+        Subclasses override chat() (e.g. FallbackClient for context-exceeded fallback).
+        This method handles the retry loop for transient errors (rate limits, etc.).
         Parameters default to ``self.generation`` when not explicitly passed,
         so callers no longer need to thread temperature / max_tokens /
         reasoning_effort through every layer.

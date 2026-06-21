@@ -367,5 +367,281 @@ async def test_stream_context_exceeded_preserves_active_index() -> None:
     assert providers[0].last_max_tokens == 4096
 
 
+# ------------------------------------------------------------------ #
+#  Full chain: chat_with_retry() → _safe_chat() → FallbackClient.chat()
+# ------------------------------------------------------------------ #
+
+
+@pytest.mark.asyncio
+async def test_chat_with_retry_success_through_fallback(monkeypatch) -> None:
+    """Basic success through full chain: retry wrapper → safe wrapper → fallback → slot."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    resp = await fallback.chat_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=2_000,
+    )
+
+    assert "Model-4000" in resp.content
+    assert resp.finish_reason == "stop"
+    assert providers[0].last_prompt_tokens == 2_000
+    assert delays == []  # No retries needed
+
+
+@pytest.mark.asyncio
+async def test_chat_with_retry_context_routing_through_fallback(monkeypatch) -> None:
+    """Context-aware slot selection through full chain."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    # 6k prompt should skip slot 0 (4k max) and land on slot 1 (8k max)
+    resp = await fallback.chat_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=6_000,
+    )
+
+    assert "Model-8000" in resp.content
+    assert providers[0].last_prompt_tokens is None
+    assert providers[1].last_prompt_tokens == 6_000
+    assert delays == []
+
+
+@pytest.mark.asyncio
+async def test_chat_with_retry_context_exceeded_fallback_through_chain(monkeypatch) -> None:
+    """Context-exceeded error in slot 0 → fallback to slot 1 → retry wrapper sees success."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    # Slot 0 raises context-exceeded; FallbackClient.chat() catches and tries slot 1
+    providers[0].raise_on_chat = "this prompt exceeds the max ctx length"
+    resp = await fallback.chat_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=3_000,
+    )
+
+    # FallbackClient handles the context error internally, slot 1 succeeds
+    assert "Model-8000" in resp.content
+    assert "context exceeded" in resp.content.lower()
+    assert resp.finish_reason == "stop"
+    assert delays == []  # No retries from retry wrapper (fallback client succeeded)
+    assert fallback._active_index == 0  # Request-scoped fallback
+
+
+@pytest.mark.asyncio
+async def test_chat_with_retry_rate_limit_then_succeeds_through_fallback(monkeypatch) -> None:
+    """Rate-limit error → retry wrapper retries → FallbackClient.chat() succeeds on retry."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+    call_count = 0
+
+    async def counting_chat(
+        messages,
+        tools=None,
+        model=None,
+        max_tokens=4096,
+        temperature=1.0,
+        reasoning_effort=None,
+        tool_choice=None,
+        prompt_tokens=None,
+    ) -> LLMResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return LLMResponse(
+                content="429 rate limit exceeded",
+                finish_reason="error",
+            )
+        return LLMResponse(
+            content=f"Response from {providers[0].name}",
+            tool_calls=[],
+            finish_reason="stop",
+            usage={"prompt_tokens": prompt_tokens or 0, "completion_tokens": 10},
+        )
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    providers[0].chat = counting_chat  # type: ignore[method-assign]
+
+    resp = await fallback.chat_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=2_000,
+    )
+
+    assert "Response from Model-4000" in resp.content
+    assert resp.finish_reason == "stop"
+    assert call_count == 2  # First call returns error, second succeeds
+    assert delays == [1]  # One retry with 1s delay
+
+
+@pytest.mark.asyncio
+async def test_chat_with_retry_rate_limit_then_context_exceeded_fallback(monkeypatch) -> None:
+    """Rate-limit on slot 0 → retry → context-exceeded on slot 0 → fallback to slot 1."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+    call_count = 0
+
+    async def complex_chat(
+        messages,
+        tools=None,
+        model=None,
+        max_tokens=4096,
+        temperature=1.0,
+        reasoning_effort=None,
+        tool_choice=None,
+        prompt_tokens=None,
+    ) -> LLMResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return LLMResponse(
+                content="429 rate limit exceeded",
+                finish_reason="error",
+            )
+        # On second call, raise context-exceeded (will be caught by FallbackClient)
+        raise Exception("this prompt exceeds the max ctx length")
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    providers[0].chat = complex_chat  # type: ignore[method-assign]
+
+    resp = await fallback.chat_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=3_000,
+    )
+
+    # First call: rate-limit error (transient) → retry wrapper retries
+    # Second call: context-exceeded exception → FallbackClient catches, tries slot 1
+    # Slot 1 succeeds
+    assert "Model-8000" in resp.content
+    assert "context exceeded" in resp.content.lower()
+    assert resp.finish_reason == "stop"
+    assert call_count == 2
+    assert delays == [1]  # One retry from retry wrapper
+
+
+@pytest.mark.asyncio
+async def test_chat_with_retry_all_slots_context_exceeded_propagates(monkeypatch) -> None:
+    """When all slots raise context-exceeded, error propagates through chain."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    # All slots raise context-exceeded
+    for p in providers:
+        p.raise_on_chat = "input too long"
+
+    resp = await fallback.chat_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=3_000,
+    )
+
+    # FallbackClient.chat() raises after exhausting all slots
+    # _safe_chat() converts to error response
+    # Retry wrapper sees non-transient error, returns immediately
+    assert resp.finish_reason == "error"
+    assert "input too long" in resp.content
+    assert delays == []  # No retries (non-transient error)
+
+
+# ------------------------------------------------------------------ #
+#  Full chain: chat_stream_with_retry() → _safe_chat_stream() → FallbackClient.chat_stream()
+# ------------------------------------------------------------------ #
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_with_retry_success_through_fallback(monkeypatch) -> None:
+    """Basic streaming success through full chain."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    resp = await fallback.chat_stream_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=2_000,
+    )
+
+    assert "Model-4000" in resp.content
+    assert resp.finish_reason == "stop"
+    assert providers[0].last_prompt_tokens == 2_000
+    assert delays == []
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_with_retry_context_exceeded_fallback_through_chain(monkeypatch) -> None:
+    """Context-exceeded in slot 0 → fallback to slot 1 → retry wrapper sees success (stream)."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    providers[0].raise_on_stream = "this prompt exceeds the max ctx length"
+    resp = await fallback.chat_stream_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=3_000,
+    )
+
+    assert "Model-8000" in resp.content
+    assert "context exceeded" in resp.content.lower()
+    assert resp.finish_reason == "stop"
+    assert delays == []
+    assert fallback._active_index == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_with_retry_context_routing_through_fallback(monkeypatch) -> None:
+    """Context-aware slot selection through full streaming chain."""
+    fallback, providers = _build_fallback()
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    resp = await fallback.chat_stream_with_retry(
+        messages=[{"role": "user", "content": "hello"}],
+        prompt_tokens=20_000,
+    )
+
+    assert "Model-32000" in resp.content
+    assert providers[0].last_prompt_tokens is None
+    assert providers[1].last_prompt_tokens is None
+    assert providers[2].last_prompt_tokens == 20_000
+    assert delays == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
