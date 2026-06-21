@@ -35,7 +35,7 @@ async def test_memory_store_aborts_on_length_limit(memory_store, mock_provider):
     result = await memory_store.consolidate(messages, mock_provider, "test-model")
 
     # Result should be False (it failed to consolidate)
-    assert result is False
+    assert result is None
     # Memory file should NOT have been updated
     assert memory_store.read_long_term() == "Initial Fact"
 
@@ -54,6 +54,6 @@ async def test_memory_store_handles_raw_string_args(memory_store, mock_provider)
         [{"role": "user", "content": "hi"}], mock_provider, "test-model"
     )
 
-    assert result is True
+    assert result is not None
     staging_content = memory_store.staging_file.read_text()
     assert "updated memory" in staging_content

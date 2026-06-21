@@ -34,8 +34,8 @@ def _make_loop():
 
 class TestCompactCommand:
     @pytest.mark.asyncio
-    async def test_compact_default_keeps_5(self):
-        """Default N=5 when no argument is provided."""
+    async def test_compact_default_keeps_0(self):
+        """Default N=0 when no argument is provided — compact everything."""
         from nanobot.command.builtin import cmd_compact
         from nanobot.command.router import CommandContext
 
@@ -56,17 +56,83 @@ class TestCompactCommand:
             msg=msg, session=session, key=msg.session_key, raw="/compact", loop=loop
         )
 
-        loop.memory_consolidator.archive_messages = AsyncMock()
+        loop.memory_consolidator.archive_messages = AsyncMock(
+            return_value="Summary of the conversation"
+        )
 
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
-        assert "5" in out.content
+        assert "all history" in out.content
 
-        # Verify 15 messages were archived (20 - 5 = 15)
+        # All 20 messages should be archived
         loop.memory_consolidator.archive_messages.assert_called_once()
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
-        assert len(archived) == 15
-        assert session.last_consolidated == 15
+        assert len(archived) == 20
+        # Summary injected as assistant message, last_consolidated past it
+        assert session.last_consolidated == 21
+
+    @pytest.mark.asyncio
+    async def test_compact_injects_summary_message(self):
+        """The summary is injected as an assistant message in the session."""
+        from nanobot.command.builtin import cmd_compact
+        from nanobot.command.router import CommandContext
+
+        loop, _bus = _make_loop()
+        session = Session(key="test-session")
+        session.add_message("user", "hello")
+        session.last_consolidated = 0
+
+        loop.sessions.get_or_create.return_value = session
+
+        msg = InboundMessage(
+            address=Address(channel="cli", segments=("direct",)),
+            sender_id="user",
+            content="/compact",
+        )
+        ctx = CommandContext(
+            msg=msg, session=session, key=msg.session_key, raw="/compact", loop=loop
+        )
+
+        summary_text = "Summary: discussed hello"
+        loop.memory_consolidator.archive_messages = AsyncMock(return_value=summary_text)
+
+        await cmd_compact(ctx)
+
+        # Session should have the original message + the summary
+        assert len(session.messages) == 2
+        summary_msg = session.messages[1]
+        assert summary_msg["role"] == "assistant"
+        assert summary_msg["content"] == summary_text
+
+    @pytest.mark.asyncio
+    async def test_compact_no_summary_does_not_inject(self):
+        """If archive_messages returns None, no summary is injected."""
+        from nanobot.command.builtin import cmd_compact
+        from nanobot.command.router import CommandContext
+
+        loop, _bus = _make_loop()
+        session = Session(key="test-session")
+        session.add_message("user", "hello")
+        session.last_consolidated = 0
+
+        loop.sessions.get_or_create.return_value = session
+
+        msg = InboundMessage(
+            address=Address(channel="cli", segments=("direct",)),
+            sender_id="user",
+            content="/compact",
+        )
+        ctx = CommandContext(
+            msg=msg, session=session, key=msg.session_key, raw="/compact", loop=loop
+        )
+
+        loop.memory_consolidator.archive_messages = AsyncMock(return_value=None)
+
+        await cmd_compact(ctx)
+
+        # Only the original message remains, no summary injected
+        assert len(session.messages) == 1
+        assert session.last_consolidated == 1
 
     @pytest.mark.asyncio
     async def test_compact_positive_n(self):
@@ -91,7 +157,9 @@ class TestCompactCommand:
             msg=msg, session=session, key=msg.session_key, raw="/compact 10", loop=loop
         )
 
-        loop.memory_consolidator.archive_messages = AsyncMock()
+        loop.memory_consolidator.archive_messages = AsyncMock(
+            return_value="Summary of the conversation"
+        )
 
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
@@ -99,7 +167,7 @@ class TestCompactCommand:
 
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
         assert len(archived) == 10  # 20 - 10 = 10
-        assert session.last_consolidated == 10
+        assert session.last_consolidated == 11  # 10 + 1 for summary
 
     @pytest.mark.asyncio
     async def test_compact_negative_n_uses_absolute(self):
@@ -124,7 +192,9 @@ class TestCompactCommand:
             msg=msg, session=session, key=msg.session_key, raw="/compact -10", loop=loop
         )
 
-        loop.memory_consolidator.archive_messages = AsyncMock()
+        loop.memory_consolidator.archive_messages = AsyncMock(
+            return_value="Summary of the conversation"
+        )
 
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
@@ -132,7 +202,7 @@ class TestCompactCommand:
 
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
         assert len(archived) == 10  # Same as positive 10
-        assert session.last_consolidated == 10
+        assert session.last_consolidated == 11
 
     @pytest.mark.asyncio
     async def test_compact_nothing_to_summarize(self):
@@ -144,17 +214,17 @@ class TestCompactCommand:
         session = Session(key="test-session")
         for i in range(3):
             session.add_message("user", f"msg{i}")
-        session.last_consolidated = 0
+        session.last_consolidated = 3  # Already fully compacted
 
         loop.sessions.get_or_create.return_value = session
 
         msg = InboundMessage(
             address=Address(channel="cli", segments=("direct",)),
             sender_id="user",
-            content="/compact 5",
+            content="/compact",
         )
         ctx = CommandContext(
-            msg=msg, session=session, key=msg.session_key, raw="/compact 5", loop=loop
+            msg=msg, session=session, key=msg.session_key, raw="/compact", loop=loop
         )
 
         loop.memory_consolidator.archive_messages = AsyncMock()
@@ -166,7 +236,7 @@ class TestCompactCommand:
 
     @pytest.mark.asyncio
     async def test_compact_invalid_n_falls_back_to_default(self):
-        """Invalid N argument falls back to default of 5."""
+        """Invalid N argument falls back to default of 0 (compact all)."""
         from nanobot.command.builtin import cmd_compact
         from nanobot.command.router import CommandContext
 
@@ -187,15 +257,17 @@ class TestCompactCommand:
             msg=msg, session=session, key=msg.session_key, raw="/compact abc", loop=loop
         )
 
-        loop.memory_consolidator.archive_messages = AsyncMock()
+        loop.memory_consolidator.archive_messages = AsyncMock(
+            return_value="Summary of the conversation"
+        )
 
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
-        assert "5" in out.content
+        assert "all history" in out.content
 
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
-        assert len(archived) == 15  # 20 - 5 = 15 (default)
-        assert session.last_consolidated == 15
+        assert len(archived) == 20  # all 20 (default 0)
+        assert session.last_consolidated == 21
 
     @pytest.mark.asyncio
     async def test_compact_respects_last_consolidated(self):
@@ -220,11 +292,13 @@ class TestCompactCommand:
             msg=msg, session=session, key=msg.session_key, raw="/compact 5", loop=loop
         )
 
-        loop.memory_consolidator.archive_messages = AsyncMock()
+        loop.memory_consolidator.archive_messages = AsyncMock(
+            return_value="Summary of the conversation"
+        )
 
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
 
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
         assert len(archived) == 5  # 20 - 5 = 15, then 15 - 10 = 5
-        assert session.last_consolidated == 15
+        assert session.last_consolidated == 16  # 15 + 1 for summary

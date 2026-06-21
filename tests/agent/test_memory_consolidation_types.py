@@ -75,7 +75,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is True
+        assert result is not None
         assert store.history_file.exists()
         assert "[2026-01-01] User discussed testing." in store.history_file.read_text()
         assert "User likes testing." in store.staging_file.read_text()
@@ -96,7 +96,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is True
+        assert result is not None
         assert store.history_file.exists()
         history_content = store.history_file.read_text()
         parsed = json.loads(history_content.strip())
@@ -132,7 +132,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is True
+        assert result is not None
         assert "User discussed testing." in store.history_file.read_text()
 
     @pytest.mark.asyncio
@@ -148,7 +148,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is False
+        assert result is None
         assert not store.history_file.exists()
 
     @pytest.mark.asyncio
@@ -161,7 +161,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is True
+        assert result is None  # empty chunk → no summary
         provider.chat.assert_not_called()
 
     @pytest.mark.asyncio
@@ -191,7 +191,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is True
+        assert result is not None
         assert "User discussed testing." in store.history_file.read_text()
         assert "User likes testing." in store.staging_file.read_text()
 
@@ -217,7 +217,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is False
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_list_arguments_non_dict_content_returns_false(self, tmp_path: Path) -> None:
@@ -241,7 +241,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is False
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_missing_history_entry_returns_false_without_writing(
@@ -266,7 +266,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is False
+        assert result is None
         assert not store.history_file.exists()
         assert not store.memory_file.exists()
 
@@ -293,7 +293,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is False
+        assert result is None
         assert not store.history_file.exists()
         assert not store.memory_file.exists()
 
@@ -312,7 +312,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is False
+        assert result is None
         assert not store.history_file.exists()
         assert not store.memory_file.exists()
 
@@ -331,7 +331,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is False
+        assert result is None
         assert not store.history_file.exists()
         assert not store.memory_file.exists()
 
@@ -357,7 +357,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is True
+        assert result is not None
         assert provider.calls == 2
         assert delays == [1]
 
@@ -376,7 +376,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is True
+        assert result is not None
         provider.chat_with_retry.assert_awaited_once()
         _, kwargs = provider.chat_with_retry.await_args
         assert kwargs["model"] == "test-model"
@@ -411,7 +411,7 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is True
+        assert result is not None
         assert len(call_log) == 2
         assert isinstance(call_log[0]["tool_choice"], dict)
         assert call_log[1]["tool_choice"] == "auto"
@@ -438,21 +438,21 @@ class TestMemoryConsolidationTypeHandling:
 
         result = await store.consolidate(messages, provider, "test-model")
 
-        assert result is False
+        assert result is None
         assert not store.history_file.exists()
 
     @pytest.mark.asyncio
     async def test_raw_archive_after_consecutive_failures(self, tmp_path: Path) -> None:
-        """After 3 consecutive failures, raw-archive messages and return True."""
+        """After 3 consecutive failures, raw-archive messages and return None."""
         store = MemoryStore(tmp_path)
         no_tool = LLMResponse(content="No tool call.", finish_reason="stop", tool_calls=[])
         provider = AsyncMock()
         provider.chat_with_retry = AsyncMock(return_value=no_tool)
         messages = _make_messages(message_count=10)
 
-        assert await store.consolidate(messages, provider, "m") is False
-        assert await store.consolidate(messages, provider, "m") is False
-        assert await store.consolidate(messages, provider, "m") is True
+        assert await store.consolidate(messages, provider, "m") is None
+        assert await store.consolidate(messages, provider, "m") is None
+        assert await store.consolidate(messages, provider, "m") is None
 
         assert store.history_file.exists()
         content = store.history_file.read_text()
@@ -478,14 +478,14 @@ class TestMemoryConsolidationTypeHandling:
 
         provider = AsyncMock()
         provider.chat_with_retry = AsyncMock(return_value=no_tool)
-        assert await store.consolidate(messages, provider, "m") is False
-        assert await store.consolidate(messages, provider, "m") is False
+        assert await store.consolidate(messages, provider, "m") is None
+        assert await store.consolidate(messages, provider, "m") is None
         assert store._consecutive_failures == 2
 
         provider.chat_with_retry = AsyncMock(return_value=ok_resp)
-        assert await store.consolidate(messages, provider, "m") is True
+        assert await store.consolidate(messages, provider, "m") is not None
         assert store._consecutive_failures == 0
 
         provider.chat_with_retry = AsyncMock(return_value=no_tool)
-        assert await store.consolidate(messages, provider, "m") is False
+        assert await store.consolidate(messages, provider, "m") is None
         assert store._consecutive_failures == 1

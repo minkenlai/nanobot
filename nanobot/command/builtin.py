@@ -21,7 +21,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     msg = ctx.msg
     content = "**Available Commands:**\n"
     content += "- `/new`: Start a fresh conversation (clears context)\n"
-    content += "- `/compact [N]`: Consolidate history, keeping last N messages\n"
+    content += "- `/compact [N]`: Consolidate history, keeping last N messages (default all)\n"
     content += "- `/help`: Show this help\n"
     content += "- `/status`: Show system status and version\n"
     content += "- `/tasks`: List current and recent background tasks\n"
@@ -247,13 +247,16 @@ async def cmd_halt(ctx: CommandContext) -> OutboundMessage:
 
 async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
     """Manually consolidate session history, keeping the last N messages.
-    Usage: `/compact [N]`
+    Default N=0 means summarize ALL messages.
+
+    The summary is injected as a new assistant message so the conversation
+    can continue from the compacted state.
     """
     loop = ctx.loop
     session = ctx.session or loop.sessions.get_or_create(ctx.key)
 
-    # Parse N from raw input
-    n_keep = 5
+    # Parse N from raw input (default 0 = compact everything)
+    n_keep = 0
     parts = (ctx.raw or "").split()
     if len(parts) > 1:
         try:
@@ -262,7 +265,6 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
             pass
 
     # Calculate boundary: keep the last N messages
-    # We consolidate everything from the last checkpoint up to the keep-limit
     end_idx = max(0, len(session.messages) - n_keep)
     chunk = session.messages[session.last_consolidated : end_idx]
 
@@ -280,15 +282,26 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
         logger.info("cmd_compact: nothing to consolidate for session %s", session.key)
         return OutboundMessage(
             address=ctx.msg.address,
-            content=f"Nothing to summarize (last {n_keep} messages already cover the current session).",
+            content="Nothing to summarize (session is already fully compacted).",
         )
 
     # Use the existing consolidation pipeline
-    # archive_messages ensures the chunk is summarized and stored in MEMORY/HISTORY
-    await loop.memory_consolidator.archive_messages(chunk)
+    summary = await loop.memory_consolidator.archive_messages(chunk)
 
     # Update the session pointer so these messages aren't processed again
     session.last_consolidated = end_idx
+
+    # Inject the summary as a new assistant message so conversation continues from it
+    if summary:
+        session.messages.append(
+            {
+                "role": "assistant",
+                "content": summary,
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        session.last_consolidated += 1
+
     loop.sessions.save(session)
 
     logger.info(
@@ -297,9 +310,14 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
         session.key,
     )
 
+    if n_keep > 0:
+        reply = f"✅ Consolidated history, keeping last {n_keep} messages."
+    else:
+        reply = "✅ Consolidated all history."
+
     return OutboundMessage(
         address=ctx.msg.address,
-        content=f"✅ Consolidated history up to the last {n_keep} messages.",
+        content=reply,
     )
 
 

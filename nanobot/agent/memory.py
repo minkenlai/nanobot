@@ -139,10 +139,13 @@ class MemoryStore:
         messages: list[dict],
         provider: LLMClient,
         model: str,
-    ) -> bool:
-        """Consolidate the provided message chunk into MEMORY.md + HISTORY.md."""
+    ) -> str | None:
+        """Consolidate the provided message chunk into MEMORY.md + HISTORY.md.
+
+        Returns the history_entry summary on success, or None on failure.
+        """
         if not messages:
-            return True
+            return None
 
         current_memory = self.read_long_term()
         prompt = f"""Process this conversation and call the save_memory tool with your consolidation.
@@ -186,22 +189,26 @@ class MemoryStore:
                     "Aborting to avoid corrupting memory files.",
                     provider.generation.max_tokens,
                 )
-                return self._fail_or_raw_archive(messages)
+                self._fail_or_raw_archive(messages)
+                return None
 
             if not response.has_tool_calls:
                 # Last ditch effort: try to parse the content as a tool-call arguments string
                 if response.content:
                     args = _normalize_save_memory_args(response.content)
                     if not args:
-                        return self._fail_or_raw_archive(messages)
+                        self._fail_or_raw_archive(messages)
+                        return None
                 else:
-                    return self._fail_or_raw_archive(messages)
+                    self._fail_or_raw_archive(messages)
+                    return None
             else:
                 args = _normalize_save_memory_args(response.tool_calls[0].arguments)
 
             if args is None:
                 logger.warning("Memory consolidation: unexpected save_memory arguments")
-                return self._fail_or_raw_archive(messages)
+                self._fail_or_raw_archive(messages)
+                return None
 
             if (
                 "history_entry" not in args
@@ -210,14 +217,16 @@ class MemoryStore:
                 or args["memory_update"] is None
             ):
                 logger.warning("Memory consolidation: save_memory payload missing required fields")
-                return self._fail_or_raw_archive(messages)
+                self._fail_or_raw_archive(messages)
+                return None
 
             entry = _ensure_text(args["history_entry"]).strip()
             update = _ensure_text(args["memory_update"])
 
             if not entry:
                 logger.warning("Memory consolidation: history_entry is empty")
-                return self._fail_or_raw_archive(messages)
+                self._fail_or_raw_archive(messages)
+                return None
 
             self.append_history(entry)
             if update != current_memory:
@@ -230,10 +239,11 @@ class MemoryStore:
 
             self._consecutive_failures = 0
             logger.info("Memory consolidation done for {} messages", len(messages))
-            return True
+            return entry
         except Exception:
             logger.exception("Memory consolidation failed")
-            return self._fail_or_raw_archive(messages)
+            self._fail_or_raw_archive(messages)
+            return None
 
     def _fail_or_raw_archive(self, messages: list[dict]) -> bool:
         """Increment failure count; after threshold, raw-archive messages and return True."""
@@ -304,8 +314,11 @@ class MemoryConsolidator:
         """Return the shared consolidation lock for one session."""
         return self._locks.setdefault(session_key, asyncio.Lock())
 
-    async def consolidate_messages(self, messages: list[dict[str, object]]) -> bool:
-        """Archive a selected message chunk into persistent memory."""
+    async def consolidate_messages(self, messages: list[dict[str, object]]) -> str | None:
+        """Archive a selected message chunk into persistent memory.
+
+        Returns the history_entry summary on success, or None on failure.
+        """
         return await self.store.consolidate(messages, self.provider, self.model)
 
     def pick_consolidation_boundary(
@@ -354,14 +367,18 @@ class MemoryConsolidator:
             self._get_tool_definitions(),
         )
 
-    async def archive_messages(self, messages: list[dict[str, object]]) -> bool:
-        """Archive messages with guaranteed persistence (retries until raw-dump fallback)."""
+    async def archive_messages(self, messages: list[dict[str, object]]) -> str | None:
+        """Archive messages with guaranteed persistence (retries until raw-dump fallback).
+
+        Returns the history_entry summary on success, or None on failure.
+        """
         if not messages:
-            return True
+            return None
         for _ in range(self.store._MAX_FAILURES_BEFORE_RAW_ARCHIVE):
-            if await self.consolidate_messages(messages):
-                return True
-        return True
+            result = await self.consolidate_messages(messages)
+            if result is not None:
+                return result
+        return None
 
     async def maybe_consolidate_by_tokens(
         self, session: Session, context_window_tokens: int

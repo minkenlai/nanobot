@@ -526,10 +526,10 @@ class TestNewCommandArchival:
 
         call_count = 0
 
-        async def _failing_consolidate(_messages) -> bool:
+        async def _failing_consolidate(_messages) -> None:
             nonlocal call_count
             call_count += 1
-            return False
+            return None
 
         loop.memory_consolidator.consolidate_messages = _failing_consolidate  # type: ignore[method-assign]
 
