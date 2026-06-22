@@ -16,6 +16,75 @@ if TYPE_CHECKING:
     from nanobot.command import CommandContext, CommandRouter
 
 
+async def cmd_fallback(ctx: CommandContext) -> OutboundMessage:
+    """Set or inspect the fallback provider slot index.
+
+    Usage: /fallback [n]
+    - No argument: show current provider chain and active slot.
+    - With argument: set the active slot to index n.
+    """
+    from nanobot.providers.fallback import FallbackClient
+
+    if ctx.loop is None:
+        return OutboundMessage(
+            address=ctx.msg.address,
+            content="Error: agent loop not available.",
+        )
+
+    pinned_profile = ctx.msg.metadata.get("agent_profile")
+    if pinned_profile:
+        provider = ctx.loop.registry.get_provider(pinned_profile)
+    else:
+        provider = ctx.loop.provider
+
+    if not isinstance(provider, FallbackClient):
+        return OutboundMessage(
+            address=ctx.msg.address,
+            content="Current provider is not a FallbackClient.",
+        )
+
+    args = ctx.args.strip()
+    if not args:
+        # Show current status
+        idx = provider._active_index
+        slot = provider._slots[idx]
+        lines = [
+            f"Provider: {slot[2]}",
+            f"Active slot: {idx}",
+            "All slots:",
+        ]
+        for i, s in enumerate(provider._slots):
+            marker = " <--" if i == idx else ""
+            lines.append(f"  [{i}] {s[2]} ({s[1]}){marker}")
+        return OutboundMessage(
+            address=ctx.msg.address,
+            content="\n".join(lines),
+        )
+
+    # Parse and set new index
+    try:
+        n = int(args)
+    except ValueError:
+        return OutboundMessage(
+            address=ctx.msg.address,
+            content=f"Error: expected integer, got '{args}'",
+        )
+
+    total = len(provider._slots)
+    if n < 0 or n >= total:
+        return OutboundMessage(
+            address=ctx.msg.address,
+            content=f"Error: slot index must be 0-{total - 1}, got {n}",
+        )
+
+    provider._active_index = n
+    slot = provider._slots[n]
+    return OutboundMessage(
+        address=ctx.msg.address,
+        content=f"Set provider to slot [{n}] {slot[2]} ({slot[1]})",
+    )
+
+
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Show help for builtin commands."""
     msg = ctx.msg
@@ -24,6 +93,7 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     content += "- `/compact [N]`: Consolidate history, keeping last N messages (default all)\n"
     content += "- `/help`: Show this help\n"
     content += "- `/status`: Show system status and version\n"
+    content += "- `/fallback [n]`: Inspect or set the fallback provider slot index\n"
     content += "- `/tasks`: List current and recent background tasks\n"
     content += "- `/usage`: Show token usage for the current session\n"
     content += "- `/stop`: Cancel all active tasks in this session\n"
@@ -446,6 +516,7 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/compact", cmd_compact)
     router.exact("/help", cmd_help)
     router.exact("/status", cmd_status)
+    router.exact("/fallback", cmd_fallback)
     router.priority("/stop", cmd_stop)
     router.priority("/repl", cmd_repl)
     router.priority("/restart", cmd_restart)

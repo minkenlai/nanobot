@@ -217,6 +217,7 @@ class TelegramChannel(BaseChannel):
         BotCommand("help", "Show available commands"),
         BotCommand("restart", "Refresh code in-place"),
         BotCommand("status", "Show system status and usage"),
+        BotCommand("fallback", "Inspect or set provider fallback slot"),
     ]
 
     @classmethod
@@ -320,6 +321,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("halt", self._forward_command))
         self._app.add_handler(CommandHandler("RIP", self._forward_command))
         self._app.add_handler(CommandHandler("help", self._forward_command))
+        self._app.add_handler(CommandHandler("fallback", self._forward_command))
 
         # Add message handler for text, photos, voice, documents
         self._app.add_handler(
