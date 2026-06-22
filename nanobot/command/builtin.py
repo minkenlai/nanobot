@@ -288,19 +288,19 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
     # Use the existing consolidation pipeline
     summary = await loop.memory_consolidator.archive_messages(chunk)
 
-    # Update the session pointer so these messages aren't processed again
-    session.last_consolidated = end_idx
-
-    # Inject the summary as a new assistant message so conversation continues from it
+    # Inject the summary as a prefix to the 'kept' messages and advance the pointer
     if summary:
-        session.messages.append(
-            {
-                "role": "assistant",
-                "content": summary,
-                "timestamp": datetime.now().isoformat(),
-            }
-        )
-        session.last_consolidated += 1
+        summary_msg = {
+            "role": "assistant",
+            "content": summary,
+            "timestamp": datetime.now().isoformat(),
+        }
+        session.messages.insert(end_idx, summary_msg)
+        # Set pointer to end_idx so the summary is the first message seen by get_history()
+        session.last_consolidated = end_idx
+    else:
+        # Even if no summary is generated, we mark the chunk as consolidated
+        session.last_consolidated = end_idx
 
     loop.sessions.save(session)
 
@@ -314,6 +314,9 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
         reply = f"✅ Consolidated history, keeping last {n_keep} messages."
     else:
         reply = "✅ Consolidated all history."
+
+    if summary:
+        reply += f"\n\n---\n\n{summary}"
 
     return OutboundMessage(
         address=ctx.msg.address,

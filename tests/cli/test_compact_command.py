@@ -63,13 +63,14 @@ class TestCompactCommand:
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
         assert "all history" in out.content
+        assert "Summary of the conversation" in out.content
 
         # All 20 messages should be archived
         loop.memory_consolidator.archive_messages.assert_called_once()
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
         assert len(archived) == 20
-        # Summary injected as assistant message, last_consolidated past it
-        assert session.last_consolidated == 21
+        # Summary injected at end_idx, last_consolidated = end_idx so summary is visible in history
+        assert session.last_consolidated == 20
 
     @pytest.mark.asyncio
     async def test_compact_injects_summary_message(self):
@@ -164,10 +165,11 @@ class TestCompactCommand:
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
         assert "10" in out.content
+        assert "Summary of the conversation" in out.content
 
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
         assert len(archived) == 10  # 20 - 10 = 10
-        assert session.last_consolidated == 11  # 10 + 1 for summary
+        assert session.last_consolidated == 10  # end_idx = 20 - 10, summary visible in history
 
     @pytest.mark.asyncio
     async def test_compact_negative_n_uses_absolute(self):
@@ -199,10 +201,11 @@ class TestCompactCommand:
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
         assert "10" in out.content
+        assert "Summary of the conversation" in out.content
 
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
         assert len(archived) == 10  # Same as positive 10
-        assert session.last_consolidated == 11
+        assert session.last_consolidated == 10
 
     @pytest.mark.asyncio
     async def test_compact_nothing_to_summarize(self):
@@ -264,10 +267,11 @@ class TestCompactCommand:
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
         assert "all history" in out.content
+        assert "Summary of the conversation" in out.content
 
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
         assert len(archived) == 20  # all 20 (default 0)
-        assert session.last_consolidated == 21
+        assert session.last_consolidated == 20
 
     @pytest.mark.asyncio
     async def test_compact_respects_last_consolidated(self):
@@ -298,7 +302,8 @@ class TestCompactCommand:
 
         out = await cmd_compact(ctx)
         assert isinstance(out, OutboundMessage)
+        assert "Summary of the conversation" in out.content
 
         archived = loop.memory_consolidator.archive_messages.call_args[0][0]
         assert len(archived) == 5  # 20 - 5 = 15, then 15 - 10 = 5
-        assert session.last_consolidated == 16  # 15 + 1 for summary
+        assert session.last_consolidated == 15  # end_idx = 20 - 5, summary visible in history
