@@ -78,7 +78,7 @@ Backend implementations include: `AnthropicClient`, `OpenAICompatClient`, `Azure
 - Blocks dangerous patterns (rm -rf, dd, format, shutdown, fork bombs).
 - Detects internal/private URLs via DNS resolution before execution.
 - When `restrictToWorkspace` is enabled, extracts absolute paths from commands and blocks paths outside the working directory.
-- **Slash command whitelist:** Known slash commands (`/new`, `/restart`, `/RIP`, etc.) are filtered from path extraction to prevent false-positive workspace guard blocks (e.g., `echo "/new"` must not be mistaken for accessing `/new` filesystem path).
+- **Slash command whitelist:** Known slash commands (`/new`, `/restart`, etc.) are filtered from path extraction to prevent false-positive workspace guard blocks (e.g., `echo "/new"` must not be mistaken for accessing `/new` filesystem path).
 
 ### Subagent System
 

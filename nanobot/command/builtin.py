@@ -101,7 +101,6 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     content += "- `/restart`: Refresh code in-place (preserves PID)\n"
     content += "- `/restart --full`: Graceful full reboot (requires systemd)\n"
     content += "- `/halt`: Stop the gateway process (Manual mode only)\n"
-    content += "- `/RIP`: Witty alias for `/halt`\n"
     return OutboundMessage(address=msg.address, content=content)
 
 
@@ -521,4 +520,3 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/repl", cmd_repl)
     router.priority("/restart", cmd_restart)
     router.priority("/halt", cmd_halt)
-    router.priority("/RIP", cmd_halt)

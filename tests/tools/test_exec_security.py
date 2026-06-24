@@ -105,9 +105,9 @@ def test_slash_command_restart_in_command(restricted_tool):
     assert result is None
 
 
-def test_slash_command_rip_in_command(restricted_tool):
-    """Bare '/RIP' should pass through (case-sensitive)."""
-    result = restricted_tool._guard_command('echo "/RIP"', "/home/nanobot/.nanobot/workspace")
+def test_slash_command_halt_in_command(restricted_tool):
+    """Bare '/halt' should pass through (case-sensitive)."""
+    result = restricted_tool._guard_command('echo "/halt"', "/home/nanobot/.nanobot/workspace")
     assert result is None
 
 

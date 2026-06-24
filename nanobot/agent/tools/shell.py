@@ -50,7 +50,6 @@ class ExecTool(Tool):
                 "/repl",
                 "/restart",
                 "/halt",
-                "/RIP",
             }
         )
 
