@@ -55,6 +55,7 @@ class LLMResponse:
     usage: dict[str, int] = field(default_factory=dict)
     reasoning_content: str | None = None  # Kimi, DeepSeek-R1 etc.
     thinking_blocks: list[dict] | None = None  # Anthropic extended thinking
+    model_used: str | None = None  # The actual model ID returned by the provider
 
     @property
     def has_tool_calls(self) -> bool:

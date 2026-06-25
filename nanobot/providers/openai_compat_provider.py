@@ -433,12 +433,19 @@ class OpenAICompatClient(LLMClient):
             provider._dump_debug_data("chat_response", response)
 
         response_map = cls._maybe_mapping(response)
+        model_used = None
         if response_map is not None:
+            model_used = response_map.get("model")
             logger.debug(
-                "Parsing OpenAI-compat response. Keys: {}. Usage: {}",
+                "Parsing OpenAI-compat response. Keys: {}. Usage: {}. Model: {}",
                 list(response_map.keys()),
                 response_map.get("usage"),
+                model_used,
             )
+        else:
+            model_used = getattr(response, "model", None)
+
+        if response_map is not None:
             choices = response_map.get("choices") or []
             if not choices:
                 content = cls._extract_text_content(
@@ -449,9 +456,12 @@ class OpenAICompatClient(LLMClient):
                         content=content,
                         finish_reason=str(response_map.get("finish_reason") or "stop"),
                         usage=cls._extract_usage(response_map),
+                        model_used=model_used,
                     )
                 return LLMResponse(
-                    content="Error: API returned empty choices.", finish_reason="error"
+                    content="Error: API returned empty choices.",
+                    finish_reason="error",
+                    model_used=model_used,
                 )
 
             choice0 = cls._maybe_mapping(choices[0]) or {}
@@ -505,13 +515,20 @@ class OpenAICompatClient(LLMClient):
                 finish_reason=finish_reason,
                 usage=cls._extract_usage(response_map),
                 reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
+                model_used=model_used,
             )
 
         logger.debug(
-            "Parsing OpenAI SDK object response. Usage: {}", getattr(response, "usage", None)
+            "Parsing OpenAI SDK object response. Usage: {}. Model: {}",
+            getattr(response, "usage", None),
+            model_used,
         )
         if not response.choices:
-            return LLMResponse(content="Error: API returned empty choices.", finish_reason="error")
+            return LLMResponse(
+                content="Error: API returned empty choices.",
+                finish_reason="error",
+                model_used=model_used,
+            )
 
         choice = response.choices[0]
         msg = choice.message
@@ -557,6 +574,7 @@ class OpenAICompatClient(LLMClient):
             finish_reason=finish_reason or "stop",
             usage=cls._extract_usage(response),
             reasoning_content=getattr(msg, "reasoning_content", None) or None,
+            model_used=model_used,
         )
 
     @classmethod
