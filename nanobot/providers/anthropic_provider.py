@@ -404,6 +404,7 @@ class AnthropicClient(LLMClient):
             finish_reason=finish_reason,
             usage=usage,
             thinking_blocks=thinking_blocks or None,
+            model_used=response.model,
         )
 
     # ------------------------------------------------------------------

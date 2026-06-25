@@ -356,6 +356,7 @@ class GeminiNativeClient(LLMClient):
             tool_calls=tool_calls,
             finish_reason=candidate.get("finishReason", "STOP").lower(),
             usage=self._extract_usage(data),
+            model_used=data.get("model") or data.get("modelId"),
         )
 
     def _extract_usage(self, data: dict[str, Any]) -> dict[str, int]:
