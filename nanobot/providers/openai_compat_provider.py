@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import os
 import secrets
 import string
@@ -713,7 +712,9 @@ class OpenAICompatClient(LLMClient):
             reasoning_effort,
             tool_choice,
         )
-        logger.debug(f"LLM Request kwargs (chat): {json.dumps(kwargs, default=str)}")
+        logger.debug(
+            f"LLM Request kwargs (chat): {model=} {max_tokens=} {temperature=} {reasoning_effort=} {tool_choice=} {prompt_tokens=} {len(messages)=}"
+        )
         async with self._semaphore or nullcontext():
             return self._parse(await self._client.chat.completions.create(**kwargs), provider=self)
 
@@ -740,7 +741,9 @@ class OpenAICompatClient(LLMClient):
         )
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
-        logger.debug(f"LLM Request kwargs (chat_stream): {json.dumps(kwargs, default=str)}")
+        logger.debug(
+            f"LLM Request kwargs (chat_stream): {model=} {max_tokens=} {temperature=} {reasoning_effort=} {tool_choice=} {prompt_tokens=} {len(messages)=}"
+        )
         async with self._semaphore or nullcontext():
             stream = await self._client.chat.completions.create(**kwargs)
             chunks: list[Any] = []

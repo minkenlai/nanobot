@@ -23,11 +23,12 @@ def _make_loop():
     workspace.__truediv__ = MagicMock(return_value=MagicMock())
 
     with (
-        patch("nanobot.agent.loop.ContextBuilder"),
+        patch("nanobot.agent.loop.ContextBuilder") as MockCtx,
         patch("nanobot.agent.loop.SessionManager"),
         patch("nanobot.agent.loop.SubagentManager"),
         patch("nanobot.agent.loop.MemoryConsolidator") as mock_consolidator,
     ):
+        MockCtx.return_value.build_system_prompt.return_value = "test system prompt"
         mock_consolidator.return_value.estimate_session_prompt_tokens.return_value = (0, "mock")
         loop = AgentLoop(bus=bus, provider=provider, workspace=workspace)
     return loop, bus

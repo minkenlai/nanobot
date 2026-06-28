@@ -1,7 +1,9 @@
 """Utility functions for nanobot."""
 
 import base64
+import hashlib
 import json
+import math
 import re
 import time
 from datetime import datetime
@@ -346,6 +348,87 @@ def estimate_prompt_tokens_chain(
     if estimated > 0:
         return int(estimated), "tiktoken"
     return 0, "none"
+
+
+# ---------------------------------------------------------------------------
+# Prefix-Anchor calibration (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def calculate_base_hash(
+    system_prompt: str,
+    tools: list[dict[str, Any]] | None = None,
+) -> str:
+    """SHA-256 hash of the static base content (system prompt + tool definitions).
+
+    Used as the "base anchor" to detect when the non-conversation portion
+    of a prompt has changed between turns (e.g. system prompt refresh,
+    tools added/removed).
+    """
+    payload = system_prompt
+    if tools:
+        payload += "\n\n---[TOOLS]---\n" + json.dumps(tools, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def calculate_history_hash(messages: list[dict[str, Any]]) -> str:
+    """SHA-256 hash of the conversation history prefix (all but the last message).
+
+    By excluding the newest message, this hash remains stable across turns
+    when only a single message is appended, enabling incremental delta
+    calculation in :func:`calculate_calibrated_prompt_tokens`.
+    """
+    prefix = messages[:-1]  # always hash all but the last message
+    return hashlib.sha256(
+        json.dumps(prefix, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def calculate_calibrated_prompt_tokens(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    ratio: float,
+    *,
+    current_base_hash: str,
+    current_history_hash: str,
+    prev_actual: int,
+    prev_base_hash: str,
+    prev_history_hash: str,
+) -> int:
+    """Calculate prompt token count using the Prefix-Anchor approach.
+
+    If both the base content (system+tools) and the history hashes match
+    the previous turn, we assume only new messages were appended and use
+    incremental estimation scaled by the calibration ratio.
+    Otherwise, we fall back to a full tiktoken estimate scaled by ratio.
+
+    Args:
+        messages: Complete message list including the current user message.
+        tools: Tool definitions (if any).
+        ratio: Calibration ratio (actual / estimated) from the model family.
+        current_base_hash: SHA-256 of current system prompt + tools.
+        current_history_hash: SHA-256 of current messages.
+        prev_actual: Actual prompt tokens from the previous LLM call.
+        prev_base_hash: Base hash from the previous turn.
+        prev_history_hash: History hash from the previous turn.
+
+    Returns:
+        Calibrated prompt token estimate.
+    """
+    if (
+        current_base_hash == prev_base_hash
+        and current_history_hash == prev_history_hash
+        and prev_actual > 0
+    ):
+        # Anchor match — incremental delta only.
+        # Estimate tokens for just the newly appended messages
+        # (everything after the prefix hashed by calculate_history_hash).
+        new_messages = messages[-1:]
+        incremental = estimate_prompt_tokens(new_messages, tools)
+        return prev_actual + max(0, math.ceil(incremental * ratio))
+    # Full estimate
+    full = estimate_prompt_tokens(messages, tools)
+    return int(full * ratio)
 
 
 def build_status_content(

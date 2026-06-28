@@ -34,6 +34,7 @@ from nanobot.config.schema import Config
 from nanobot.providers.base import LLMClient
 from nanobot.providers.factory import AgentRegistry
 from nanobot.session.manager import Session, SessionManager
+from nanobot.utils.calibration import ModelCalibrationManager
 
 if TYPE_CHECKING:
     from nanobot.config.schema import ChannelsConfig, ExecToolConfig, WebSearchConfig
@@ -94,6 +95,7 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)
+        self.calibration_mgr = ModelCalibrationManager()
         self.tools = ToolRegistry()
         self.registry = registry or AgentRegistry(self.config)
 
@@ -430,7 +432,44 @@ class AgentLoop:
 
         # Estimate prompt tokens to enable proactive routing in FallbackProvider
         session = self.sessions.get_or_create(session_key)
-        prompt_tokens, _ = self.memory_consolidator.estimate_session_prompt_tokens(session)
+
+        # --- Pre-call: Prefix-Anchor calibration ---
+        from nanobot.utils.helpers import (
+            calculate_base_hash,
+            calculate_calibrated_prompt_tokens,
+            calculate_history_hash,
+        )
+
+        system_prompt = ""
+        for m in initial_messages:
+            if m.get("role") == "system":
+                system_prompt = m.get("content", "")
+                break
+        else:
+            # Fallback: build from context builder if no system message in list
+            system_prompt = self.context.build_system_prompt()
+
+        tools_defs = self.tools.get_definitions() or None
+        current_base_hash = calculate_base_hash(system_prompt, tools_defs)
+        current_history_hash = calculate_history_hash(initial_messages)
+
+        # Previous turn state stored in session metadata
+        prev_cal = session.metadata.get("calibration", {})
+        prev_actual = prev_cal.get("actual_prompt_tokens", 0)
+        prev_base_hash = prev_cal.get("base_hash", "")
+        prev_history_hash = prev_cal.get("history_hash", "")
+
+        ratio = self.calibration_mgr.get_ratio(model)
+        prompt_tokens = calculate_calibrated_prompt_tokens(
+            initial_messages,
+            tools_defs,
+            ratio,
+            current_base_hash=current_base_hash,
+            current_history_hash=current_history_hash,
+            prev_actual=prev_actual,
+            prev_base_hash=prev_base_hash,
+            prev_history_hash=prev_history_hash,
+        )
 
         result = await runner.run(
             AgentRunSpec(
@@ -445,6 +484,21 @@ class AgentLoop:
             prompt_tokens=prompt_tokens,
         )
         self._last_usage = result.usage
+
+        # --- Post-call: store anchor hashes + update calibration ratio ---
+        actual_prompt_tokens = result.usage.get("prompt_tokens", 0)
+        session.metadata["calibration"] = {
+            "actual_prompt_tokens": actual_prompt_tokens,
+            "base_hash": current_base_hash,
+            "history_hash": current_history_hash,
+        }
+        model_used = result.messages[-1].get("_model_used") if result.messages else None
+        if not model_used:
+            model_used = getattr(runner.provider, "get_default_model", lambda: model)()
+        if actual_prompt_tokens > 0 and prompt_tokens > 0:
+            self.calibration_mgr.update_ratio(
+                model_used, actual=actual_prompt_tokens, estimated=prompt_tokens
+            )
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
         elif result.stop_reason == "error":

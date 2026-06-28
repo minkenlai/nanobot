@@ -19,10 +19,11 @@ def _make_loop(tmp_path):
     provider.get_default_model.return_value = "test-model"
 
     with (
-        patch("nanobot.agent.loop.ContextBuilder"),
+        patch("nanobot.agent.loop.ContextBuilder") as MockCtx,
         patch("nanobot.agent.loop.SessionManager"),
         patch("nanobot.agent.loop.SubagentManager") as MockSubMgr,
     ):
+        MockCtx.return_value.build_system_prompt.return_value = "test system prompt"
         MockSubMgr.return_value.cancel_by_session = AsyncMock(return_value=0)
         loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path)
     return loop

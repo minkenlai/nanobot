@@ -51,10 +51,7 @@ _DEFAULT_RATIO: Final[float] = 1.0
 _ALPHA: Final[float] = 0.1  # moving-average smoothing factor
 
 # Resolve workspace root:
-#   nanobot/utils/calibration.py → nanobot/ → nanobot-dev/ → workspace/
-_CALIBRATION_FILE: Final[Path] = (
-    Path(__file__).resolve().parent.parent.parent.parent / "model_calibration.json"
-)
+_CALIBRATION_FILE: Final[Path] = get_workspace_path() / "model_calibration.json"
 
 
 def _load_calibration_data() -> dict:
