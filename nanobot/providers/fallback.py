@@ -91,8 +91,8 @@ class FallbackClient(LLMClient):
                 slot_max = provider.generation.context_max
                 if slot_max is not None and prompt_tokens > slot_max:
                     logger.warning(
-                        "FallbackProvider: Skipping slot %s (model=%s) — "
-                        "prompt %d tokens > context max %d",
+                        "FallbackProvider: Skipping slot {} (model={}) — "
+                        "prompt {} tokens > context max {}",
                         slot_id,
                         slot_model,
                         prompt_tokens,
@@ -102,8 +102,8 @@ class FallbackClient(LLMClient):
                         effective_index += 1
                         continue
                     logger.warning(
-                        "FallbackProvider: Prompt %d tokens exceeds all slot limits; "
-                        "attempting last slot (%s) anyway.",
+                        "FallbackProvider: Prompt {} tokens exceeds all slot limits; "
+                        "attempting last slot ({}) anyway.",
                         prompt_tokens,
                         slot_id,
                     )
@@ -150,7 +150,10 @@ class FallbackClient(LLMClient):
                     if is_max_tokens_issue and current_max_tokens > 1024:
                         current_max_tokens //= 2
                         logger.warning(
-                            f"FallbackClient: Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
+                            "FallbackClient: Reducing max_tokens to {} for {} ({})",
+                            current_max_tokens,
+                            slot_id,
+                            slot_model,
                         )
                         continue
 
@@ -256,8 +259,8 @@ class FallbackClient(LLMClient):
                 slot_max = provider.generation.context_max
                 if slot_max is not None and prompt_tokens > slot_max:
                     logger.warning(
-                        "FallbackProvider (stream): Skipping slot %s (model=%s) — "
-                        "prompt %d tokens > context max %d",
+                        "FallbackProvider (stream): Skipping slot {} (model={}) — "
+                        "prompt {} tokens > context max {}",
                         slot_id,
                         slot_model,
                         prompt_tokens,
@@ -267,8 +270,8 @@ class FallbackClient(LLMClient):
                         effective_index += 1
                         continue
                     logger.warning(
-                        "FallbackProvider (stream): Prompt %d tokens exceeds all slot limits; "
-                        "attempting last slot (%s) anyway.",
+                        "FallbackProvider (stream): Prompt {} tokens exceeds all slot limits; "
+                        "attempting last slot ({}) anyway.",
                         prompt_tokens,
                         slot_id,
                     )
@@ -320,7 +323,10 @@ class FallbackClient(LLMClient):
                     if is_max_tokens_issue and current_max_tokens > 1024:
                         current_max_tokens //= 2
                         logger.warning(
-                            f"FallbackClient (stream): Reducing max_tokens to {current_max_tokens} for {slot_id} ({slot_model})"
+                            "FallbackClient (stream): Reducing max_tokens to {} for {} ({})",
+                            current_max_tokens,
+                            slot_id,
+                            slot_model,
                         )
                         continue
 
@@ -446,7 +452,7 @@ class FallbackClient(LLMClient):
         try:
             tz = ZoneInfo(tz_name)
         except Exception:
-            logger.warning(f"Invalid reset_timezone '{tz_name}', falling back to UTC")
+            logger.warning("Invalid reset_timezone '{}', falling back to UTC", tz_name)
             tz = timezone.utc
 
         now_tz = datetime.now(tz)

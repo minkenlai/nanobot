@@ -263,7 +263,7 @@ class MemoryStore:
             json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         logger.warning(
-            "Memory consolidation degraded: raw-archived %d messages to %s",
+            "Memory consolidation degraded: raw-archived {} messages to {}",
             len(messages),
             recovery_file.name,
         )
