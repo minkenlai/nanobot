@@ -11,6 +11,8 @@ except ImportError:
         "Telegram dependencies not installed (python-telegram-bot)", allow_module_level=True
     )
 
+from conftest import _FakeApp, _FakeBuilder
+
 from nanobot.bus.events import Address, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.telegram import (
@@ -31,104 +33,6 @@ class _FakeHTTPXRequest:
     @classmethod
     def clear(cls) -> None:
         cls.instances.clear()
-
-
-class _FakeUpdater:
-    def __init__(self, on_start_polling) -> None:
-        self._on_start_polling = on_start_polling
-
-    async def start_polling(self, **kwargs) -> None:
-        self._on_start_polling()
-
-
-class _FakeBot:
-    def __init__(self) -> None:
-        self.sent_messages: list[dict] = []
-        self.sent_media: list[dict] = []
-        self.get_me_calls = 0
-
-    async def get_me(self):
-        self.get_me_calls += 1
-        return SimpleNamespace(id=999, username="nanobot_test")
-
-    async def set_my_commands(self, commands) -> None:
-        self.commands = commands
-
-    async def send_message(self, **kwargs):
-        self.sent_messages.append(kwargs)
-        return SimpleNamespace(message_id=len(self.sent_messages))
-
-    async def send_photo(self, **kwargs) -> None:
-        self.sent_media.append({"kind": "photo", **kwargs})
-
-    async def send_voice(self, **kwargs) -> None:
-        self.sent_media.append({"kind": "voice", **kwargs})
-
-    async def send_audio(self, **kwargs) -> None:
-        self.sent_media.append({"kind": "audio", **kwargs})
-
-    async def send_document(self, **kwargs) -> None:
-        self.sent_media.append({"kind": "document", **kwargs})
-
-    async def send_chat_action(self, **kwargs) -> None:
-        pass
-
-    async def get_file(self, file_id: str):
-        """Return a fake file that 'downloads' to a path (for reply-to-media tests)."""
-
-        async def _fake_download(path) -> None:
-            pass
-
-        return SimpleNamespace(download_to_drive=_fake_download)
-
-
-class _FakeApp:
-    def __init__(self, on_start_polling) -> None:
-        self.bot = _FakeBot()
-        self.updater = _FakeUpdater(on_start_polling)
-        self.handlers = []
-        self.error_handlers = []
-
-    def add_error_handler(self, handler) -> None:
-        self.error_handlers.append(handler)
-
-    def add_handler(self, handler) -> None:
-        self.handlers.append(handler)
-
-    async def initialize(self) -> None:
-        pass
-
-    async def start(self) -> None:
-        pass
-
-
-class _FakeBuilder:
-    def __init__(self, app: _FakeApp) -> None:
-        self.app = app
-        self.token_value = None
-        self.request_value = None
-        self.get_updates_request_value = None
-
-    def token(self, token: str):
-        self.token_value = token
-        return self
-
-    def request(self, request):
-        self.request_value = request
-        return self
-
-    def get_updates_request(self, request):
-        self.get_updates_request_value = request
-        return self
-
-    def proxy(self, _proxy):
-        raise AssertionError("builder.proxy should not be called when request is set")
-
-    def get_updates_proxy(self, _proxy):
-        raise AssertionError("builder.get_updates_proxy should not be called when request is set")
-
-    def build(self):
-        return self.app
 
 
 def _make_telegram_update(
@@ -400,13 +304,13 @@ async def test_send_delta_new_stream_id_replaces_stale_buffer() -> None:
     await channel.send_delta(
         OutboundMessage(
             address=Address(channel="telegram", segments=("123",)),
-            content="world",
+            content="world" * 15,
             metadata={"_stream_delta": True, "_stream_id": "new:0"},
         )
     )
 
     buf = channel._stream_bufs["telegram://123"]
-    assert buf.text == "world"
+    assert buf.text == "world" * 15
     assert buf.stream_id == "new:0"
     assert buf.message_id == 1
 
@@ -1149,7 +1053,7 @@ async def test_send_delta_uses_thread_id_from_address_not_metadata() -> None:
     await channel.send_delta(
         OutboundMessage(
             address=Address(channel="tg", segments=("-1003434604734", "832")),
-            content="Hello from topic",
+            content="Hello from topic" * 10,
             metadata={"_stream_delta": True, "_stream_id": "s:0"},
         )
     )

@@ -677,40 +677,60 @@ class TelegramChannel(BaseChannel):
 
         if msg.metadata.get("_stream_end"):
             buf = self._stream_bufs.get(address_uri)
-            if not buf or not buf.message_id or not buf.text:
+            if not buf or not buf.text:
                 return
             if stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id:
                 return
             self._stop_typing(str(int_chat_id))
-            try:
-                html = _markdown_to_telegram_html(buf.text)
-                await self._call_with_retry(
-                    self._app.bot.edit_message_text,
-                    chat_id=int_chat_id,
-                    message_id=buf.message_id,
-                    text=html,
-                    parse_mode="HTML",
-                )
-            except Exception as e:
-                if self._is_not_modified_error(e):
-                    logger.debug("Final stream edit already applied for {}", address_uri)
+
+            if buf.message_id is None:
+                # Final flush for short messages that never hit the initial threshold
+                try:
+                    sent = await self._call_with_retry(
+                        self._app.bot.send_message,
+                        chat_id=int_chat_id,
+                        text=_markdown_to_telegram_html(buf.text),
+                        parse_mode="HTML",
+                        **thread_kwargs,
+                    )
+                    buf.message_id = sent.message_id
+                except Exception as e:
+                    logger.warning("Final stream send failed: {}", e)
                     self._stream_bufs.pop(address_uri, None)
                     return
-                logger.debug("Final stream edit failed (HTML), trying plain: {}", e)
+            else:
                 try:
+                    html = _markdown_to_telegram_html(buf.text)
                     await self._call_with_retry(
                         self._app.bot.edit_message_text,
                         chat_id=int_chat_id,
                         message_id=buf.message_id,
-                        text=buf.text,
+                        text=html,
+                        parse_mode="HTML",
                     )
-                except Exception as e2:
-                    if self._is_not_modified_error(e2):
-                        logger.debug("Final stream plain edit already applied for {}", address_uri)
+                except Exception as e:
+                    if self._is_not_modified_error(e):
+                        logger.debug("Final stream edit already applied for {}", address_uri)
                         self._stream_bufs.pop(address_uri, None)
                         return
-                    logger.warning("Final stream edit failed: {}", e2)
-                    raise  # Let ChannelManager handle retry
+                    logger.debug("Final stream edit failed (HTML), trying plain: {}", e)
+                    try:
+                        await self._call_with_retry(
+                            self._app.bot.edit_message_text,
+                            chat_id=int_chat_id,
+                            message_id=buf.message_id,
+                            text=buf.text,
+                        )
+                    except Exception as e2:
+                        if self._is_not_modified_error(e2):
+                            logger.debug(
+                                "Final stream plain edit already applied for {}", address_uri
+                            )
+                            self._stream_bufs.pop(address_uri, None)
+                            return
+                        logger.warning("Final stream edit failed: {}", e2)
+                        raise  # Let ChannelManager handle retry
+
             self._stream_bufs.pop(address_uri, None)
             return
 
@@ -766,6 +786,12 @@ class TelegramChannel(BaseChannel):
             return
 
         if buf.message_id is None:
+            # Wait for a minimum amount of content before the first send to avoid
+            # tiny notifications (e.g., "T", "The").
+            # Send if: length > 60 OR contains a newline OR contains a sentence terminator.
+            if len(buf.text) < 60 and not any(c in buf.text for c in ("\n", ".", "!", "?")):
+                return
+
             # Initial send: don't split yet, just send the first chunk if too large
             # and let the next edit/flush handle the rest.
             text_to_send = buf.text
