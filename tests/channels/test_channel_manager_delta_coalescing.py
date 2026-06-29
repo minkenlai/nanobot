@@ -33,9 +33,10 @@ class MockChannel(BaseChannel):
         """Implement abstract method."""
         return await self._send_mock(msg)
 
-    async def send_delta(self, chat_id, delta, metadata=None):
+    async def send_delta(self, msg):
         """Override send_delta for testing."""
-        return await self._send_delta_mock(chat_id, delta, metadata)
+        # The new architecture passes the message object
+        return await self._send_delta_mock(msg.address.to_uri(), msg.content, msg.metadata)
 
 
 @pytest.fixture
@@ -82,14 +83,14 @@ class TestDeltaCoalescing:
                         await bus.publish_outbound(p)
                 channel = manager.channels.get(m.channel)
                 if channel:
-                    await channel.send_delta(m.chat_id, m.content, m.metadata)
+                    await channel.send_delta(m)
             except asyncio.TimeoutError:
                 pass
 
         await process_one()
 
         manager.channels["mock"]._send_delta_mock.assert_called_once_with(
-            "chat1", "Hello", {"_stream_delta": True}
+            "mock://chat1", "Hello", {"_stream_delta": True}
         )
 
     @pytest.mark.asyncio
@@ -302,7 +303,7 @@ class TestDispatchOutboundWithCoalescing:
 
         channel = manager.channels.get(msg.channel)
         if channel:
-            await channel.send_delta(msg.chat_id, msg.content, msg.metadata)
+            await channel.send_delta(msg)
             processed.append(("delta", msg.content))
 
         # Should have sent coalesced delta
