@@ -210,6 +210,7 @@ class TelegramChannel(BaseChannel):
         BotCommand("start", "Start the bot"),
         BotCommand("new", "Start a new conversation"),
         BotCommand("compact", "Consolidate session history"),
+        BotCommand("forget", "Rewind to last consolidated marker"),
         BotCommand("stop", "Cancel active tasks in this session"),
         BotCommand("profiles", "List available agent profiles"),
         BotCommand("topics", "List group topics and their assigned profiles"),
@@ -318,6 +319,7 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("restart", self._forward_command))
         self._app.add_handler(CommandHandler("status", self._forward_command))
         self._app.add_handler(CommandHandler("compact", self._forward_command))
+        self._app.add_handler(CommandHandler("forget", self._forward_command))
         self._app.add_handler(CommandHandler("halt", self._forward_command))
         self._app.add_handler(CommandHandler("RIP", self._forward_command))
         self._app.add_handler(CommandHandler("help", self._forward_command))

@@ -393,6 +393,30 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+async def cmd_forget(ctx: CommandContext) -> OutboundMessage:
+    """Forget all messages since the last consolidated marker."""
+    loop = ctx.loop
+    session = ctx.session or loop.sessions.get_or_create(ctx.key)
+
+    if session.last_consolidated >= len(session.messages):
+        return OutboundMessage(
+            address=ctx.msg.address,
+            content="Nothing to forget. You are already at the last marker.",
+        )
+
+    num_forgotten = len(session.messages) - session.last_consolidated
+    session.messages = session.messages[: session.last_consolidated]
+    session.last_consolidated = len(session.messages)
+
+    loop.sessions.save(session)
+    loop.sessions.invalidate(session.key)
+
+    return OutboundMessage(
+        address=ctx.msg.address,
+        content=f"Rewound to last marker. Forgot {num_forgotten} messages.",
+    )
+
+
 async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     """Start a fresh session."""
     loop = ctx.loop
@@ -512,6 +536,7 @@ async def cmd_repl(ctx: CommandContext) -> OutboundMessage:
 def register_builtin_commands(router: CommandRouter) -> None:
     """Register all builtin commands."""
     router.exact("/new", cmd_new)
+    router.exact("/forget", cmd_forget)
     router.exact("/compact", cmd_compact)
     router.exact("/help", cmd_help)
     router.exact("/status", cmd_status)

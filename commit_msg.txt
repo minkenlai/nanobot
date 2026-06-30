@@ -1,8 +1,6 @@
-feat(telegram): enhance forum topic support and update memory documentation
+feat: implement /forget command to rewind session to last consolidated marker
 
-- Implement persistence and tracking of Telegram forum topic names in _topic_pins.
-- Fix bug where topic renaming or creation wiped previously assigned agent profiles.
-- Improve /topics command output to include topic names.
-- Refine /profiles command to simplify model and fallback list display.
-- Update CLAUDE.md to document the new three-layer memory staging architecture (STAGING -> MEMORY -> HISTORY) and ExecTool safety guard enhancements.
-- Add comprehensive test suite for Telegram forum topic and pin lifecycle in tests/channels/test_telegram_pin_events.py.
+- Adds `cmd_forget` to `builtin.py` with fixed marker reset logic.
+- Registers `/forget` command in Telegram channel (BOT_COMMANDS and CommandHandler).
+- Adds `tests/cli/test_forget_command.py` to verify rewind and edge cases.
+- Fixes circular import issues and indentation errors encountered during testing.
