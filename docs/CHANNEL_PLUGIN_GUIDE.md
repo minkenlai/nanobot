@@ -87,7 +87,7 @@ class WebhookChannel(BaseChannel):
 
         msg.content  — markdown text (convert to platform format as needed)
         msg.media    — list of local file paths to attach
-        msg.chat_id  — the recipient (same chat_id you passed to _handle_message)
+        msg.address  — the recipient Address object
         msg.metadata — may contain "_progress": True for streaming chunks
         """
         logger.info("[webhook] -> {}: {}", msg.chat_id, msg.content[:80])
@@ -225,7 +225,7 @@ nanobot channels login <channel_name> --force  # re-authenticate
 
 | Method | Description |
 |--------|-------------|
-| `async send_delta(chat_id, delta, metadata?)` | Override to receive streaming chunks. See [Streaming Support](#streaming-support) for details. |
+| `async send_delta(msg: OutboundMessage)` | Override to receive streaming chunks. See [Streaming Support](#streaming-support) for details. |
 
 ### Message Types
 
@@ -233,7 +233,7 @@ nanobot channels login <channel_name> --force  # re-authenticate
 @dataclass
 class OutboundMessage:
     channel: str        # your channel name
-    chat_id: str        # recipient (same value you passed to _handle_message)
+    address: Address  # recipient address
     content: str        # markdown text — convert to platform format as needed
     media: list[str]    # local file paths to attach (images, audio, docs)
     metadata: dict      # may contain: "_progress" (bool) for streaming chunks,
@@ -258,15 +258,15 @@ If either is missing, the agent falls back to the normal one-shot `send()` path.
 Override `send_delta` to handle two types of calls:
 
 ```python
-async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
-    meta = metadata or {}
+async def send_delta(self, msg: OutboundMessage) -> None:
+    meta = msg.metadata or {}
 
     if meta.get("_stream_end"):
         # Streaming finished — do final formatting, cleanup, etc.
         return
 
     # Regular delta — append text, update the message on screen
-    # delta contains a small chunk of text (a few tokens)
+    # msg.content contains a small chunk of text (a few tokens)
 ```
 
 **Metadata flags:**
@@ -288,18 +288,18 @@ class WebhookChannel(BaseChannel):
         super().__init__(config, bus)
         self._buffers: dict[str, str] = {}
 
-    async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
-        meta = metadata or {}
+    async def send_delta(self, msg: OutboundMessage) -> None:
+        meta = msg.metadata or {}
         if meta.get("_stream_end"):
-            text = self._buffers.pop(chat_id, "")
+            text = self._buffers.pop(msg.address.to_uri(), "")
             # Final delivery — format and send the complete message
-            await self._deliver(chat_id, text, final=True)
+            await self._deliver(msg.address.to_uri(), text, final=True)
             return
 
-        self._buffers.setdefault(chat_id, "")
-        self._buffers[chat_id] += delta
+        self._buffers.setdefault(msg.address.to_uri(), "")
+        self._buffers[msg.address.to_uri()] += msg.content
         # Incremental update — push partial text to the client
-        await self._deliver(chat_id, self._buffers[chat_id], final=False)
+        await self._deliver(msg.address.to_uri(), self._buffers[msg.address.to_uri()], final=False)
 
     async def send(self, msg: OutboundMessage) -> None:
         # Non-streaming path — unchanged
@@ -328,7 +328,7 @@ When `streaming` is `false` (default) or omitted, only `send()` is called — no
 
 | Method / Property | Description |
 |-------------------|-------------|
-| `async send_delta(chat_id, delta, metadata?)` | Override to handle streaming chunks. No-op by default. |
+| `async send_delta(msg: OutboundMessage)` | Override to handle streaming chunks. No-op by default. |
 | `supports_streaming` (property) | Returns `True` when config has `streaming: true` **and** subclass overrides `send_delta`. |
 
 ## Config
