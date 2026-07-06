@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from typing import Dict, Final
+from typing import Dict, Final, Optional
 
 # ---------------------------------------------------------------------------
 # Model series (family) → concrete model IDs
@@ -32,16 +32,27 @@ def _load_model_map() -> Dict[str, tuple[str, ...]]:
         return {}
 
 
-# We initialize MODEL_SERIES and _MODEL_TO_SERIES lazily or at module level.
-# Note: get_workspace_path() is safe to call at module level as it uses defaults.
-MODEL_SERIES: Dict[str, tuple[str, ...]] = _load_model_map()
-_MODEL_TO_SERIES: Dict[str, str] = {}
-for _series, _ids in MODEL_SERIES.items():
-    for _mid in _ids:
-        _MODEL_TO_SERIES[_mid] = _series
+# Lazy-loaded globals — initialized on first access to avoid workspace
+# dependency at module import time.
 
-del _series, _ids, _mid  # cleanup
+_MODEL_SERIES: Optional[Dict[str, tuple[str, ...]]] = None
+_MODEL_TO_SERIES_MAP: Optional[Dict[str, str]] = None
+_CALIBRATION_FILE_PATH: Optional[Path] = None
 
+
+def _ensure_loaded() -> tuple[Dict[str, str], Path]:
+    """Initialize lazy-loaded globals on first call. Returns (model_to_series_map, calibration_path)."""
+    global _MODEL_SERIES, _MODEL_TO_SERIES_MAP, _CALIBRATION_FILE_PATH
+    if _MODEL_SERIES is not None:
+        return _MODEL_TO_SERIES_MAP, _CALIBRATION_FILE_PATH
+    _MODEL_SERIES = _load_model_map()
+    _MODEL_TO_SERIES_MAP = {}
+    if _MODEL_SERIES:
+        for _series, _ids in _MODEL_SERIES.items():
+            for _mid in _ids:
+                _MODEL_TO_SERIES_MAP[_mid] = _series
+    _CALIBRATION_FILE_PATH = get_workspace_path() / "model_calibration.json"
+    return _MODEL_TO_SERIES_MAP, _CALIBRATION_FILE_PATH
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,14 +61,12 @@ del _series, _ids, _mid  # cleanup
 _DEFAULT_RATIO: Final[float] = 1.0
 _ALPHA: Final[float] = 0.1  # moving-average smoothing factor
 
-# Resolve workspace root:
-_CALIBRATION_FILE: Final[Path] = get_workspace_path() / "model_calibration.json"
-
 
 def _load_calibration_data() -> dict:
     """Load persisted calibration data, returning empty structure on error."""
+    _path = _ensure_loaded()[1]
     try:
-        text = _CALIBRATION_FILE.read_text(encoding="utf-8")
+        text = _path.read_text(encoding="utf-8")
         data = json.loads(text)
         if not isinstance(data, dict):
             return {}
@@ -68,13 +77,14 @@ def _load_calibration_data() -> dict:
 
 def _save_calibration_data(data: dict) -> None:
     """Atomically persist calibration data via a temp file + rename."""
-    parent = _CALIBRATION_FILE.parent
+    _path = _ensure_loaded()[1]
+    parent = _path.parent
     parent.mkdir(parents=True, exist_ok=True)
 
-    tmp = _CALIBRATION_FILE.with_suffix(".tmp")
+    tmp = _path.with_suffix(".tmp")
     try:
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(_CALIBRATION_FILE)
+        tmp.replace(_path)
     except OSError:
         tmp.unlink(missing_ok=True)
         raise
@@ -128,7 +138,7 @@ class ModelCalibrationManager:
         """
         with self._lock:
             # 1. Built-in series
-            series_key = _MODEL_TO_SERIES.get(model_id)
+            series_key = _MODEL_TO_SERIES_MAP.get(model_id)
             if series_key is not None:
                 return self.ratios.get(series_key, _DEFAULT_RATIO)
 
@@ -175,7 +185,8 @@ class ModelCalibrationManager:
 
     def _resolve_key(self, model_id: str) -> str:
         """Map a model ID to its persist-key (series or direct)."""
-        series_key = _MODEL_TO_SERIES.get(model_id)
+        _map = _ensure_loaded()[0]
+        series_key = _map.get(model_id)
         if series_key is not None:
             return series_key
         for _sk, _sids in self.series.items():
