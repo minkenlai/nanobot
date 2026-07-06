@@ -193,6 +193,15 @@ class GeminiNativeClient(LLMClient):
                 for part in content:
                     if part.get("type") == "text":
                         parts.append({"text": part.get("text")})
+                    elif part.get("type") == "audio":
+                        parts.append(
+                            {
+                                "inlineData": {
+                                    "mimeType": part.get("mime_type", "audio/wav"),
+                                    "data": part.get("data", ""),
+                                }
+                            }
+                        )
 
             if role == "assistant" and "tool_calls" in msg:
                 for tc in msg["tool_calls"]:

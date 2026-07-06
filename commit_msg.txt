@@ -1,6 +1,0 @@
-feat: implement /forget command to rewind session to last consolidated marker
-
-- Adds `cmd_forget` to `builtin.py` with fixed marker reset logic.
-- Registers `/forget` command in Telegram channel (BOT_COMMANDS and CommandHandler).
-- Adds `tests/cli/test_forget_command.py` to verify rewind and edge cases.
-- Fixes circular import issues and indentation errors encountered during testing.

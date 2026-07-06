@@ -36,6 +36,10 @@ from nanobot.providers.factory import AgentRegistry
 from nanobot.session.manager import Session, SessionManager
 from nanobot.utils.calibration import ModelCalibrationManager
 
+# Lazy import for TYPE_CHECKING to break circular deps
+if TYPE_CHECKING:
+    from nanobot.providers.transcription import GroqTranscriptionProvider
+
 if TYPE_CHECKING:
     from nanobot.config.schema import ChannelsConfig, ExecToolConfig, WebSearchConfig
     from nanobot.cron.service import CronService
@@ -142,6 +146,9 @@ class AgentLoop:
         )
         self.context_window_tokens = effective_context_window
 
+        self._transcription_provider: GroqTranscriptionProvider | None = None
+        self._transcription_provider_lock = asyncio.Lock()
+
         self.memory_consolidator = MemoryConsolidator(
             workspace=workspace,
             provider=provider or self.runner.provider,
@@ -185,6 +192,175 @@ class AgentLoop:
             self.tools.register(
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
+
+    async def _get_transcription_provider(self) -> GroqTranscriptionProvider | None:
+        """Lazily initialize the Groq transcription provider from config."""
+        if self._transcription_provider is not None:
+            return self._transcription_provider
+
+        async with self._transcription_provider_lock:
+            if self._transcription_provider is not None:
+                return self._transcription_provider
+
+            from nanobot.providers.transcription import GroqTranscriptionProvider
+
+            api_key = None
+            if self.config and self.config.providers:
+                api_key = (
+                    getattr(self.config.providers, "groq", None).api_key
+                    if hasattr(self.config.providers, "groq")
+                    else None
+                )
+
+            if not api_key:
+                import os
+
+                api_key = os.environ.get("GROQ_API_KEY")
+
+            if api_key:
+                self._transcription_provider = GroqTranscriptionProvider(api_key=api_key)
+                logger.debug("Transcription provider initialized (Groq)")
+            else:
+                logger.warning(
+                    "No Groq API key configured — audio transcription fallback will be unavailable"
+                )
+                self._transcription_provider = GroqTranscriptionProvider(api_key=None)
+
+        return self._transcription_provider
+
+    async def _route_audio(
+        self,
+        messages: list[dict[str, Any]],
+        model: str,
+    ) -> list[dict[str, Any]]:
+        """Route audio payloads based on the target model's capabilities.
+
+        **Native path** — model supports audio. Pass messages through untouched.
+
+        **Transcription path** — model doesn't support audio. Decode base64 audio
+        blocks to temp files, send to Groq Whisper, replace blocks with transcribed
+        text. Returns modified messages (or original if no audio found / no provider).
+        """
+        from nanobot.providers.registry import get_capabilities
+        from nanobot.utils.helpers import has_audio_content
+
+        if not has_audio_content(messages):
+            return messages
+
+        caps = get_capabilities(model)
+        if caps.audio:
+            logger.debug("Model '{}' natively supports audio — passing through", model)
+            return messages
+
+        # Transcription path
+        provider = await self._get_transcription_provider()
+        if provider is None:
+            logger.warning(
+                "Audio content detected but no transcription provider available; "
+                "replacing audio blocks with placeholders"
+            )
+            return LLMClient._strip_audio_content(messages) or messages
+
+        import base64
+        import tempfile
+
+        # Collect all audio blocks and their locations
+        audio_blocks: list[tuple[int, int, dict]] = []  # (msg_idx, block_idx, block)
+        for msg_idx, msg in enumerate(messages):
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+            for block_idx, block in enumerate(content):
+                if isinstance(block, dict) and block.get("type") == "audio":
+                    audio_blocks.append((msg_idx, block_idx, block))
+
+        if not audio_blocks:
+            return messages
+
+        logger.info(
+            "Model '{}' does not support audio — routing {} audio block(s) through Groq Whisper",
+            model,
+            len(audio_blocks),
+        )
+
+        # Transcribe all audio blocks concurrently
+        async def _transcribe_block(block: dict) -> str:
+            """Decode a base64 audio block, write to temp file, transcribe."""
+            data_field = block.get("data", "")
+            mime = block.get("mime_type", "audio/ogg")
+
+            # Strip "data:<mime>;base64," prefix
+            if data_field.startswith("data:"):
+                comma_idx = data_field.find(",")
+                if comma_idx > 0:
+                    data_field = data_field[comma_idx + 1 :]
+
+            raw_bytes = base64.b64decode(data_field)
+
+            # Determine extension from MIME
+            ext_map = {
+                "audio/ogg": ".ogg",
+                "audio/mpeg": ".mp3",
+                "audio/wav": ".wav",
+                "audio/flac": ".flac",
+                "audio/mp4": ".m4a",
+                "audio/webm": ".webm",
+            }
+            ext = ext_map.get(mime, ".ogg")
+
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                tmp.write(raw_bytes)
+                tmp_path = tmp.name
+
+            try:
+                text = await provider.transcribe(tmp_path)
+                if not text:
+                    path = (block.get("_meta") or {}).get("path", "")
+                    return f"[audio transcription failed: {path or 'unknown'}]"
+                return text
+            finally:
+                try:
+                    import os
+
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+        # Transcribe all blocks concurrently
+        transcribed_texts: list[str] = await asyncio.gather(
+            *[_transcribe_block(block) for _, _, block in audio_blocks]
+        )
+
+        # Replace audio blocks in messages
+        modified = []
+        text_idx = 0
+        for msg in messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                modified.append(msg)
+                continue
+
+            new_content = []
+            for block in content:
+                if (
+                    isinstance(block, dict)
+                    and block.get("type") == "audio"
+                    and text_idx < len(transcribed_texts)
+                ):
+                    new_content.append(
+                        {
+                            "type": "text",
+                            "text": f"[Transcribed Audio]: {transcribed_texts[text_idx]}",
+                        }
+                    )
+                    text_idx += 1
+                else:
+                    new_content.append(block)
+
+            modified.append({**msg, "content": new_content})
+
+        logger.debug("Audio routing complete — {} audio block(s) transcribed", text_idx)
+        return modified
 
     @property
     def is_supervised(self) -> bool:
@@ -471,9 +647,14 @@ class AgentLoop:
             prev_history_hash=prev_history_hash,
         )
 
+        # Conditional audio routing (Phase 2.2):
+        # Intercept messages before the LLM call. If the target model supports
+        # audio natively, pass through. Otherwise, transcribe audio blocks via Groq.
+        routed_messages = await self._route_audio(initial_messages, model)
+
         result = await runner.run(
             AgentRunSpec(
-                initial_messages=initial_messages,
+                initial_messages=routed_messages,
                 tools=self.tools,
                 model=model,
                 max_iterations=self.max_iterations,

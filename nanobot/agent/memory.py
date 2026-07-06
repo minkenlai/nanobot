@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import os
 import re
+import tempfile
 import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
-from uuid import uuid4
 
 from loguru import logger
 
+from nanobot.providers.transcription import GroqTranscriptionProvider
 from nanobot.utils.helpers import (
     _extract_text,
     ensure_dir,
@@ -123,16 +126,30 @@ class MemoryStore:
     def _format_messages(messages: list[dict]) -> str:
         lines = []
         for message in messages:
-            text = _extract_text(message)
-            if not text:
+            content = message.get("content")
+            if not content:
                 continue
             tools = (
                 f" [tools: {', '.join(message['tools_used'])}]" if message.get("tools_used") else ""
             )
+            text = _extract_text(content)
             lines.append(
                 f"[{message.get('timestamp', '?')[:16]}] {message['role'].upper()}{tools}: {text}"
             )
         return "\n".join(lines)
+
+    @staticmethod
+    def _extract_text(content) -> str:
+        """Extract text from message content, handling both string and list-of-blocks formats."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(block.get("text", ""))
+            return "\n".join(parts) if parts else ""
+        return str(content)
 
     async def consolidate(
         self,
@@ -255,21 +272,24 @@ class MemoryStore:
         return True
 
     def _raw_archive(self, messages: list[dict]) -> None:
-        """Fallback: dump raw messages to a recovery sidecar file."""
-        ts = datetime.now()
-        file_ts = ts.strftime("%Y%H%M%S")
-        recovery_file = self.recovery_dir / f"recovery_{file_ts}_{uuid4().hex[:8]}.json"
-        recovery_file.write_text(
-            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8"
+        """Sidecar Recovery: dump raw messages to a timestamped file in recovery/;
+        append only a high-signal warning to HISTORY.md to avoid context bloat."""
+        now = datetime.now()
+        ts_human = now.strftime("%Y-%m-%d %H:%M")
+        ts_file = now.strftime("%Y%m%d_%H%M%S")
+        filename = f"raw-{ts_file}.txt"
+        recovery_path = self.recovery_dir / filename
+
+        raw_content = self._format_messages(messages)
+        recovery_path.write_text(raw_content, encoding="utf-8")
+
+        self.append_history(
+            f"[{ts_human}] ⚠️ Synthesis failed; raw data preserved in recovery/{filename}"
         )
         logger.warning(
             "Memory consolidation degraded: raw-archived {} messages to {}",
             len(messages),
-            recovery_file.name,
-        )
-        hist_ts = ts.strftime("%Y-%m-%d %H:%M")
-        self.append_history(
-            f"[{hist_ts}] [RAW] {len(messages)} messages archived to recovery sidecar: {recovery_file.name}"
+            recovery_path,
         )
 
 
@@ -314,12 +334,107 @@ class MemoryConsolidator:
         """Return the shared consolidation lock for one session."""
         return self._locks.setdefault(session_key, asyncio.Lock())
 
-    async def consolidate_messages(self, messages: list[dict[str, object]]) -> str | None:
-        """Archive a selected message chunk into persistent memory.
+    async def consolidate_messages(self, messages: list[dict[str, object]]) -> bool:
+        """Archive a selected message chunk into persistent memory."""
+        messages = await self._transcribe_audio(messages)
+        return await self.store.consolidate(messages, self.provider, self.model) is not None
 
-        Returns the history_entry summary on success, or None on failure.
-        """
-        return await self.store.consolidate(messages, self.provider, self.model)
+    async def _transcribe_audio(self, messages: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Transcribe audio blocks in messages before memory consolidation."""
+        if not any(
+            isinstance(m.get("content"), list)
+            and any(isinstance(b, dict) and b.get("type") == "audio" for b in m["content"])
+            for m in messages
+        ):
+            return messages
+
+        provider = GroqTranscriptionProvider()
+        if not provider.api_key:
+            logger.warning(
+                "No transcription provider available; audio blocks will be stripped from memory"
+            )
+            return self._strip_audio(messages)
+
+        audio_blocks = []
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "audio":
+                        audio_blocks.append(block)
+
+        if not audio_blocks:
+            return messages
+
+        async def _transcribe_block(block: dict) -> str:
+            data_uri = block.get("data", "")
+            mime_type = block.get("mime_type", "audio/wav")
+            ext = "wav"
+            if "ogg" in mime_type:
+                ext = "ogg"
+            elif "mp3" in mime_type or "mpeg" in mime_type:
+                ext = "mp3"
+            elif "pcm" in mime_type:
+                ext = "raw"
+
+            try:
+                base64_data = data_uri
+                if "," in data_uri:
+                    base64_data = data_uri.split(",", 1)[1]
+                # Validate before decoding (b64decode silently ignores invalid chars)
+                import re
+
+                if not re.fullmatch(r"[A-Za-z0-9+/]*={0,2}", base64_data) or len(base64_data) == 0:
+                    raise ValueError("invalid base64 data")
+                raw = base64.b64decode(base64_data)
+            except Exception:
+                return "[Transcription failed — invalid audio data]"
+
+            tmp_path = None
+            try:
+                fd, tmp_path = tempfile.mkstemp(suffix=f".{ext}")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(raw)
+                text = await provider.transcribe(Path(tmp_path))
+                return text if text else "[Transcription returned empty result]"
+            except Exception as e:
+                logger.warning("Audio transcription failed: {}", e)
+                return f"[Transcription failed — {e}]"
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+        transcriptions = await asyncio.gather(*[_transcribe_block(b) for b in audio_blocks])
+
+        audio_index = 0
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                new_content = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "audio":
+                        text = transcriptions[audio_index]
+                        new_content.append({"type": "text", "text": f"[Transcribed Audio]: {text}"})
+                        audio_index += 1
+                    else:
+                        new_content.append(block)
+                msg["content"] = new_content
+
+        return messages
+
+    @staticmethod
+    def _strip_audio(messages: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Remove audio blocks from messages when no transcription provider is available."""
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                msg["content"] = [
+                    b for b in content if not (isinstance(b, dict) and b.get("type") == "audio")
+                ]
+        return messages
 
     def pick_consolidation_boundary(
         self,

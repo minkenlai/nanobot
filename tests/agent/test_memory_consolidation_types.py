@@ -443,7 +443,7 @@ class TestMemoryConsolidationTypeHandling:
 
     @pytest.mark.asyncio
     async def test_raw_archive_after_consecutive_failures(self, tmp_path: Path) -> None:
-        """After 3 consecutive failures, raw-archive messages and return None."""
+        """After 3 consecutive failures, raw-archive messages to recovery sidecar and return True."""
         store = MemoryStore(tmp_path)
         no_tool = LLMResponse(content="No tool call.", finish_reason="stop", tool_calls=[])
         provider = AsyncMock()
@@ -454,16 +454,14 @@ class TestMemoryConsolidationTypeHandling:
         assert await store.consolidate(messages, provider, "m") is None
         assert await store.consolidate(messages, provider, "m") is None
 
-        assert store.history_file.exists()
-        content = store.history_file.read_text()
-        assert "[RAW]" in content
-        assert "10 messages" in content
-        assert not store.memory_file.exists()
-
-        recovery_files = list(store.recovery_dir.glob("recovery_*.json"))
+        assert "WARNING" in store.history_file.read_text()
+        assert "recovery/" in store.history_file.read_text()
+        # Verify the recovery sidecar file was created
+        recovery_files = list(tmp_path.glob("recovery/*.txt"))
         assert len(recovery_files) == 1
         recovery_content = recovery_files[0].read_text()
         assert "msg0" in recovery_content
+        assert not store.memory_file.exists()
 
     @pytest.mark.asyncio
     async def test_raw_archive_counter_resets_on_success(self, tmp_path: Path) -> None:
