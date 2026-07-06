@@ -454,10 +454,10 @@ class TestMemoryConsolidationTypeHandling:
         assert await store.consolidate(messages, provider, "m") is None
         assert await store.consolidate(messages, provider, "m") is None
 
-        assert "WARNING" in store.history_file.read_text()
+        assert "⚠️ Synthesis failed" in store.history_file.read_text()
         assert "recovery/" in store.history_file.read_text()
         # Verify the recovery sidecar file was created
-        recovery_files = list(tmp_path.glob("recovery/*.txt"))
+        recovery_files = list((tmp_path / "memory" / "recovery").glob("*.json"))
         assert len(recovery_files) == 1
         recovery_content = recovery_files[0].read_text()
         assert "msg0" in recovery_content

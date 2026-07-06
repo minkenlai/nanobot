@@ -132,8 +132,13 @@ def has_multimodal_content(messages: list[dict[str, Any]]) -> bool:
     return has_image_content(messages) or has_audio_content(messages)
 
 
-def _extract_text(message: dict) -> str:
+def _extract_text(message: Any) -> str:
     """Extract text content from a message, handling various content block types."""
+    if isinstance(message, str):
+        return message
+    if not isinstance(message, dict):
+        return str(message) if message else ""
+
     content = message.get("content")
     if isinstance(content, str):
         return content

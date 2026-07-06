@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
 import json
 import os
 import re
@@ -12,6 +13,7 @@ import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
+from uuid import uuid4
 
 from loguru import logger
 
@@ -272,19 +274,65 @@ class MemoryStore:
         return True
 
     def _raw_archive(self, messages: list[dict]) -> None:
-        """Sidecar Recovery: dump raw messages to a timestamped file in recovery/;
-        append only a high-signal warning to HISTORY.md to avoid context bloat."""
+        """Fallback: dump raw messages to a recovery sidecar file.
+
+        Extracts large audio blocks to separate binary files to prevent JSON bloat.
+        """
         now = datetime.now()
         ts_human = now.strftime("%Y-%m-%d %H:%M")
         ts_file = now.strftime("%Y%m%d_%H%M%S")
         filename = f"raw-{ts_file}.txt"
         recovery_path = self.recovery_dir / filename
 
-        raw_content = self._format_messages(messages)
-        recovery_path.write_text(raw_content, encoding="utf-8")
+        # Create assets dir
+        assets_dir = ensure_dir(self.recovery_dir / "assets")
+
+        # Deep copy messages to avoid mutating the original session history
+        archived_messages = copy.deepcopy(messages)
+
+        for msg in archived_messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                continue
+
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "audio":
+                    continue
+
+                # Extract data: "data:<mime>;base64,<payload>"
+                data_val = block.get("data", "")
+                if not data_val or not data_val.startswith("data:"):
+                    continue
+
+                try:
+                    # Split mime and base64 payload
+                    if "," not in data_val:
+                        # Try to just strip 'data:' if comma is missing
+                        b64_payload = data_val.replace("data:", "")
+                    else:
+                        header, b64_payload = data_val.split(",", 1)
+
+                    # Save binary file
+                    asset_name = f"asset_{uuid4().hex[:12]}.bin"
+                    asset_path = assets_dir / asset_name
+
+                    binary_data = base64.b64decode(b64_payload)
+                    asset_path.write_bytes(binary_data)
+
+                    # Replace block content with a pointer
+                    block["data"] = f"FILE:{asset_path.name}"
+                    block["recovery_asset"] = asset_path.name
+                except Exception as e:
+                    logger.error("Failed to extract audio asset during raw_archive: %s", e)
+
+        # We use JSON for the recovery file now to preserve the structure with pointers
+        recovery_path = recovery_path.with_suffix(".json")
+        recovery_path.write_text(
+            json.dumps(archived_messages, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
         self.append_history(
-            f"[{ts_human}] ⚠️ Synthesis failed; raw data preserved in recovery/{filename}"
+            f"[{ts_human}] ⚠️ Synthesis failed; raw data preserved in recovery/{recovery_path.name}"
         )
         logger.warning(
             "Memory consolidation degraded: raw-archived {} messages to {}",

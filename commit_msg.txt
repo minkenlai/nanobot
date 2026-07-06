@@ -1,0 +1,7 @@
+Fix memory consolidation and audio asset recovery regressions
+
+- Restore missing `tempfile` import in `nanobot/agent/memory.py` to fix transcription failures.
+- Add `uuid` imports to support unique asset filename generation during raw archival.
+- Harden `_extract_text` in `nanobot/utils/helpers.py` to handle string inputs and prevent `AttributeError`.
+- Update `test_memory_consolidation_types.py` to correctly verify `.json` recovery files in the `memory/recovery` directory.
+- Integrate and verify `test_audio_recovery.py` for binary asset extraction.
