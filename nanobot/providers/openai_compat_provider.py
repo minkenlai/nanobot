@@ -355,7 +355,11 @@ class OpenAICompatClient(LLMClient):
 
         if tools:
             kwargs["tools"] = tools
-            kwargs["tool_choice"] = tool_choice or "auto"
+            tc = tool_choice or "auto"
+            if spec and spec.flatten_tool_choice and isinstance(tc, dict):
+                name = tc.get("function", {}).get("name")
+                tc = name if name else "auto"
+            kwargs["tool_choice"] = tc
 
         return kwargs
 

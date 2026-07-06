@@ -64,6 +64,8 @@ class ProviderSpec:
 
     # Provider supports cache_control on content blocks (e.g. Anthropic prompt caching)
     supports_prompt_caching: bool = False
+    # Flatten tool_choice from dict to string for APIs that don't support the object format (e.g. llama-server)
+    flatten_tool_choice: bool = False
 
     # HTTP request timeout in seconds (read timeout per chunk for streaming).
     # Local providers (Ollama, vLLM) are slower and need a longer timeout.
@@ -312,6 +314,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         default_api_base="http://inferencia:8080/v1",
         http_timeout=600,
         max_concurrent=1,
+        flatten_tool_choice=True,
     ),
     # Ollama (local, OpenAI-compatible)
     ProviderSpec(
