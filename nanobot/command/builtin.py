@@ -348,7 +348,7 @@ async def cmd_compact(ctx: CommandContext) -> OutboundMessage:
     )
 
     if not chunk:
-        logger.info("cmd_compact: nothing to consolidate for session %s", session.key)
+        logger.info("cmd_compact: nothing to consolidate for session {}", session.key)
         return OutboundMessage(
             address=ctx.msg.address,
             content="Nothing to summarize (session is already fully compacted).",

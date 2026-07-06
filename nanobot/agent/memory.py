@@ -323,7 +323,7 @@ class MemoryStore:
                     block["data"] = f"FILE:{asset_path.name}"
                     block["recovery_asset"] = asset_path.name
                 except Exception as e:
-                    logger.error("Failed to extract audio asset during raw_archive: %s", e)
+                    logger.error("Failed to extract audio asset during raw_archive: {}", e)
 
         # We use JSON for the recovery file now to preserve the structure with pointers
         recovery_path = recovery_path.with_suffix(".json")
