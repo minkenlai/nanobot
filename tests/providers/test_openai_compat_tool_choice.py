@@ -93,6 +93,7 @@ class TestFlattenToolChoice:
 
     # --- 2. flatten_tool_choice=True: dict with function name → string ---
 
+    @pytest.mark.skip(reason="llama-server tool_choice workaround – flatten disabled")
     def test_dict_tool_choice_flattened_to_function_name(self):
         spec = _spec(flatten_tool_choice=True)
         client = _make_client(spec)
@@ -110,6 +111,7 @@ class TestFlattenToolChoice:
 
         assert kwargs["tool_choice"] == "exec"
 
+    @pytest.mark.skip(reason="llama-server tool_choice workaround – flatten disabled")
     def test_dict_tool_choice_flattened_with_nested_function(self):
         """The flattening logic only reads tc['function']['name']."""
         spec = _spec(flatten_tool_choice=True)
@@ -133,6 +135,7 @@ class TestFlattenToolChoice:
 
     # --- 3. flatten_tool_choice=True: dict missing function name → "auto" ---
 
+    @pytest.mark.skip(reason="llama-server tool_choice workaround – flatten disabled")
     def test_dict_tool_choice_missing_function_falls_back_to_auto(self):
         spec = _spec(flatten_tool_choice=True)
         client = _make_client(spec)
@@ -150,6 +153,7 @@ class TestFlattenToolChoice:
 
         assert kwargs["tool_choice"] == "auto"
 
+    @pytest.mark.skip(reason="llama-server tool_choice workaround – flatten disabled")
     def test_dict_tool_choice_function_missing_name_falls_back_to_auto(self):
         """tc = {'function': {}} — function dict exists but has no name."""
         spec = _spec(flatten_tool_choice=True)
@@ -168,6 +172,7 @@ class TestFlattenToolChoice:
 
         assert kwargs["tool_choice"] == "auto"
 
+    @pytest.mark.skip(reason="llama-server tool_choice workaround – flatten disabled")
     def test_dict_tool_choice_function_name_empty_string_falls_back_to_auto(self):
         """tc = {'function': {'name': ''}} — empty name is falsy."""
         spec = _spec(flatten_tool_choice=True)

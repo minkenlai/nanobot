@@ -357,8 +357,10 @@ class OpenAICompatClient(LLMClient):
             kwargs["tools"] = tools
             tc = tool_choice or "auto"
             if spec and spec.flatten_tool_choice and isinstance(tc, dict):
-                name = tc.get("function", {}).get("name")
-                tc = name if name else "auto"
+                # llama-server doesn't accept dict object, but turns out it also does not
+                # handle flat name as expected, so we'll skip setting tool_choice for now
+                logger.info("Forcing 'auto' tool_choice for llama-server: {}", tc)
+                tc = "auto"
             kwargs["tool_choice"] = tc
 
         return kwargs
