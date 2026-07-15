@@ -382,10 +382,13 @@ class MemoryConsolidator:
         """Return the shared consolidation lock for one session."""
         return self._locks.setdefault(session_key, asyncio.Lock())
 
-    async def consolidate_messages(self, messages: list[dict[str, object]]) -> bool:
-        """Archive a selected message chunk into persistent memory."""
+    async def consolidate_messages(self, messages: list[dict[str, object]]) -> str | None:
+        """Archive a selected message chunk into persistent memory.
+
+        Returns the history_entry summary on success, or None on failure.
+        """
         messages = await self._transcribe_audio(messages)
-        return await self.store.consolidate(messages, self.provider, self.model) is not None
+        return await self.store.consolidate(messages, self.provider, self.model)
 
     async def _transcribe_audio(self, messages: list[dict[str, object]]) -> list[dict[str, object]]:
         """Transcribe audio blocks in messages before memory consolidation."""

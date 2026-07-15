@@ -136,12 +136,13 @@ class AgentRunner:
                     await hook.after_iteration(context)
                     break
                 for tool_call, result in zip(response.tool_calls, results):
+                    content = result if isinstance(result, (str, list)) else str(result)
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
                             "name": tool_call.name,
-                            "content": result,
+                            "content": content,
                         }
                     )
                 await hook.after_iteration(context)

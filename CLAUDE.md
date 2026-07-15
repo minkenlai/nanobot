@@ -99,7 +99,7 @@ Three-layer staging architecture:
 
 ### Command System
 
-Built-in slash commands are registered in `nanobot/command/builtin.py`. The `/status` command is a consolidated dashboard providing system uptime, token usage, context estimation, and active background tasks. Commands like `/new`, `/repl`, and `/restart` manage session lifecycle and development operations. The `/repl` command allows executing arbitrary Python code for debugging and system management. For security, it is restricted to users listed in `repl.allowUsers` (default: `["cli:user"]`). Access can be granted to other users using the format `"channel:sender_id"` (e.g., `"tg:12345678"`).
+Built-in slash commands are registered in `nanobot/command/builtin.py`. The `/status` command is a consolidated dashboard providing system uptime, token usage, context estimation, and active background tasks. Commands like `/new`, `/compact`, `/repl`, and `/restart` manage session lifecycle and development operations. The `/repl` command allows executing arbitrary Python code for debugging and system management. For security, it is restricted to users listed in `repl.allowUsers` (default: `["cli:user"]`). Access can be granted to other users using the format `"channel:sender_id"` (e.g., `"tg:12345678"`).
 
 ### Channel Integration (Telegram)
 

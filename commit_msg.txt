@@ -1,7 +1,10 @@
-Fix memory consolidation and audio asset recovery regressions
+fix(memory): ensure consolidate_messages returns summary string instead of boolean
 
-- Restore missing `tempfile` import in `nanobot/agent/memory.py` to fix transcription failures.
-- Add `uuid` imports to support unique asset filename generation during raw archival.
-- Harden `_extract_text` in `nanobot/utils/helpers.py` to handle string inputs and prevent `AttributeError`.
-- Update `test_memory_consolidation_types.py` to correctly verify `.json` recovery files in the `memory/recovery` directory.
-- Integrate and verify `test_audio_recovery.py` for binary asset extraction.
+Fixed a bug where `MemoryConsolidator.consolidate_messages` returned a boolean
+(`is not None`) instead of the actual summary string. This caused the `/compact`
+command to inject a boolean into the session history, leading to LLM failures
+in subsequent turns.
+
+- Updated `consolidate_messages` to return the result of `store.consolidate` directly.
+- Added `tests/memory/test_consolidator.py` to verify return types.
+- Updated `CLAUDE.md` to include `/compact` in the command documentation.

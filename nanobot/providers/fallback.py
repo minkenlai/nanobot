@@ -510,7 +510,6 @@ class FallbackClient(LLMClient):
                 "request is too large",
                 "model not found" + "context",  # some providers return this
                 "invalid request" + "context",
-                "invalid_request_error",
                 "too many tokens",
             ]
         )
