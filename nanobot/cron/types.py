@@ -65,6 +65,7 @@ class CronJob:
     created_at_ms: int = 0
     updated_at_ms: int = 0
     delete_after_run: bool = False
+    stateless: bool = False
 
 
 @dataclass

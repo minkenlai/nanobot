@@ -104,6 +104,10 @@ class CronTool(Tool):
                     ),
                 },
                 "job_id": {"type": "string", "description": "Job ID (for remove)"},
+                "stateless": {
+                    "type": "boolean",
+                    "description": "If True, the job runs without loading conversation history. Defaults to False.",
+                },
             },
             "required": ["action"],
         }
@@ -117,12 +121,13 @@ class CronTool(Tool):
         tz: str | None = None,
         at: str | None = None,
         job_id: str | None = None,
+        stateless: bool = False,
         **kwargs: Any,
     ) -> str:
         if action == "add":
             if self._in_cron_context.get():
                 return "Error: cannot schedule new jobs from within a cron job execution"
-            return self._add_job(message, every_seconds, cron_expr, tz, at)
+            return self._add_job(message, every_seconds, cron_expr, tz, at, stateless)
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
@@ -136,6 +141,7 @@ class CronTool(Tool):
         cron_expr: str | None,
         tz: str | None,
         at: str | None,
+        stateless: bool = False,
     ) -> str:
         if not message:
             return "Error: message is required for add"
@@ -181,6 +187,7 @@ class CronTool(Tool):
             channel=self._channel,
             to=self._chat_id,
             delete_after_run=delete_after,
+            stateless=stateless,
         )
         return f"Created job '{job.name}' (id: {job.id})"
 

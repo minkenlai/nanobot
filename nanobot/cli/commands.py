@@ -616,10 +616,19 @@ def gateway(
         address = Address(
             channel=job.payload.channel or "cli", segments=(str(job.payload.to or "direct"),)
         )
+
+        # Stateless jobs get an ephemeral session key to bypass history loading
+        if job.stateless:
+            import uuid as _uuid
+
+            session_key = f"cron://{job.id}:{_uuid.uuid4().hex}"
+        else:
+            session_key = f"cron://{job.id}"
+
         try:
             resp = await agent.process_direct(
                 reminder_note,
-                session_key=f"cron://{job.id}",
+                session_key=session_key,
                 address=address,
             )
         finally:

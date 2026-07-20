@@ -137,6 +137,7 @@ class CronService:
                             created_at_ms=j.get("createdAtMs", 0),
                             updated_at_ms=j.get("updatedAtMs", 0),
                             delete_after_run=j.get("deleteAfterRun", False),
+                            stateless=j.get("stateless", False),
                         )
                     )
                 self._store = CronStore(jobs=jobs)
@@ -194,6 +195,7 @@ class CronService:
                     "createdAtMs": j.created_at_ms,
                     "updatedAtMs": j.updated_at_ms,
                     "deleteAfterRun": j.delete_after_run,
+                    "stateless": j.stateless,
                 }
                 for j in self._store.jobs
             ],
@@ -336,6 +338,7 @@ class CronService:
         channel: str | None = None,
         to: str | None = None,
         delete_after_run: bool = False,
+        stateless: bool = False,
     ) -> CronJob:
         """Add a new job."""
         store = self._load_store()
@@ -358,6 +361,7 @@ class CronService:
             created_at_ms=now,
             updated_at_ms=now,
             delete_after_run=delete_after_run,
+            stateless=stateless,
         )
 
         store.jobs.append(job)
