@@ -138,33 +138,72 @@ Your workspace is at: {workspace_path}
             {"role": current_role, "content": merged},
         ]
 
+    # Audio MIME types recognised as native audio payloads.
+    _AUDIO_MIMES = frozenset(
+        {
+            "audio/ogg",
+            "audio/mpeg",
+            "audio/wav",
+            "audio/flac",
+            "audio/mp4",
+            "audio/webm",
+            "audio/x-wav",
+        }
+    )
+
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
-        """Build user message content with optional base64-encoded images."""
+        """Build user message content with optional base64-encoded images and audio."""
         if not media:
             return text
 
-        images = []
+        images: list[dict[str, Any]] = []
+        audios: list[dict[str, Any]] = []
+
         for path in media:
             p = Path(path)
             if not p.is_file():
                 continue
             raw = p.read_bytes()
-            # Detect real MIME type from magic bytes; fallback to filename guess
-            mime = detect_image_mime(raw) or mimetypes.guess_type(path)[0]
-            if not mime or not mime.startswith("image/"):
-                continue
             b64 = base64.b64encode(raw).decode()
-            images.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                    "_meta": {"path": str(p)},
-                }
-            )
 
-        if not images:
+            # Try image first (magic-byte detection)
+            mime = detect_image_mime(raw)
+            if mime:
+                images.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        "_meta": {"path": str(p)},
+                    }
+                )
+                continue
+
+            # Fallback: guess MIME from filename / extension
+            mime = mimetypes.guess_type(path)[0]
+            if not mime:
+                continue
+
+            if mime.startswith("image/"):
+                images.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        "_meta": {"path": str(p)},
+                    }
+                )
+            elif mime in self._AUDIO_MIMES:
+                audios.append(
+                    {
+                        "type": "audio",
+                        "data": f"data:{mime};base64,{b64}",
+                        "mime_type": mime,
+                        "_meta": {"path": str(p)},
+                    }
+                )
+
+        if not images and not audios:
             return text
-        return images + [{"type": "text", "text": text}]
+        return images + audios + [{"type": "text", "text": text}]
 
     def add_tool_result(
         self,

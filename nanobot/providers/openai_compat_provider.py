@@ -264,6 +264,74 @@ class OpenAICompatClient(LLMClient):
         return sanitized
 
     # ------------------------------------------------------------------
+    # Audio conversion helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _convert_audio_blocks_to_input_audio(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Convert internal ``audio`` blocks to OpenAI ``input_audio`` format.
+
+        Internal format::
+            {"type": "audio", "data": "data:audio/ogg;base64,XYZ", "mime_type": "audio/ogg"}
+
+        OpenAI input_audio format::
+            {"type": "input_audio", "data": "XYZ", "format": "ogg"}
+
+        Returns a new messages list with audio blocks converted.
+        Messages without audio blocks pass through unchanged.
+        """
+        # MIME → OpenAI audio format mapping
+        _mime_to_format: dict[str, str] = {
+            "audio/ogg": "ogg",
+            "audio/wav": "wav",
+            "audio/mpeg": "mp3",
+            "audio/mp3": "mp3",
+            "audio/flac": "flac",
+            "audio/webm": "webm",
+            "audio/mp4": "mp4",
+            "audio/aac": "aac",
+        }
+
+        converted: list[dict[str, Any]] = []
+        for msg in messages:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                converted.append(msg)
+                continue
+
+            new_blocks: list[Any] = []
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "audio":
+                    new_blocks.append(block)
+                    continue
+
+                data_uri = block.get("data", "")
+                mime = block.get("mime_type", "audio/ogg")
+                fmt = _mime_to_format.get(mime)
+                if fmt is None:
+                    logger.warning("Unknown audio MIME type '{}', falling back to wav", mime)
+                    fmt = "wav"
+
+                # Strip "data:<mime>;base64," prefix to get raw base64
+                if isinstance(data_uri, str) and data_uri.startswith("data:"):
+                    b64_start = data_uri.find(";base64,")
+                    if b64_start != -1:
+                        raw_b64 = data_uri[b64_start + 8 :]
+                    else:
+                        raw_b64 = data_uri[len("data:") :]
+                else:
+                    raw_b64 = data_uri
+
+                new_blocks.append(
+                    {"type": "input_audio", "input_audio": {"data": raw_b64, "format": fmt}}
+                )
+
+            converted.append({**msg, "content": new_blocks})
+        return converted
+
+    # ------------------------------------------------------------------
     # Build kwargs
     # ------------------------------------------------------------------
 
@@ -321,6 +389,11 @@ class OpenAICompatClient(LLMClient):
 
         # Merge consecutive same-role messages before any further processing.
         messages = self._merge_consecutive_roles(messages)
+
+        # Convert internal audio blocks to OpenAI input_audio format
+        # for providers that support native audio input (e.g. GPT-4o).
+        if spec and getattr(spec, "supports_native_audio", False):
+            messages = self._convert_audio_blocks_to_input_audio(messages)
 
         # Apply prompt caching if supported by provider and model.
         # OpenRouter supports it but only for Anthropic models.

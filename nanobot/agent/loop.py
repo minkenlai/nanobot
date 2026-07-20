@@ -104,6 +104,7 @@ class AgentLoop:
         self.registry = registry or AgentRegistry(self.config)
 
         # For the default runner, we use the provider passed in (if any),
+
         # otherwise we use the registry to get the default runner.
         if provider:
             self.runner = AgentRunner(provider)
@@ -1080,6 +1081,14 @@ class AgentLoop:
         path = (block.get("_meta") or {}).get("path", "")
         return {"type": "text", "text": f"[image: {path}]" if path else "[image]"}
 
+    @staticmethod
+    def _audio_placeholder(block: dict[str, Any]) -> dict[str, str]:
+        """Convert an inline audio block into a compact text placeholder."""
+        path = (block.get("_meta") or {}).get("path", "")
+        mime = block.get("mime_type", "audio/unknown")
+        label = f"[audio: {path} ({mime})]" if path else f"[audio ({mime})]"
+        return {"type": "text", "text": label}
+
     def _sanitize_persisted_blocks(
         self,
         content: list[dict[str, Any]],
@@ -1106,6 +1115,10 @@ class AgentLoop:
                 "url", ""
             ).startswith("data:image/"):
                 filtered.append(self._image_placeholder(block))
+                continue
+
+            if block.get("type") == "audio":
+                filtered.append(self._audio_placeholder(block))
                 continue
 
             if block.get("type") == "text" and isinstance(block.get("text"), str):

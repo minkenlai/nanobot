@@ -184,6 +184,7 @@ class TelegramConfig(Base):
 
     enabled: bool = False
     token: str = ""
+    transcription_api_key: str = ""
     allow_from: list[str] = Field(default_factory=list)
     proxy: str | None = None
     reply_to_message: bool = False

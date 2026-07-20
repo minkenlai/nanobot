@@ -64,6 +64,8 @@ class ProviderSpec:
 
     # Provider supports cache_control on content blocks (e.g. Anthropic prompt caching)
     supports_prompt_caching: bool = False
+    # Provider supports native audio input via input_audio blocks (e.g. OpenAI GPT-4o)
+    supports_native_audio: bool = False
     # Flatten tool_choice from dict to string for APIs that don't support the object format (e.g. llama-server)
     flatten_tool_choice: bool = False
 
@@ -206,6 +208,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         env_key="OPENAI_API_KEY",
         display_name="OpenAI",
         backend="openai_compat",
+        supports_native_audio=True,
     ),
     # OpenAI Codex: OAuth-based, dedicated provider
     ProviderSpec(
@@ -315,6 +318,7 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         http_timeout=600,
         max_concurrent=1,
         flatten_tool_choice=True,
+        supports_native_audio=True,
     ),
     # Ollama (local, OpenAI-compatible)
     ProviderSpec(
