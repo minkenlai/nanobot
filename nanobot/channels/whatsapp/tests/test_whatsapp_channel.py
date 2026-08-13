@@ -764,3 +764,354 @@ def test_reset_database_removes_sqlite_sidecars(tmp_path) -> None:
     assert not db.exists()
     assert not wal.exists()
     assert not shm.exists()
+
+
+def test_whatsapp_routing_config_defaults() -> None:
+    config = whatsapp_module.WhatsAppConfig()
+    assert config.routing.enabled is True
+    assert config.routing.staff_numbers == []
+    assert config.routing.staff_groups == []
+    assert config.routing.guide_instance_url == "http://127.0.0.1:18791/v1/chat/completions"
+    assert config.routing.guide_model_name == "nanobot"
+    assert config.routing.forward_timeout_seconds == 45.0
+
+
+@pytest.mark.asyncio
+async def test_staff_message_routes_locally(monkeypatch) -> None:
+    _patch_neonize_api(monkeypatch)
+    bus = MessageBus()
+    ch = WhatsAppChannel(
+        {
+            "enabled": True,
+            "allowFrom": ["*"],
+            "routing": {
+                "enabled": True,
+                "staff_numbers": ["13105551234"],
+            },
+        },
+        bus,
+    )
+    ch._started_at = 0
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(
+            message=_Proto(conversation="admin task"),
+            chat=_jid("13105551234", "s.whatsapp.net"),
+            sender=_jid("13105551234", "s.whatsapp.net"),
+        ),
+    )
+
+    assert bus.inbound_size == 1
+    msg = await bus.consume_inbound()
+    assert msg.content == "admin task"
+    assert msg.sender_id == "13105551234"
+
+
+@pytest.mark.asyncio
+async def test_non_staff_message_forwards_to_guide(monkeypatch) -> None:
+    _patch_neonize_api(monkeypatch)
+    captured_request = {}
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        captured_request["url"] = str(request.url)
+        captured_request["json"] = request.read().decode("utf-8")
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": "Hello! I am the studio guide assistant."}}
+                ]
+            },
+        )
+
+    client_send = _make_send_client()
+    bus = MessageBus()
+    ch = WhatsAppChannel(
+        {
+            "enabled": True,
+            "allowFrom": [],
+            "routing": {
+                "enabled": True,
+                "staff_numbers": ["13105551234"],
+                "guide_instance_url": "http://127.0.0.1:18791/v1/chat/completions",
+            },
+        },
+        bus,
+    )
+    ch._client = client_send
+    ch._connected = True
+    ch._started_at = 0
+
+    transport = httpx.MockTransport(handle_request)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **kw: real_client(transport=transport, **{k: v for k, v in kw.items() if k != "transport"}),
+    )
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(
+            message=_Proto(conversation="what are your hours?"),
+            chat=_jid("19995550000", "s.whatsapp.net"),
+            sender=_jid("19995550000", "s.whatsapp.net"),
+        ),
+    )
+
+    # Local bus should remain empty
+    assert bus.inbound_size == 0
+    # Outbound send should deliver the guide response to WhatsApp chat
+    jid = ("19995550000", "s.whatsapp.net")
+    client_send.send_message.assert_awaited_once_with(jid, "Hello! I am the studio guide assistant.")
+    assert "whatsapp:19995550000" in captured_request.get("json", "")
+
+
+@pytest.mark.asyncio
+async def test_non_staff_forward_connect_error_fallback(monkeypatch) -> None:
+    _patch_neonize_api(monkeypatch)
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("Connection refused", request=request)
+
+    client_send = _make_send_client()
+    bus = MessageBus()
+    ch = WhatsAppChannel(
+        {
+            "enabled": True,
+            "routing": {
+                "enabled": True,
+                "staff_numbers": ["13105551234"],
+            },
+        },
+        bus,
+    )
+    ch._client = client_send
+    ch._connected = True
+    ch._started_at = 0
+
+    transport = httpx.MockTransport(handle_request)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **kw: real_client(transport=transport, **{k: v for k, v in kw.items() if k != "transport"}),
+    )
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(
+            message=_Proto(conversation="hello"),
+            chat=_jid("19995550000", "s.whatsapp.net"),
+            sender=_jid("19995550000", "s.whatsapp.net"),
+        ),
+    )
+
+    client_send.send_message.assert_awaited_once()
+    sent_text = client_send.send_message.await_args.args[1]
+    assert "maintenance" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_non_staff_forward_timeout_fallback(monkeypatch) -> None:
+    _patch_neonize_api(monkeypatch)
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("Timeout", request=request)
+
+    client_send = _make_send_client()
+    bus = MessageBus()
+    ch = WhatsAppChannel(
+        {
+            "enabled": True,
+            "routing": {
+                "enabled": True,
+                "staff_numbers": ["13105551234"],
+            },
+        },
+        bus,
+    )
+    ch._client = client_send
+    ch._connected = True
+    ch._started_at = 0
+
+    transport = httpx.MockTransport(handle_request)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **kw: real_client(transport=transport, **{k: v for k, v in kw.items() if k != "transport"}),
+    )
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(
+            message=_Proto(conversation="hello"),
+            chat=_jid("19995550000", "s.whatsapp.net"),
+            sender=_jid("19995550000", "s.whatsapp.net"),
+        ),
+    )
+
+    client_send.send_message.assert_awaited_once()
+    sent_text = client_send.send_message.await_args.args[1]
+    assert "One moment please" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_non_staff_forward_malformed_response_handled_gracefully(monkeypatch) -> None:
+    _patch_neonize_api(monkeypatch)
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": []})
+
+    client_send = _make_send_client()
+    bus = MessageBus()
+    ch = WhatsAppChannel(
+        {
+            "enabled": True,
+            "routing": {
+                "enabled": True,
+                "staff_numbers": ["13105551234"],
+            },
+        },
+        bus,
+    )
+    ch._client = client_send
+    ch._connected = True
+    ch._started_at = 0
+
+    transport = httpx.MockTransport(handle_request)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **kw: real_client(transport=transport, **{k: v for k, v in kw.items() if k != "transport"}),
+    )
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(
+            message=_Proto(conversation="hello"),
+            chat=_jid("19995550000", "s.whatsapp.net"),
+            sender=_jid("19995550000", "s.whatsapp.net"),
+        ),
+    )
+
+    client_send.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_staff_forward_sse_streaming_response(monkeypatch) -> None:
+    _patch_neonize_api(monkeypatch)
+
+    def handle_request(request: httpx.Request) -> httpx.Response:
+        sse_lines = [
+            'data: {"choices": [{"delta": {"content": "Hello! "}}]}\n\n',
+            'data: {"choices": [{"delta": {"content": "Welcome to the studio."}}]}\n\n',
+            'data: [DONE]\n\n',
+        ]
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content="".join(sse_lines).encode("utf-8"),
+        )
+
+    client_send = _make_send_client()
+    presence_calls = []
+
+    async def mock_presence(jid, state, media):
+        presence_calls.append((jid, state))
+
+    client_send.send_chat_presence = AsyncMock(side_effect=mock_presence)
+
+    bus = MessageBus()
+    ch = WhatsAppChannel(
+        {
+            "enabled": True,
+            "routing": {
+                "enabled": True,
+                "staff_numbers": ["13105551234"],
+            },
+        },
+        bus,
+    )
+    ch._client = client_send
+    ch._connected = True
+    ch._started_at = 0
+
+    transport = httpx.MockTransport(handle_request)
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda *a, **kw: real_client(transport=transport, **{k: v for k, v in kw.items() if k != "transport"}),
+    )
+
+    await ch._handle_neonize_message(
+        SimpleNamespace(download_any=AsyncMock()),
+        _event(
+            message=_Proto(conversation="hi"),
+            chat=_jid("19995550000", "s.whatsapp.net"),
+            sender=_jid("19995550000", "s.whatsapp.net"),
+        ),
+    )
+
+    jid = ("19995550000", "s.whatsapp.net")
+    client_send.send_message.assert_awaited_once_with(jid, "Hello! Welcome to the studio.")
+    assert presence_calls == [
+        ("19995550000@s.whatsapp.net", "composing"),
+        ("19995550000@s.whatsapp.net", "paused"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_channel_hot_reload_config(tmp_path, monkeypatch):
+    import json
+    config_file = tmp_path / "config.json"
+    initial_data = {
+        "channels": {
+            "whatsapp": {
+                "enabled": True,
+                "routing": {
+                    "enabled": True,
+                    "staff_numbers": ["13105551234"],
+                },
+            }
+        }
+    }
+    config_file.write_text(json.dumps(initial_data), encoding="utf-8")
+
+    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_file)
+
+    bus = MessageBus()
+    ch = WhatsAppChannel(initial_data["channels"]["whatsapp"], bus)
+
+    # Initial mtime set
+    ch._check_and_reload_config()
+    assert "13105551234" in ch.config.routing.staff_numbers
+    assert "19995551234" not in ch.config.routing.staff_numbers
+
+    # Update config.json on disk
+    updated_data = {
+        "channels": {
+            "whatsapp": {
+                "enabled": True,
+                "routing": {
+                    "enabled": True,
+                    "staff_numbers": ["13105551234", "19995551234"],
+                },
+            }
+        }
+    }
+    # Ensure mtime updates by touching or rewriting
+    import time
+    time.sleep(0.01)
+    config_file.write_text(json.dumps(updated_data), encoding="utf-8")
+
+    # Hot reload check
+    ch._check_and_reload_config()
+    assert "19995551234" in ch.config.routing.staff_numbers
+
+
+
