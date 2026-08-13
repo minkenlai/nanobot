@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -176,6 +177,14 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "[list|approve <code>|deny <code>|revoke <user_id>]",
         accepts_args=True,
     ),
+    BuiltinCommandSpec(
+        "/guide",
+        "Test Guide assistant",
+        "Send a test prompt to the Guide assistant.",
+        "compass",
+        "<prompt>",
+        accepts_args=True,
+    ),
 )
 
 
@@ -307,6 +316,8 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
     runtime = None
     if snapshot:
         runtime = ctx.runtime or loop.runtime_for_session(session)
+    if session.messages:
+        loop.sessions.archive_session_snapshot(session, reason="new_command")
     session.clear()
     loop.sessions.save(session)
     loop.sessions.invalidate(session.key)
@@ -997,6 +1008,208 @@ async def cmd_trigger(ctx: CommandContext) -> OutboundMessage:
         metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
     )
 
+def _extract_sse_delta_content(data_str: str) -> str | None:
+    """Extract stream delta text from an SSE JSON payload."""
+    try:
+        payload: Any = json.loads(data_str)
+        if not isinstance(payload, dict):
+            return None
+        payload_dict: dict[str, Any] = cast(dict[str, Any], payload)
+        choices: Any = payload_dict.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return None
+        choices_list: list[Any] = cast(list[Any], choices)
+        first: Any = choices_list[0]
+        if not isinstance(first, dict):
+            return None
+        first_dict: dict[str, Any] = cast(dict[str, Any], first)
+        delta: Any = first_dict.get("delta")
+        if not isinstance(delta, dict):
+            return None
+        delta_dict: dict[str, Any] = cast(dict[str, Any], delta)
+        content: Any = delta_dict.get("content")
+        return content if isinstance(content, str) else None
+    except Exception:
+        return None
+
+
+def _extract_response_content(body_bytes: bytes) -> str:
+    """Extract message content from a non-streaming OpenAI-compatible chat response."""
+    try:
+        payload: Any = json.loads(body_bytes.decode("utf-8"))
+        if isinstance(payload, dict):
+            payload_dict: dict[str, Any] = cast(dict[str, Any], payload)
+            choices: Any = payload_dict.get("choices")
+            if isinstance(choices, list) and choices:
+                choices_list: list[Any] = cast(list[Any], choices)
+                first: Any = choices_list[0]
+                if isinstance(first, dict):
+                    first_dict: dict[str, Any] = cast(dict[str, Any], first)
+                    msg: Any = first_dict.get("message")
+                    if isinstance(msg, dict):
+                        msg_dict: dict[str, Any] = cast(dict[str, Any], msg)
+                        return str(msg_dict.get("content") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _resolve_guide_config(ctx: CommandContext) -> tuple[str, str, float]:
+    """Resolve Guide instance URL, model name, and timeout from loop channel configuration."""
+    guide_url = ""
+    guide_model = "nanobot"
+    timeout_seconds = 45.0
+
+    channels_cfg: Any = getattr(ctx.loop, "channels_config", None) if ctx.loop else None
+    if channels_cfg:
+        try:
+            tg: Any = getattr(channels_cfg, "telegram", None) or (channels_cfg.get("telegram") if hasattr(channels_cfg, "get") else None)  # type: ignore[union-attr]
+            if tg:
+                guide_bot: Any = getattr(tg, "guide_bot", None) or getattr(tg, "guideBot", None) or (tg.get("guide_bot") or tg.get("guideBot") if hasattr(tg, "get") else None)  # type: ignore[union-attr]
+                if guide_bot:
+                    url_val = getattr(guide_bot, "guide_instance_url", None) or (guide_bot.get("guide_instance_url") or guide_bot.get("guideInstanceUrl") if hasattr(guide_bot, "get") else None)  # type: ignore[union-attr]
+                    if url_val:
+                        guide_url = str(url_val).strip()
+
+                    model_val = getattr(guide_bot, "guide_model_name", None) or (guide_bot.get("guide_model_name") or guide_bot.get("guideModelName") if hasattr(guide_bot, "get") else None)  # type: ignore[union-attr]
+                    if model_val:
+                        guide_model = str(model_val).strip()
+
+                    val = getattr(guide_bot, "forward_timeout_seconds", None) or (guide_bot.get("forward_timeout_seconds") or guide_bot.get("forwardTimeoutSeconds") if hasattr(guide_bot, "get") else None)  # type: ignore[union-attr]
+                    if val is not None:
+                        with suppress(ValueError, TypeError):
+                            timeout_seconds = float(val)  # type: ignore[arg-type]
+
+            if not guide_url:
+                wa: Any = getattr(channels_cfg, "whatsapp", None) or (channels_cfg.get("whatsapp") if hasattr(channels_cfg, "get") else None)  # type: ignore[union-attr]
+                if wa:
+                    routing: Any = getattr(wa, "routing", None) or (wa.get("routing") if hasattr(wa, "get") else None)  # type: ignore[union-attr]
+                    if routing:
+                        url_val = getattr(routing, "guide_instance_url", None) or (routing.get("guide_instance_url") or routing.get("guideInstanceUrl") if hasattr(routing, "get") else None)  # type: ignore[union-attr]
+                        if url_val:
+                            guide_url = str(url_val).strip()
+
+                        model_val = getattr(routing, "guide_model_name", None) or (routing.get("guide_model_name") or routing.get("guideModelName") if hasattr(routing, "get") else None)  # type: ignore[union-attr]
+                        if model_val:
+                            guide_model = str(model_val).strip()
+
+                        val = getattr(routing, "forward_timeout_seconds", None) or (routing.get("forward_timeout_seconds") or routing.get("forwardTimeoutSeconds") if hasattr(routing, "get") else None)  # type: ignore[union-attr]
+                        if val is not None:
+                            with suppress(ValueError, TypeError):
+                                timeout_seconds = float(val)  # type: ignore[arg-type]
+        except Exception:
+            pass
+
+    if not guide_url:
+        guide_url = os.environ.get("NANOBOT_GUIDE_INSTANCE_URL", "http://127.0.0.1:18791/v1/chat/completions")
+
+    return guide_url, guide_model, timeout_seconds
+
+
+async def cmd_guide(ctx: CommandContext) -> OutboundMessage | None:
+    """Send a test prompt to the Guide assistant via SSE HTTP API."""
+    import httpx
+
+    prompt = ctx.args.strip()
+    if not prompt:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Usage: /guide <prompt>\nSend a test prompt to the Guide assistant.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+    guide_url, guide_model, timeout_seconds = _resolve_guide_config(ctx)
+
+    # Construct isolated test session ID and user ID
+    channel = ctx.msg.channel or "chat"
+    chat_id = ctx.msg.chat_id or "default"
+    thread_id = (ctx.msg.metadata or {}).get("message_thread_id")
+
+    if thread_id is not None:
+        session_id = f"{channel}:guide:test:{chat_id}:topic:{thread_id}"
+    else:
+        session_id = f"{channel}:guide:test:{chat_id}"
+
+    user_id = f"{channel}:{ctx.msg.sender_id}"
+
+    payload = {
+        "model": guide_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "user": user_id,
+        "session_id": session_id,
+        "stream": True,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            async with client.stream(
+                "POST",
+                guide_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            ) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+
+                if "text/event-stream" in content_type:
+                    chunks: list[str] = []
+                    async for line in response.aiter_lines():
+                        line_str = line.strip()
+                        if not line_str.startswith("data:"):
+                            continue
+                        data_str = line_str[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        if content := _extract_sse_delta_content(data_str):
+                            chunks.append(content)
+                    reply_text = "".join(chunks).strip()
+                else:
+                    body_bytes = await response.aread()
+                    reply_text = _extract_response_content(body_bytes)
+
+                if reply_text:
+                    return OutboundMessage(
+                        channel=ctx.msg.channel,
+                        chat_id=ctx.msg.chat_id,
+                        content=reply_text,
+                        metadata={
+                            **dict(ctx.msg.metadata or {}),
+                            "bot_identity": "admin",
+                            "node_type": "guide",
+                        },
+                    )
+                else:
+                    return OutboundMessage(
+                        channel=ctx.msg.channel,
+                        chat_id=ctx.msg.chat_id,
+                        content="Received empty response from Guide assistant.",
+                        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+                    )
+
+    except httpx.ConnectError:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=f"The Guide assistant at {guide_url} is unreachable. Please ensure the Guide Node server is running.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    except httpx.TimeoutException:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Timeout waiting for Guide assistant response.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    except Exception as e:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=f"Error communicating with Guide assistant: {e}",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Return available slash commands."""
     return OutboundMessage(
@@ -1046,3 +1259,5 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/help", cmd_help)
     router.exact("/pairing", cmd_pairing)
     router.prefix("/pairing ", cmd_pairing)
+    router.exact("/guide", cmd_guide)
+    router.prefix("/guide ", cmd_guide)

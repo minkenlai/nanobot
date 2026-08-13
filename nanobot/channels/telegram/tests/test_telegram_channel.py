@@ -66,8 +66,9 @@ class _FakeBot:
         self.get_me_calls += 1
         return SimpleNamespace(id=999, username="nanobot_test")
 
-    async def set_my_commands(self, commands) -> None:
-        self.commands = commands
+    async def set_my_commands(self, commands, scope=None) -> None:
+        if scope is None:
+            self.commands = commands
 
     async def send_message(self, **kwargs):
         self.sent_messages.append(kwargs)
@@ -1267,7 +1268,7 @@ async def test_group_policy_mention_ignores_unmentioned_group_message() -> None:
         handled.append(kwargs)
 
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     await channel._on_message(_make_telegram_update(text="hello everyone"), None)
 
@@ -1289,7 +1290,7 @@ async def test_group_policy_mention_accepts_text_mention_and_caches_bot_identity
         handled.append(kwargs)
 
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     mention = SimpleNamespace(type="mention", offset=0, length=13)
     await channel._on_message(_make_telegram_update(text="@nanobot_test hi", entities=[mention]), None)
@@ -1313,7 +1314,7 @@ async def test_group_policy_mention_accepts_caption_mention() -> None:
         handled.append(kwargs)
 
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     mention = SimpleNamespace(type="mention", offset=0, length=13)
     await channel._on_message(
@@ -1339,7 +1340,7 @@ async def test_group_policy_mention_accepts_reply_to_bot() -> None:
         handled.append(kwargs)
 
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     reply = SimpleNamespace(from_user=SimpleNamespace(id=999))
     await channel._on_message(_make_telegram_update(text="reply", reply_to_message=reply), None)
@@ -1361,7 +1362,7 @@ async def test_group_policy_open_accepts_plain_group_message() -> None:
         handled.append(kwargs)
 
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     await channel._on_message(_make_telegram_update(text="hello group"), None)
 
@@ -1433,7 +1434,7 @@ async def test_on_message_includes_reply_context() -> None:
     async def capture_handle(**kwargs) -> None:
         handled.append(kwargs)
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     reply = SimpleNamespace(text="Hello", message_id=2, from_user=SimpleNamespace(id=1))
     update = _make_telegram_update(text="translate this", reply_to_message=reply)
@@ -1554,7 +1555,7 @@ async def test_on_message_attaches_reply_to_media_when_available(monkeypatch, tm
     async def capture_handle(**kwargs) -> None:
         handled.append(kwargs)
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     reply_with_photo = SimpleNamespace(
         text=None,
@@ -1593,7 +1594,7 @@ async def test_on_message_reply_to_media_fallback_when_download_fails() -> None:
     async def capture_handle(**kwargs) -> None:
         handled.append(kwargs)
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     reply_with_photo = SimpleNamespace(
         text=None,
@@ -1637,7 +1638,7 @@ async def test_on_message_reply_to_caption_and_media(monkeypatch, tmp_path) -> N
     async def capture_handle(**kwargs) -> None:
         handled.append(kwargs)
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     reply_with_caption_and_photo = SimpleNamespace(
         text=None,
@@ -1847,7 +1848,7 @@ async def test_on_message_pairs_unauthorized_private_user_before_side_effects(
     )
     channel._app = _FakeApp(lambda: None)
     started_typing: list[str] = []
-    channel._start_typing = lambda chat_id: started_typing.append(chat_id)
+    channel._start_typing = lambda chat_id, *a, **kw: started_typing.append(chat_id)
     channel._add_reaction = AsyncMock(return_value=None)
     channel._download_message_media = AsyncMock(return_value=([], []))
     monkeypatch.setattr(
@@ -1875,7 +1876,7 @@ async def test_on_message_location_content() -> None:
     async def capture_handle(**kwargs) -> None:
         handled.append(kwargs)
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     location = SimpleNamespace(latitude=48.8566, longitude=2.3522)
     update = _make_telegram_update(location=location)
@@ -1897,7 +1898,7 @@ async def test_on_message_location_with_text() -> None:
     async def capture_handle(**kwargs) -> None:
         handled.append(kwargs)
     channel._handle_message = capture_handle
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     location = SimpleNamespace(latitude=51.5074, longitude=-0.1278)
     update = _make_telegram_update(text="meet me here", location=location)
@@ -2374,7 +2375,7 @@ async def test_callback_query_handles_inaccessible_message() -> None:
         MessageBus(),
     )
     channel._handle_message = AsyncMock()
-    channel._start_typing = lambda _chat_id: None
+    channel._start_typing = lambda *a, **kw: None
 
     query = SimpleNamespace(
         id="cb_inaccessible",
@@ -2418,3 +2419,158 @@ def test_markdown_to_html_code_block_same_line_no_newline() -> None:
 
     stripped = _strip_md_block(text)
     assert stripped == "Use <tag> here"
+
+
+@pytest.mark.asyncio
+async def test_dual_telegram_bot_session_routing() -> None:
+    """Verify that Guide Bot updates yield telegram:guide: session keys and guide node metadata."""
+    from nanobot.channels.telegram.runtime import TelegramGuideBotConfig
+
+    config = TelegramConfig(
+        enabled=True,
+        token="123:admin_token",
+        allow_from=["12345"],
+        guide_bot=TelegramGuideBotConfig(
+            enabled=True,
+            token="456:guide_token",
+            allow_from=[],
+        ),
+    )
+    channel = TelegramChannel(config, MessageBus())
+    channel._guide_bot_user_id = 99999
+
+    handled = []
+    async def capture_handle(**kwargs) -> None:
+        handled.append(kwargs)
+    channel._handle_message = capture_handle
+
+    sent_messages = []
+    async def capture_send(outbound: OutboundMessage) -> None:
+        sent_messages.append(outbound)
+    channel.send = capture_send
+    channel._start_typing = lambda *a, **kw: None
+
+    guide_context = SimpleNamespace(bot=SimpleNamespace(id=99999))
+    update = _make_telegram_update(text="Hello guide bot", chat_type="private")
+    await channel._on_message(update, guide_context)
+
+    # Primary AgentLoop is NEVER invoked when unconfigured/unreachable
+    assert len(handled) == 0
+    assert len(sent_messages) == 1
+    assert "temporarily unavailable" in sent_messages[0].content
+    assert sent_messages[0].chat_id == "-100123"
+
+
+def test_parse_chat_id() -> None:
+    from nanobot.channels.telegram.runtime import TelegramChannel
+
+    assert TelegramChannel._parse_chat_id("telegram:guide:8466578140") == 8466578140
+    assert TelegramChannel._parse_chat_id("telegram:8466578140") == 8466578140
+    assert TelegramChannel._parse_chat_id("telegram:-10012345678") == -10012345678
+    assert TelegramChannel._parse_chat_id("8466578140") == 8466578140
+    assert TelegramChannel._parse_chat_id(8466578140) == 8466578140
+
+
+@pytest.mark.asyncio
+async def test_guide_bot_command_menu_configuration() -> None:
+    """Verify that Guide Bot configures custom command menu or deletes default admin commands."""
+    from nanobot.channels.telegram.runtime import (
+        TelegramGuideBotCommandConfig,
+        TelegramGuideBotConfig,
+    )
+
+    config = TelegramConfig(
+        enabled=True,
+        token="123:admin",
+        guide_bot=TelegramGuideBotConfig(
+            enabled=True,
+            token="456:guide",
+            commands=[TelegramGuideBotCommandConfig(command="help", description="Get customer support")],
+        ),
+    )
+    channel = TelegramChannel(config, MessageBus())
+    assert channel.config.guide_bot.commands is not None
+    assert len(channel.config.guide_bot.commands) == 1
+    assert channel.config.guide_bot.commands[0].command == "help"
+
+
+@pytest.mark.asyncio
+async def test_guide_bot_typing_indicator_and_reaction_routing() -> None:
+    """Verify typing indicators and reactions use Guide Bot when is_guide=True or bot_identity=guide."""
+    from contextlib import suppress
+    from unittest.mock import AsyncMock
+
+    from telegram import ReactionTypeEmoji
+
+    from nanobot.channels.telegram.runtime import TelegramGuideBotConfig
+
+    config = TelegramConfig(
+        enabled=True,
+        token="123:admin_token",
+        guide_bot=TelegramGuideBotConfig(
+            enabled=True,
+            token="456:guide_token",
+        ),
+    )
+    channel = TelegramChannel(config, MessageBus())
+
+    admin_bot = AsyncMock()
+    guide_bot = AsyncMock()
+
+    channel._app = SimpleNamespace(bot=admin_bot)
+    channel._guide_app = SimpleNamespace(bot=guide_bot)
+    channel._running = True
+
+    # Test _get_bot bot resolution
+    assert channel._get_bot("8466578140", is_guide=True) == guide_bot
+    assert channel._get_bot("8466578140", is_guide=False) == admin_bot
+    assert channel._get_bot("8466578140", metadata={"bot_identity": "guide"}) == guide_bot
+    assert channel._get_bot("telegram:guide:8466578140") == guide_bot
+    assert channel._get_bot("8466578140", metadata={"bot_identity": "admin", "node_type": "guide"}) == admin_bot
+    assert channel._typing_key("8466578140", metadata={"bot_identity": "admin", "node_type": "guide"}) == "admin:8466578140"
+
+    # Test _add_reaction routing
+    await channel._add_reaction("8466578140", 100, "👀", is_guide=True)
+    guide_bot.set_message_reaction.assert_awaited_once_with(
+        chat_id=8466578140,
+        message_id=100,
+        reaction=[ReactionTypeEmoji(emoji="👀")],
+    )
+    admin_bot.set_message_reaction.assert_not_awaited()
+
+    # Test typing indicator loop uses Guide Bot
+    task = asyncio.create_task(channel._typing_loop("8466578140", is_guide=True))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    guide_bot.send_chat_action.assert_awaited_with(chat_id=8466578140, action="typing")
+    admin_bot.send_chat_action.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_telegram_channel_staff_policy_command_menu_filtering() -> None:
+    from nanobot.agent.staff_policy import StaffPolicy
+
+    config = TelegramConfig(enabled=True, token="123:token")
+    channel = TelegramChannel(config, MessageBus())
+
+    mock_loop = SimpleNamespace(
+        staff_policy=StaffPolicy(
+            enabled=True,
+            unrestricted_users=["telegram:9999"],
+            allowed_commands=["/help", "/status", "/guide"],
+        )
+    )
+    channel._loop = mock_loop  # type: ignore[assignment]
+
+    default_cmds = [
+        cmd for cmd in channel.BOT_COMMANDS
+        if mock_loop.staff_policy.is_command_allowed(None, "telegram", f"/{cmd.command}")
+    ]
+    assert len(default_cmds) < len(channel.BOT_COMMANDS)
+    assert any(c.command == "guide" for c in default_cmds)
+    assert not any(c.command == "pairing" for c in default_cmds)
+    assert not any(c.command == "dream" for c in default_cmds)
+
