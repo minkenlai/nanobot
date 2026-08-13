@@ -726,3 +726,22 @@ def test_exec_blocks_double_slash_absolute_paths(tmp_path, path):
 
     assert result is not None
     assert "path outside working dir" in result
+def test_file_tools_create_inherits_exec_sandbox_binds(tmp_path):
+    from nanobot.agent.tools.context import ToolContext
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.config.schema import Config
+
+    extra_dir = tmp_path / "extra"
+    extra_dir.mkdir()
+    cfg = Config()
+    cfg.tools.exec.sandbox_rw_binds = [str(extra_dir)]
+    cfg.tools.restrict_to_workspace = True
+
+    ctx = ToolContext(
+        workspace=str(tmp_path / "ws"),
+        config=cfg.tools,
+    )
+    tools = ReadFileTool.create(ctx)
+    assert extra_dir in tools._extra_read_allowed_dirs
+    assert extra_dir in tools._extra_write_allowed_dirs
+

@@ -5,6 +5,7 @@
 import difflib
 import mimetypes
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -91,12 +92,29 @@ class _FsTool(Tool):
         )
         sandbox_restricts = bool(ctx.config.exec.sandbox)
         allowed_dir = agent_workspace if restrict else None
+        extra_read: list[Path] = [BUILTIN_SKILLS_DIR, resolved_agent_workspace / "skills"]
+        extra_write: list[Path] = []
+        exec_cfg = getattr(ctx.config, "exec", None)
+        if exec_cfg is not None:
+            for p in getattr(exec_cfg, "sandbox_ro_binds", []) or []:
+                with suppress(Exception):
+                    path = Path(os.path.expandvars(str(p).strip())).expanduser().resolve(strict=False)
+                    if path.is_absolute():
+                        extra_read.append(path)
+            for p in getattr(exec_cfg, "sandbox_rw_binds", []) or []:
+                with suppress(Exception):
+                    path = Path(os.path.expandvars(str(p).strip())).expanduser().resolve(strict=False)
+                    if path.is_absolute():
+                        extra_read.append(path)
+                        extra_write.append(path)
+
         # Agent-owned skills stay available from project scopes. History is a narrower
         # capability: expose only the append-only log, not the surrounding memory directory.
         return cls(
             workspace=agent_workspace,
             allowed_dir=allowed_dir,
-            extra_read_allowed_dirs=[BUILTIN_SKILLS_DIR, resolved_agent_workspace / "skills"],
+            extra_read_allowed_dirs=extra_read,
+            extra_write_allowed_dirs=extra_write,
             extra_read_allowed_files=[resolved_agent_workspace / "memory" / "history.jsonl"],
             file_states=ctx.file_state_store,
             restrict_to_workspace=ctx.config.restrict_to_workspace,
