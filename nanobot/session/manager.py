@@ -358,6 +358,7 @@ class Session:
         self.provider_state = None
         self.updated_at = datetime.now()
         self.metadata.pop("_last_summary", None)
+        self.metadata["_was_cleared_during_turn"] = True
 
     def retain_recent_legal_suffix(
         self,
@@ -1621,6 +1622,36 @@ class SessionManager:
         """Remove a session from the in-memory cache."""
         self._cache.pop(key, None)
         self._overflow_cache.pop(key, None)
+
+    def archive_session_snapshot(
+        self,
+        session: Session,
+        reason: str = "reset",
+    ) -> Path | None:
+        """Write a durable pre-reset snapshot of a session to sessions/archives/."""
+        if not session.messages:
+            return None
+        archives_dir = ensure_dir(self.sessions_dir / "archives")
+        safe_key = self.safe_key(session.key)
+        ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_path = archives_dir / f"{safe_key}_{ts_str}_{reason}.json"
+
+        payload = {
+            "key": session.key,
+            "archived_at": datetime.now().isoformat(),
+            "reason": reason,
+            "created_at": session.created_at.isoformat(),
+            "updated_at": session.updated_at.isoformat(),
+            "metadata": session.metadata,
+            "messages": session.messages,
+        }
+        try:
+            archive_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            logger.info("[Session Archiver] Archived pre-{} snapshot for session {} to {}", reason, session.key, archive_path.name)
+            return archive_path
+        except Exception as e:
+            logger.warning("[Session Archiver] Failed to archive session {}: {}", session.key, e)
+            return None
 
     def delete_session(self, key: str) -> bool:
         """Delete a persisted session and invalidate its cache entry."""
