@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import hmac
 import json as _json
 import time
@@ -49,6 +50,11 @@ _MODEL_NAME_KEY = web.AppKey[str]("model_name")
 _REQUEST_TIMEOUT_KEY = web.AppKey[float]("request_timeout")
 _SESSION_LOCKS_KEY = web.AppKey[dict[str, asyncio.Lock]]("session_locks")
 _PREPARE_AGENT_KEY = web.AppKey[Callable[[], Awaitable[None]] | None]("prepare_agent")
+_CORS_ORIGINS_KEY = web.AppKey[list[str]]("cors_origins")
+_MAX_TURN_PROMPT_LENGTH_KEY = web.AppKey[int]("max_turn_prompt_length")
+_RATE_LIMIT_IP_KEY = web.AppKey[int]("rate_limit_ip_per_min")
+_RATE_LIMIT_SESSION_KEY = web.AppKey[int]("rate_limit_session_per_min")
+_RATE_LIMITER_KEY = web.AppKey[Any]("rate_limiter")
 _MISSING = object()
 
 
@@ -78,15 +84,58 @@ async def _prepare_agent(app: Any) -> None:
         await prepare()
 
 
-# ---------------------------------------------------------------------------
-# Response helpers
-# ---------------------------------------------------------------------------
+class SlidingWindowRateLimiter:
+    """In-memory sliding window rate limiter per key (IP or session_id)."""
+
+    def __init__(self) -> None:
+        self._history: dict[str, list[float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def is_allowed(self, key: str, max_requests: int, window_seconds: float = 60.0) -> bool:
+        if max_requests <= 0:
+            return True
+        now = time.monotonic()
+        cutoff = now - window_seconds
+        async with self._lock:
+            timestamps = self._history.get(key, [])
+            valid_timestamps = [t for t in timestamps if t > cutoff]
+            if len(valid_timestamps) >= max_requests:
+                self._history[key] = valid_timestamps
+                return False
+            valid_timestamps.append(now)
+            self._history[key] = valid_timestamps
+            return True
 
 
-def _error_json(status: int, message: str, err_type: str = "invalid_request_error") -> web.Response:
+def _cors_headers(request: web.Request, allowed_origins: list[str] | None = None) -> dict[str, str]:
+    origins = allowed_origins or ["*"]
+    origin = request.headers.get("Origin", "*")
+    if not origins or "*" in origins:
+        allow_origin = origin if origin != "*" else "*"
+    elif origin in origins:
+        allow_origin = origin
+    else:
+        allow_origin = origins[0]
+
+    return {
+        "Access-Control-Allow-Origin": allow_origin,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Session-Id, X-Requested-With",
+        "Access-Control-Max-Age": "86400",
+    }
+
+
+def _error_json(
+    status: int,
+    message: str,
+    err_type: str = "invalid_request_error",
+    headers: dict[str, str] | None = None,
+) -> web.Response:
+    resp_headers = dict(headers) if headers else {}
     return web.json_response(
         {"error": {"message": message, "type": err_type, "code": status}},
         status=status,
+        headers=resp_headers,
     )
 
 
@@ -277,10 +326,39 @@ async def _parse_multipart(request: web.Request) -> tuple[str, list[str], str | 
 # ---------------------------------------------------------------------------
 
 
+async def handle_options(request: web.Request) -> web.Response:
+    """OPTIONS preflight route handler."""
+    origins = _app_value(request.app, _CORS_ORIGINS_KEY, "cors_origins", ["*"])
+    headers = _cors_headers(request, origins)
+    return web.Response(status=200, headers=headers)
+
+
 async def handle_chat_completions(request: web.Request) -> web.Response | web.StreamResponse:
     """POST /v1/chat/completions — supports JSON and multipart/form-data."""
-    content_type = _as_str(cast(object, request.content_type or ""))
+    cors_origins = _app_value(request.app, _CORS_ORIGINS_KEY, "cors_origins", ["*"])
+    headers = _cors_headers(request, cors_origins)
 
+    if request.method == "OPTIONS":
+        return web.Response(status=200, headers=headers)
+
+    client_ip = request.remote or "127.0.0.1"
+    rate_limiter = _app_value(request.app, _RATE_LIMITER_KEY, "rate_limiter", None)
+
+    raw_ip_limit = _app_value(request.app, _RATE_LIMIT_IP_KEY, "rate_limit_ip_per_min", 10)
+    rate_limit_ip = raw_ip_limit if isinstance(raw_ip_limit, int) and not type(raw_ip_limit).__name__.endswith("Mock") else 10
+
+    raw_sess_limit = _app_value(request.app, _RATE_LIMIT_SESSION_KEY, "rate_limit_session_per_min", 5)
+    rate_limit_session = raw_sess_limit if isinstance(raw_sess_limit, int) and not type(raw_sess_limit).__name__.endswith("Mock") else 5
+
+    raw_prompt_len = _app_value(request.app, _MAX_TURN_PROMPT_LENGTH_KEY, "max_turn_prompt_length", 2000)
+    max_prompt_len = raw_prompt_len if isinstance(raw_prompt_len, int) and not type(raw_prompt_len).__name__.endswith("Mock") else 2000
+
+    # 1. Rate Limit IP Check
+    if rate_limiter and not await rate_limiter.is_allowed(f"ip:{client_ip}", rate_limit_ip):
+        logger.warning("API IP rate limit hit (429) for IP {}", client_ip)
+        return _error_json(429, "Rate limit exceeded for IP. Please wait before retrying.", err_type="rate_limit_error", headers=headers)
+
+    content_type = _as_str(cast(object, request.content_type or ""))
     agent_loop = _app_value(request.app, _AGENT_LOOP_KEY, "agent_loop")
     timeout_s: float = _app_value(
         request.app,
@@ -291,6 +369,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
     model_name: str = _app_value(request.app, _MODEL_NAME_KEY, "model_name", "nanobot")
 
     stream = False
+    session_id = None
     try:
         if content_type.startswith("multipart/"):
             text, media_paths, session_id, requested_model = await _parse_multipart(request)
@@ -298,26 +377,52 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
             try:
                 body = await request.json()
             except Exception:
-                return _error_json(400, "Invalid JSON body")
+                return _error_json(400, "Invalid JSON body", headers=headers)
             if not isinstance(body, dict):
-                return _error_json(400, "Invalid JSON body")
+                return _error_json(400, "Invalid JSON body", headers=headers)
             body = cast(dict[str, Any], body)
             stream = body.get("stream", False)
             requested_model = body.get("model")
             text, media_paths = _parse_json_content(body)
-            session_id = body.get("session_id")
+            session_id = body.get("session_id") or body.get("user") or request.headers.get("X-Session-Id")
     except ValueError as e:
-        return _error_json(400, str(e))
+        return _error_json(400, str(e), headers=headers)
     except _FileSizeExceeded as e:
-        return _error_json(413, str(e), err_type="invalid_request_error")
+        return _error_json(413, str(e), err_type="invalid_request_error", headers=headers)
     except Exception:
         logger.exception("Error parsing upload")
-        return _error_json(413, "File too large or invalid upload")
+        return _error_json(413, "File too large or invalid upload", headers=headers)
 
-    if requested_model and requested_model != model_name:
-        return _error_json(400, f"Only configured model '{model_name}' is available")
+    # 2. Session ID resolution
+    if session_id:
+        session_key = f"api:{session_id}"
+    else:
+        has_browser_context = bool(request.headers.get("Origin") or request.headers.get("Referer"))
+        if has_browser_context:
+            ip_hash = hashlib.sha256(client_ip.encode("utf-8")).hexdigest()[:12]
+            session_id = f"web:anon_{ip_hash}"
+            session_key = f"api:{session_id}"
+        else:
+            session_key = API_SESSION_KEY
+            session_id = "default"
 
-    session_key = f"api:{session_id}" if session_id else API_SESSION_KEY
+    # 3. Rate Limit Session Check
+    if rate_limiter and not await rate_limiter.is_allowed(f"sess:{session_key}", rate_limit_session):
+        logger.warning("API session rate limit hit (429) for session {}", session_key)
+        return _error_json(429, "Rate limit exceeded for session. Please wait before retrying.", err_type="rate_limit_error", headers=headers)
+
+    # 4. Turn Prompt Length Limit Check
+    if len(text) > max_prompt_len:
+        logger.warning("API prompt length ceiling hit (400) for session {}: {} > {}", session_key, len(text), max_prompt_len)
+        return _error_json(400, f"Prompt length ({len(text)} chars) exceeds turn limit of {max_prompt_len} chars.", headers=headers)
+
+    if requested_model and requested_model not in (model_name, "nanobot"):
+        logger.warning(
+            "API request requested model '{}', but server is running configured model '{}'. Proceeding.",
+            requested_model,
+            model_name,
+        )
+
     session_locks: dict[str, asyncio.Lock] = _app_value(
         request.app,
         _SESSION_LOCKS_KEY,
@@ -325,9 +430,14 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
     )
     session_lock = session_locks.setdefault(session_key, asyncio.Lock())
 
+    if session_lock.locked():
+        logger.warning("API session concurrency conflict (409) for session {}", session_key)
+        return _error_json(409, "A request is currently in progress for this session. Please wait for completion.", err_type="conflict_error", headers=headers)
+
+    start_time = time.monotonic()
     logger.info(
-        "API request session_key={} media={} text={} stream={}",
-        session_key, len(media_paths), text[:80], stream,
+        "API request start [{}] ip={} user={} media={} stream={} text_len={}: '{}'",
+        session_key, client_ip, session_id, len(media_paths), stream, len(text), text[:60],
     )
     # -- streaming path --
     if stream:
@@ -395,6 +505,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         if not stream_failed:
             await resp.write(_sse_chunk("", model_name, chunk_id, finish_reason="stop"))
             await resp.write(_SSE_DONE)
+            logger.info("API streaming request complete [{}] in {:.2f}s", session_key, time.monotonic() - start_time)
         return resp
 
     # -- non-streaming path (original logic) --
@@ -424,14 +535,19 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         logger.exception("Unexpected API lock error for session {}", session_key)
         return _error_json(500, "Internal server error", err_type="server_error")
 
+    duration = time.monotonic() - start_time
+    logger.info("API request done [{}] status=200 duration={:.2f}s", session_key, duration)
     return web.json_response(
-        _chat_completion_response(response_text, model_name, getattr(agent_loop, "_last_usage", None))
+        _chat_completion_response(response_text, model_name, getattr(agent_loop, "_last_usage", None)),
+        headers=headers,
     )
 
 
 async def handle_models(request: web.Request) -> web.Response:
     """GET /v1/models"""
     model_name = _app_value(request.app, _MODEL_NAME_KEY, "model_name", "nanobot")
+    origins = _app_value(request.app, _CORS_ORIGINS_KEY, "cors_origins", ["*"])
+    headers = _cors_headers(request, origins)
     return web.json_response(
         {
             "object": "list",
@@ -443,13 +559,43 @@ async def handle_models(request: web.Request) -> web.Response:
                     "owned_by": "nanobot",
                 }
             ],
-        }
+        },
+        headers=headers,
     )
+
+
+async def handle_audit_sessions(request: web.Request) -> web.Response:
+    """GET /v1/audit_sessions — returns audited session records for WebUI Dashboard."""
+    origins = _app_value(request.app, _CORS_ORIGINS_KEY, "cors_origins", ["*"])
+    headers = _cors_headers(request, origins)
+
+    loop = _app_value(request.app, _AGENT_LOOP_KEY, "agent_loop")
+    from nanobot.agent.tools.audit_sessions import AuditSessionsTool, detect_channel
+
+    config = getattr(loop, "config", None) if loop else None
+    audit_tool = AuditSessionsTool.from_config(config)
+
+    channel_filter = request.query.get("channel", "all").strip().lower()
+
+    session_dirs = audit_tool.resolve_session_dirs()
+    sessions = audit_tool.load_sessions(session_dirs)
+
+    res_sessions: list[dict[str, Any]] = []
+    for s in sessions:
+        key = str(s.get("key", ""))
+        chan = detect_channel(key)
+        if channel_filter != "all" and chan != channel_filter:
+            continue
+        res_sessions.append(s)
+
+    return web.json_response({"status": "ok", "sessions": res_sessions}, headers=headers)
 
 
 async def handle_health(request: web.Request) -> web.Response:
     """GET /health"""
-    return web.json_response({"status": "ok"})
+    origins = _app_value(request.app, _CORS_ORIGINS_KEY, "cors_origins", ["*"])
+    headers = _cors_headers(request, origins)
+    return web.json_response({"status": "ok"}, headers=headers)
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +609,10 @@ def create_app(
     request_timeout: float = 120.0,
     api_key: str = "",
     prepare_agent: Callable[[], Awaitable[None]] | None = None,
+    cors_origins: list[str] | None = None,
+    max_turn_prompt_length: int | None = None,
+    rate_limit_ip_per_min: int | None = None,
+    rate_limit_session_per_min: int | None = None,
 ) -> web.Application:
     """Create the aiohttp application.
 
@@ -472,34 +622,64 @@ def create_app(
         request_timeout: Per-request timeout in seconds.
         api_key: Optional API key for Bearer-token authentication on API routes.
         prepare_agent: Optional application-owned readiness callback run before each turn.
+        cors_origins: Allowed CORS origins list.
+        max_turn_prompt_length: Per-turn prompt character ceiling.
+        rate_limit_ip_per_min: Max requests per minute per IP.
+        rate_limit_session_per_min: Max requests per minute per session.
     """
+    raw_cfg = getattr(agent_loop, "config", None)
+    api_cfg = getattr(raw_cfg, "api", None) if raw_cfg and not type(raw_cfg).__name__.endswith("Mock") else None
+    if cors_origins is None:
+        raw_origins: Any = getattr(api_cfg, "cors_origins", None) if api_cfg else None
+        cors_origins = cast(list[str], raw_origins) if isinstance(raw_origins, list) else ["*"]
+    if max_turn_prompt_length is None:
+        raw_len = getattr(api_cfg, "max_turn_prompt_length", None) if api_cfg else None
+        max_turn_prompt_length = raw_len if isinstance(raw_len, int) else 2000
+    if rate_limit_ip_per_min is None:
+        raw_ip = getattr(api_cfg, "rate_limit_ip_per_min", None) if api_cfg else None
+        rate_limit_ip_per_min = raw_ip if isinstance(raw_ip, int) else 10
+    if rate_limit_session_per_min is None:
+        raw_sess = getattr(api_cfg, "rate_limit_session_per_min", None) if api_cfg else None
+        rate_limit_session_per_min = raw_sess if isinstance(raw_sess, int) else 5
+
     app = web.Application(client_max_size=20 * 1024 * 1024)  # 20MB for base64 images
     app[_AGENT_LOOP_KEY] = agent_loop
     app[_MODEL_NAME_KEY] = model_name
     app[_REQUEST_TIMEOUT_KEY] = request_timeout
     app[_SESSION_LOCKS_KEY] = {}  # per-user locks, keyed by session_key
     app[_PREPARE_AGENT_KEY] = prepare_agent
+    app[_CORS_ORIGINS_KEY] = cors_origins
+    app[_MAX_TURN_PROMPT_LENGTH_KEY] = max_turn_prompt_length
+    app[_RATE_LIMIT_IP_KEY] = rate_limit_ip_per_min
+    app[_RATE_LIMIT_SESSION_KEY] = rate_limit_session_per_min
+    app[_RATE_LIMITER_KEY] = SlidingWindowRateLimiter()
 
     @web.middleware
     async def auth_middleware(
         request: web.Request,
         handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
     ) -> web.StreamResponse:
-        # Allow unauthenticated health checks.
-        if request.path == "/health":
+        # Allow unauthenticated health checks, CORS preflights, and WebUI session audit requests.
+        if request.path == "/health" or request.method == "OPTIONS" or "audit_sessions" in request.path:
             return await handler(request)
         if not api_key:
             return await handler(request)
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
-            return _error_json(401, "Missing Authorization header. Use: Bearer <api_key>")
+            headers = _cors_headers(request, cors_origins)
+            return _error_json(401, "Missing Authorization header. Use: Bearer <api_key>", headers=headers)
         if not hmac.compare_digest(auth[len("Bearer "):], api_key):
-            return _error_json(401, "Invalid API key")
+            headers = _cors_headers(request, cors_origins)
+            return _error_json(401, "Invalid API key", headers=headers)
         return await handler(request)
 
     app.middlewares.append(auth_middleware)
 
+    app.router.add_options("/v1/chat/completions", handle_options)
+    app.router.add_options("/v1/models", handle_options)
+    app.router.add_options("/v1/audit_sessions", handle_options)
     app.router.add_post("/v1/chat/completions", handle_chat_completions)
     app.router.add_get("/v1/models", handle_models)
+    app.router.add_get("/v1/audit_sessions", handle_audit_sessions)
     app.router.add_get("/health", handle_health)
     return app

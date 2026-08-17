@@ -65,18 +65,18 @@ describe("webuiManualChunk", () => {
     ).toBe("syntax-highlight");
   });
 
-  it("keeps markdown-only hast utilities in the markdown chunk", () => {
+  it("keeps markdown-only hast utilities in the markdown parser chunk", () => {
     expect(
       webuiManualChunk("/repo/node_modules/hast-util-to-jsx-runtime/lib/index.js"),
-    ).toBe("markdown-vendor");
+    ).toBe("markdown-parser");
   });
 
-  it("keeps Streamdown and its repair helper in the markdown chunk", () => {
+  it("keeps Streamdown and its repair helper in the streamdown chunk", () => {
     expect(webuiManualChunk("/repo/node_modules/streamdown/dist/index.js")).toBe(
-      "markdown-vendor",
+      "streamdown",
     );
     expect(webuiManualChunk("/repo/node_modules/remend/dist/index.js")).toBe(
-      "markdown-vendor",
+      "streamdown",
     );
   });
 

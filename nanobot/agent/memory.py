@@ -976,11 +976,12 @@ class Consolidator:
 
     def _input_token_budget(self, runtime: LLMRuntime) -> int:
         """Available input token budget for consolidation LLM."""
-        return (
-            runtime.context_window_tokens
-            - runtime.generation.max_tokens
-            - self._SAFETY_BUFFER
-        )
+        try:
+            window = int(runtime.context_window_tokens)
+            max_tokens = int(runtime.generation.max_tokens)
+            return window - max_tokens - self._SAFETY_BUFFER
+        except (TypeError, ValueError):
+            return 0
 
     def _truncate_to_token_budget(self, text: str, *, runtime: LLMRuntime) -> str:
         """Truncate text so it fits within the consolidation LLM's token budget."""
@@ -1056,7 +1057,11 @@ class Consolidator:
         The budget reserves space for completion tokens and a safety buffer
         so the LLM request never exceeds the context window.
         """
-        if runtime.context_window_tokens <= 0:
+        try:
+            window = int(runtime.context_window_tokens)
+        except (TypeError, ValueError):
+            window = 0
+        if window <= 0:
             return
 
         lock = self.get_lock(session.key)

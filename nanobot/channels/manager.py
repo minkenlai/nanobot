@@ -197,7 +197,10 @@ class ChannelManager:
                 logger=logger,
             )
             kwargs["gateway"] = gateway
+        from nanobot.agent.staff_policy import StaffPolicy
+
         channel = cls(section, self.bus, **kwargs)
+        channel.staff_policy = StaffPolicy.from_config(getattr(self.config, "staff_policy", None))
         if runtime_name and runtime_name != channel.name:
             channel.name = runtime_name
         progress_default, tool_hints_default = channel.progress_transport_defaults() or (
@@ -328,8 +331,19 @@ class ChannelManager:
                     name,
                 )
 
-    def _should_send_progress(self, channel_name: str, *, tool_hint: bool = False) -> bool:
+    def _should_send_progress(
+        self,
+        channel_name: str,
+        *,
+        tool_hint: bool = False,
+        msg_metadata: Mapping[str, Any] | None = None,
+    ) -> bool:
         """Return whether progress (or tool-hints) may be sent to *channel_name*."""
+        if tool_hint and msg_metadata:
+            override = msg_metadata.get("send_tool_hints")
+            if isinstance(override, bool):
+                return override
+
         ch = self.channels.get(channel_name)
         if ch is None:
             logger.debug("Progress check for unknown channel: {}", channel_name)
@@ -715,11 +729,15 @@ class ChannelManager:
 
                 if progress_event:
                     if progress_event.tool_hint and not self._should_send_progress(
-                        msg.channel, tool_hint=True,
+                        msg.channel,
+                        tool_hint=True,
+                        msg_metadata=msg.metadata,
                     ):
                         continue
                     if not progress_event.tool_hint and not self._should_send_progress(
-                        msg.channel, tool_hint=False,
+                        msg.channel,
+                        tool_hint=False,
+                        msg_metadata=msg.metadata,
                     ):
                         continue
 

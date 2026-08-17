@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import mimetypes
 import re
 import secrets
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, cast
@@ -25,6 +27,17 @@ from nanobot.config.schema import Base
 from nanobot.security.network import PinnedDNSAsyncTransport
 
 
+class WhatsAppRoutingConfig(Base):
+    """WhatsApp deterministic dual-instance routing configuration."""
+
+    enabled: bool = True
+    staff_numbers: list[str] = Field(default_factory=list)
+    staff_groups: list[str] = Field(default_factory=list)
+    guide_instance_url: str = "http://127.0.0.1:18791/v1/chat/completions"
+    guide_model_name: str = "nanobot"
+    forward_timeout_seconds: float = 45.0
+
+
 class WhatsAppConfig(Base):
     """WhatsApp channel configuration."""
 
@@ -33,6 +46,8 @@ class WhatsAppConfig(Base):
     group_policy: Literal["open", "mention"] = "open"
     database_path: str = ""
     lid_mappings: dict[str, str] = Field(default_factory=dict)
+    routing: WhatsAppRoutingConfig = Field(default_factory=WhatsAppRoutingConfig)
+
 
 
 class _NeonizeAPI(NamedTuple):
@@ -320,6 +335,38 @@ class WhatsAppChannel(BaseChannel):
         self._lid_to_phone = self._load_lid_mappings()
         self._self_jids: set[str] = set()
         self._started_at = 0.0
+        self._config_mtime: float | None = None
+
+    def _check_and_reload_config(self) -> None:
+        """Reload configuration from disk if config.json was modified."""
+        try:
+            from nanobot.config.loader import get_config_path, load_config
+            cfg_path = get_config_path()
+            if not cfg_path.exists():
+                return
+            mtime = cfg_path.stat().st_mtime
+            if self._config_mtime is not None and mtime != self._config_mtime:
+                full_config = load_config()
+                raw_channels = getattr(full_config, "channels", None)
+                raw_whatsapp: Any = None
+                if isinstance(raw_channels, dict):
+                    channels_dict = cast(dict[str, Any], raw_channels)
+                    raw_whatsapp = channels_dict.get("whatsapp")
+                elif raw_channels is not None:
+                    raw_whatsapp = getattr(raw_channels, "whatsapp", None)
+
+                if isinstance(raw_whatsapp, dict):
+                    self.config = WhatsAppConfig.model_validate(raw_whatsapp)
+                elif isinstance(raw_whatsapp, WhatsAppConfig):
+                    self.config = raw_whatsapp
+                elif isinstance(raw_whatsapp, object) and hasattr(raw_whatsapp, "model_dump"):
+                    dump_fn: Callable[..., dict[str, Any]] | None = getattr(raw_whatsapp, "model_dump", None)
+                    if callable(dump_fn):
+                        self.config = WhatsAppConfig.model_validate(dump_fn(by_alias=True))
+                self.logger.info("[WhatsApp] Hot-reloaded configuration from disk")
+            self._config_mtime = mtime
+        except Exception as e:
+            self.logger.debug("Config reload check skipped: {}", e)
 
     def _database_path(self) -> Path:
         configured = self.config.database_path.strip()
@@ -671,6 +718,29 @@ class WhatsAppChannel(BaseChannel):
             "phone": phone_id or None,
             "is_reply_to_bot": self._is_reply_to_bot(message),
         }
+        self._check_and_reload_config()
+        routing_cfg = self.config.routing
+        is_staff = self._is_staff_sender(
+            sender_id=sender_id,
+            chat_jid=chat_jid,
+            participant_jid=participant_jid,
+            sender_alt_jid=sender_alt_jid,
+            lid_id=lid_id,
+            phone_id=phone_id,
+        )
+
+        if not is_staff:
+            text, _ = await self._extract_message_content_and_media(client, event, message)
+            if text:
+                await self._forward_to_guide_instance(
+                    chat_jid=chat_jid,
+                    sender_id=sender_id,
+                    text=text,
+                    routing_cfg=routing_cfg,
+                    client_instance=client,
+                )
+            return
+
         sender_allowed = self.is_allowed(sender_id)
         group_allow_id = self._group_allow_id(chat_jid) if is_group else None
         authorization_id = sender_id if sender_allowed else group_allow_id
@@ -693,6 +763,26 @@ class WhatsAppChannel(BaseChannel):
             )
             return
 
+        text, media_paths = await self._extract_message_content_and_media(client, event, message)
+        if not text and not media_paths:
+            return
+
+        await self._handle_message(
+            sender_id=sender_id,
+            chat_id=chat_jid,
+            content=text,
+            media=media_paths,
+            metadata=metadata,
+            is_dm=not is_group,
+            authorization_id=authorization_id,
+        )
+
+    async def _extract_message_content_and_media(
+        self,
+        client: Any,
+        event: Any,
+        message: Any,
+    ) -> tuple[str, list[str]]:
         text = _message_text(message)
         media_paths: list[str] = []
         media = _media_message(message)
@@ -709,18 +799,201 @@ class WhatsAppChannel(BaseChannel):
                 media_paths.append(path)
                 text = self._append_media_tag(text, media.kind, path)
 
-        if not text and not media_paths:
-            return
+        return text, media_paths
 
-        await self._handle_message(
-            sender_id=sender_id,
-            chat_id=chat_jid,
-            content=text,
-            media=media_paths,
-            metadata=metadata,
-            is_dm=not is_group,
-            authorization_id=authorization_id,
-        )
+
+
+    def _is_staff_sender(
+        self,
+        sender_id: str,
+        chat_jid: str,
+        participant_jid: str | None = None,
+        sender_alt_jid: str | None = None,
+        lid_id: str | None = None,
+        phone_id: str | None = None,
+    ) -> bool:
+        routing_cfg = self.config.routing
+        if not routing_cfg.enabled:
+            return True
+
+        if not routing_cfg.staff_numbers and not routing_cfg.staff_groups:
+            return True
+
+
+        def _clean_number(val: str) -> str:
+            v = val.strip()
+            if "@" in v:
+                v = v.split("@", 1)[0]
+            if ":" in v:
+                v = v.split(":", 1)[0]
+            if v.startswith("+"):
+                v = v[1:]
+            return v
+
+        staff_nums = {_clean_number(n) for n in routing_cfg.staff_numbers if n.strip()}
+        staff_grps = {_clean_number(g) for g in routing_cfg.staff_groups if g.strip()}
+
+        sender_candidates = {
+            _clean_number(sender_id),
+            _clean_number(chat_jid),
+        }
+        if participant_jid:
+            sender_candidates.add(_clean_number(participant_jid))
+        if sender_alt_jid:
+            sender_candidates.add(_clean_number(sender_alt_jid))
+        if lid_id:
+            sender_candidates.add(_clean_number(lid_id))
+        if phone_id:
+            sender_candidates.add(_clean_number(phone_id))
+
+        if staff_nums and any(cand in staff_nums for cand in sender_candidates if cand):
+            return True
+
+        chat_candidates = {_clean_number(chat_jid), chat_jid.strip()}
+        if staff_grps and any(cand in staff_grps for cand in chat_candidates if cand):
+            return True
+
+        return False
+
+    async def _send_chat_presence(
+        self,
+        chat_jid: str,
+        composing: bool,
+        client: Any | None = None,
+    ) -> None:
+        """Send chat presence indicator (composing/paused) if supported by client."""
+        cli = client if (client is not None and (hasattr(client, "send_chat_presence") or hasattr(client, "send_presence"))) else self._client
+        if cli is None:
+            return
+        try:
+            presence_fn = getattr(cli, "send_chat_presence", None) or getattr(cli, "send_presence", None)
+            if callable(presence_fn):
+                presence_state = "composing" if composing else "paused"
+                res = presence_fn(chat_jid, presence_state, "")
+                if asyncio.iscoroutine(res):
+                    await res
+        except Exception as e:
+            self.logger.debug("Failed to set chat presence for {}: {}", chat_jid, e)
+
+    async def _forward_to_guide_instance(
+        self,
+        chat_jid: str,
+        sender_id: str,
+        text: str,
+        routing_cfg: WhatsAppRoutingConfig,
+        client_instance: Any | None = None,
+    ) -> None:
+        payload = {
+            "model": routing_cfg.guide_model_name,
+            "messages": [{"role": "user", "content": text}],
+            "user": f"whatsapp:{sender_id}",
+            "session_id": f"whatsapp:{chat_jid}",
+            "stream": True,
+        }
+
+        await self._send_chat_presence(chat_jid, composing=True, client=client_instance)
+        try:
+            async with httpx.AsyncClient(timeout=routing_cfg.forward_timeout_seconds) as client:
+                async with client.stream(
+                    "POST",
+                    routing_cfg.guide_instance_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "")
+                    reply_text = ""
+
+                    if "text/event-stream" in content_type:
+                        chunks: list[str] = []
+                        last_presence_refresh = time.monotonic()
+                        async for line in response.aiter_lines():
+                            line_str = line.strip()
+                            if not line_str.startswith("data:"):
+                                continue
+                            data_str = line_str[5:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                sse_data_obj = json.loads(data_str)
+                                if isinstance(sse_data_obj, dict):
+                                    sse_data: dict[str, Any] = cast(dict[str, Any], sse_data_obj)
+                                    raw_sse_choices = sse_data.get("choices")
+                                    if isinstance(raw_sse_choices, list) and raw_sse_choices:
+                                        sse_choices: list[Any] = cast(list[Any], raw_sse_choices)
+                                        sse_first_obj: Any = sse_choices[0]
+                                        if isinstance(sse_first_obj, dict):
+                                            sse_first: dict[str, Any] = cast(dict[str, Any], sse_first_obj)
+                                            delta_obj = sse_first.get("delta")
+                                            if isinstance(delta_obj, dict):
+                                                delta: dict[str, Any] = cast(dict[str, Any], delta_obj)
+                                                content = delta.get("content")
+                                                if isinstance(content, str) and content:
+                                                    chunks.append(content)
+                            except Exception:
+                                pass
+
+                            now = time.monotonic()
+                            if now - last_presence_refresh > 5.0:
+                                await self._send_chat_presence(chat_jid, composing=True, client=client_instance)
+                                last_presence_refresh = now
+
+                        reply_text = "".join(chunks).strip()
+                    else:
+                        body_bytes = await response.aread()
+                        body_data_obj = json.loads(body_bytes.decode("utf-8"))
+                        if isinstance(body_data_obj, dict):
+                            body_data: dict[str, Any] = cast(dict[str, Any], body_data_obj)
+                            raw_body_choices = body_data.get("choices")
+                            if isinstance(raw_body_choices, list) and raw_body_choices:
+                                body_choices: list[Any] = cast(list[Any], raw_body_choices)
+                                body_first_obj: Any = body_choices[0]
+                                if isinstance(body_first_obj, dict):
+                                    body_first: dict[str, Any] = cast(dict[str, Any], body_first_obj)
+                                    body_message_obj = body_first.get("message")
+                                    if isinstance(body_message_obj, dict):
+                                        body_message: dict[str, Any] = cast(dict[str, Any], body_message_obj)
+                                        reply_text = str(body_message.get("content") or "").strip()
+
+                    if reply_text:
+                        outbound = OutboundMessage(channel=self.name, chat_id=chat_jid, content=reply_text)
+                        await self.send(outbound)
+                    else:
+                        self.logger.warning(
+                            "[WhatsApp Routing] Empty or non-standard response from Guide instance",
+                        )
+
+        except httpx.ConnectError:
+            self.logger.error(
+                "[WhatsApp Routing] Guide instance at {} unreachable.",
+                routing_cfg.guide_instance_url,
+            )
+            outbound = OutboundMessage(
+                channel=self.name,
+                chat_id=chat_jid,
+                content="The studio assistant is briefly performing maintenance. Please try again in a few moments!",
+            )
+            await self.send(outbound)
+        except httpx.TimeoutException:
+            self.logger.warning(
+                "[WhatsApp Routing] Timeout waiting for Guide response for chat {}.",
+                chat_jid,
+            )
+            outbound = OutboundMessage(
+                channel=self.name,
+                chat_id=chat_jid,
+                content="I am looking into that for you. One moment please...",
+            )
+            await self.send(outbound)
+        except Exception as e:
+            self.logger.error(
+                "[WhatsApp Routing] Unexpected error during forward: {}",
+                e,
+                exc_info=True,
+            )
+        finally:
+            await self._send_chat_presence(chat_jid, composing=False, client=client_instance)
+
 
     def _group_allow_id(self, chat_jid: str) -> str | None:
         if self.is_allowed(chat_jid):

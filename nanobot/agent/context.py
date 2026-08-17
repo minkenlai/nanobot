@@ -76,6 +76,7 @@ class ContextBuilder:
         include_memory_recent_history: bool = True,
         session_key: str | None = None,
         unified_session: bool = False,
+        disabled_skills: Sequence[str] | set[str] | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
@@ -92,18 +93,23 @@ class ContextBuilder:
             if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
                 parts.append(f"# Memory\n\n## Long-term Memory\n{memory}")
 
-        active_skills = self.skills.get_always_skills()
+        skills_loader = (
+            SkillsLoader(root, disabled_skills=set(disabled_skills))
+            if disabled_skills is not None
+            else self.skills
+        )
+        active_skills = skills_loader.get_always_skills()
         active_skills.extend(
             name
             for name in (active_skill_names or ())
             if name not in active_skills
         )
         if active_skills:
-            active_content = self.skills.load_skills_for_context(active_skills)
+            active_content = skills_loader.load_skills_for_context(active_skills)
             if active_content:
                 parts.append(f"# Active Skills\n\n{active_content}")
 
-        skills_summary = self.skills.build_skills_summary(exclude=set(active_skills))
+        skills_summary = skills_loader.build_skills_summary(exclude=set(active_skills))
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
@@ -218,11 +224,17 @@ class ContextBuilder:
         include_memory_recent_history: bool = True,
         session_key: str | None = None,
         unified_session: bool = False,
+        disabled_skills: Sequence[str] | set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Build the complete message list for an LLM call."""
         root = workspace or self.workspace
+        skills_loader = (
+            SkillsLoader(root, disabled_skills=set(disabled_skills))
+            if disabled_skills is not None
+            else self.skills
+        )
         active_skill_names = (
-            self.skills.get_explicitly_invoked_skills(current_message)
+            skills_loader.get_explicitly_invoked_skills(current_message)
             if current_role == "user"
             else []
         )
@@ -238,6 +250,7 @@ class ContextBuilder:
                     include_memory_recent_history=include_memory_recent_history,
                     session_key=session_key,
                     unified_session=unified_session,
+                    disabled_skills=disabled_skills,
                 ),
             },
             *history,

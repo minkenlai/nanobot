@@ -831,7 +831,7 @@ def build_status_content(
     if cached and last_in:
         token_line += f" ({cached * 100 // last_in}% cached)"
     lines = [
-        f"\U0001f408 nanobot v{version}",
+        f"\U0001faa9 studio-agent v{version}",
         f"\U0001f9e0 Model: {model}",
         token_line,
         f"\U0001f4da Context: {ctx_used_str}/{ctx_total_str} ({ctx_pct}% of input budget)",

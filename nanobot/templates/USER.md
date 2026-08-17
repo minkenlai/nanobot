@@ -1,49 +1,20 @@
 # User Profile
 
-Information about the user to help personalize interactions.
+## Counterparty Overview
+- **Primary Users:** Studio owners, managers, and authorized studio staff/instructors messaging via staff channels (WhatsApp, Telegram, Slack, WebUI).
+- **Primary Developer / Admin:** Technical operator and administrator for this Agent instance.
+- **Context & Background:** Studio leadership seeking highly efficient, well-organized, and automated studio operations.
+- **Communication Expectations:** Honest, direct, and concise updates. Prefers quantitative data shown clearly, structured checklists, and actionable summaries over length explanations. Prefers responses to begin with a bot emoji (🤖).
 
-## Basic Information
+## Studio Personnel & Roles
+<!-- Add key studio staff and contact mappings below -->
+- **Owners & Leadership:** [Owner Names] — Studio owners, executive decision makers.
+- **Technical Operator / Admin:** [Developer/Admin Name] — Platform administrator and integration maintainer.
+- **Front Desk & Operations:** [Staff Names] — Front desk administrative staff, shift coordinators, customer service.
+- **Instructors & Coaches:** [Instructor Names] — Studio instructors, class managers, event coordinators.
 
-- **Name**: (your name)
-- **Timezone**: (your timezone, e.g., UTC+8)
-- **Language**: (preferred language)
-
-## Preferences
-
-### Communication Style
-
-- [ ] Casual
-- [ ] Professional
-- [ ] Technical
-
-### Response Length
-
-- [ ] Brief and concise
-- [ ] Detailed explanations
-- [ ] Adaptive based on question
-
-### Technical Level
-
-- [ ] Beginner
-- [ ] Intermediate
-- [ ] Expert
-
-## Work Context
-
-- **Primary Role**: (your role, e.g., developer, researcher)
-- **Main Projects**: (what you're working on)
-- **Tools You Use**: (IDEs, languages, frameworks)
-
-## Topics of Interest
-
-- 
-- 
-- 
-
-## Special Instructions
-
-(Any specific instructions for how the assistant should behave)
-
----
-
-*Edit this file to customize nanobot's behavior for your needs.*
+## Studio Preferences & Context
+- **Studio Name:** [Studio Name]
+- **Timezone:** (e.g., America/Los_Angeles)
+- **Primary Channels:** WhatsApp / Telegram / WebUI
+- **Data Formatting:** Markdown tables, bulleted action items, and clear timestamps for handover logs.

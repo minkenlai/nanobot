@@ -13,6 +13,7 @@ import weakref
 from collections.abc import Coroutine, Iterable, Mapping
 from contextlib import AbstractContextManager, ExitStack, nullcontext, suppress
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum, auto
 from functools import partial
 from pathlib import Path
@@ -30,6 +31,7 @@ from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.model_runtime import ModelRuntimeResolver
 from nanobot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
+from nanobot.agent.staff_policy import StaffPolicy
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from nanobot.agent.tools.exec_session import ExecSessionManager
@@ -99,6 +101,7 @@ if TYPE_CHECKING:
         ChannelsConfig,
         Config,
         ProviderConfig,
+        StaffPolicyConfig,
         ToolsConfig,
     )
     from nanobot.cron.service import CronService
@@ -279,6 +282,7 @@ class AgentLoop:
         unified_session: bool = False,
         disabled_skills: list[str] | None = None,
         tools_config: ToolsConfig | None = None,
+        staff_policy: StaffPolicyConfig | StaffPolicy | None = None,
         image_generation_provider_config: ProviderConfig | None = None,
         image_generation_provider_configs: dict[str, ProviderConfig] | None = None,
         provider_snapshot_loader: Callable[..., ProviderSnapshot] | None = None,
@@ -298,6 +302,10 @@ class AgentLoop:
         from nanobot.config.schema import ToolsConfig
 
         _tc = tools_config or ToolsConfig()
+        if isinstance(staff_policy, StaffPolicy):
+            self.staff_policy = staff_policy
+        else:
+            self.staff_policy = StaffPolicy.from_config(staff_policy)
         defaults = AgentDefaults()
         self.bus = bus
         if turn_delivery_factory is not None:
@@ -374,6 +382,7 @@ class AgentLoop:
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
+        self.disabled_skills = disabled_skills or []
         self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
         self.sessions = session_manager or SessionManager(workspace)
         self.sessions.set_file_cap_archiver(self.context.memory.raw_archive)
@@ -513,6 +522,7 @@ class AgentLoop:
             idle_compact_check_interval_seconds=defaults.idle_compact_check_interval_seconds,
             consolidation_ratio=defaults.consolidation_ratio,
             tools_config=config.tools,
+            staff_policy=config.staff_policy,
             model_presets=preset_helpers.configured_model_presets(config),
             model_preset=defaults.model_preset,
             dream_model_preset=defaults.dream.model_override,
@@ -521,6 +531,17 @@ class AgentLoop:
             preset_snapshot_loader=preset_snapshot_loader,
             tool_registry=tool_registry,
             **extra,
+        )
+
+    @staticmethod
+    def _is_guide_session(msg: InboundMessage, session_key: str | None = None) -> bool:
+        """Return True if message belongs to a Guide Bot / Guide Node session."""
+        key = session_key or msg.session_key
+        meta = msg.metadata or {}
+        return bool(
+            meta.get("node_type") == "guide"
+            or meta.get("bot_identity") == "guide"
+            or "guide" in key.lower()
         )
 
     def _sync_subagent_runtime_limits(self) -> None:
@@ -724,6 +745,12 @@ class AgentLoop:
         """Build the initial message list for the LLM turn."""
         assert ctx.session is not None
         scope = self.workspace_scopes.for_message(ctx.msg, ctx.session.metadata)
+        disabled_skills = self.staff_policy.filter_disabled_skills(
+            ctx.msg.sender_id,
+            ctx.delivery.route.channel,
+            self.disabled_skills,
+            self.context.skills.list_skills(filter_unavailable=False),
+        )
         return self.context.build_messages(
             history=ctx.history,
             current_message=ctx.msg.content,
@@ -736,6 +763,7 @@ class AgentLoop:
             include_memory_recent_history=not ctx.ephemeral,
             session_key=ctx.session.key,
             unified_session=self._unified_session,
+            disabled_skills=disabled_skills,
         )
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
@@ -790,6 +818,18 @@ class AgentLoop:
         dispatch_fn: Callable[[CommandContext], Awaitable[OutboundMessage | None]],
     ) -> None:
         """Dispatch a command directly from the run() loop and publish the result."""
+        if not self.staff_policy.is_command_allowed(msg.sender_id, msg.channel, raw):
+            cmd_name = raw.split()[0] if raw else ""
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=f"Command '{cmd_name}' is restricted for staff users.",
+                    metadata=dict(msg.metadata or {}),
+                )
+            )
+            return
+
         ctx = CommandContext(msg=msg, session=None, key=key, raw=raw, loop=self)
         result = await dispatch_fn(ctx)
         if result:
@@ -846,6 +886,41 @@ class AgentLoop:
         if automation_metadata:
             return
         remember_last_channel(session.metadata, msg.channel, msg.chat_id)
+
+    def _check_web_session_idle_reset(self, session_key: str, msg: InboundMessage) -> None:
+        """If a Web session has been inactive past idle threshold, archive pre-idle snapshot and start fresh."""
+        if msg.sender_id == "subagent" or msg.channel in {"cli", "system"}:
+            return
+        is_web = (
+            msg.channel in {"web", "api"}
+            or "web" in session_key
+            or "api:web:" in session_key
+        )
+        if not is_web:
+            return
+
+        cfg: Any = getattr(self, "config", None) or getattr(self, "_config", None)
+        audit_cfg: Any = getattr(cfg, "audit_sessions", None) if cfg else None
+        idle_minutes = int(getattr(audit_cfg, "web_session_idle_reset_minutes", 30)) if audit_cfg else 30
+        if idle_minutes <= 0:
+            return
+
+        session = self.sessions.get_cached(session_key) or self.sessions.get_or_create(session_key)
+        if not session.messages or not session.updated_at:
+            return
+
+        elapsed_minutes = (datetime.now() - session.updated_at).total_seconds() / 60.0
+        if elapsed_minutes >= idle_minutes:
+            self.sessions.archive_session_snapshot(session, reason="idle_timeout")
+            session.clear()
+            self.sessions.save(session)
+            self.sessions.invalidate(session.key)
+            logger.info(
+                "[Idle Reset] Reset inactive Web session {} after {:.1f}m inactivity (> {}m limit)",
+                session.key,
+                elapsed_minutes,
+                idle_minutes,
+            )
 
     @staticmethod
     def _replay_token_budget(runtime: LLMRuntime) -> int:
@@ -1025,7 +1100,6 @@ class AgentLoop:
             message_metadata=metadata,
             session_metadata=session.metadata if session is not None else None,
         )
-        effective_tools = tools or self.tools
         request_ctx = request_context or RequestContext(
             channel=channel,
             chat_id=chat_id,
@@ -1035,6 +1109,9 @@ class AgentLoop:
             runtime=runtime,
             metadata=dict(metadata or {}),
             workspace=effective_scope.project_path,
+        )
+        effective_tools = self.staff_policy.filter_tools(
+            request_ctx.sender_id, request_ctx.channel, tools or self.tools
         )
         file_state_token = bind_file_states(self._file_state_store.for_session(active_session_key))
         request_token = bind_request_context(request_ctx)
@@ -1187,7 +1264,8 @@ class AgentLoop:
                     and self.sessions.get_cached(effective_key) is None
                 ):
                     continue
-                if self.commands.is_priority(raw):
+                is_guide = self._is_guide_session(msg, effective_key)
+                if not is_guide and self.commands.is_priority(raw):
                     await self._dispatch_command_inline(
                         msg, effective_key, raw,
                         self.commands.dispatch_priority,
@@ -1215,7 +1293,7 @@ class AgentLoop:
                 if effective_key in self._pending_queues:
                     # Non-priority commands must not be queued for injection;
                     # dispatch them directly (same pattern as priority commands).
-                    if self.commands.is_dispatchable_command(raw):
+                    if not is_guide and self.commands.is_dispatchable_command(raw):
                         await self._dispatch_command_inline(
                             msg, effective_key, raw,
                             self.commands.dispatch,
@@ -1261,6 +1339,7 @@ class AgentLoop:
         pending: asyncio.Queue[InboundMessage] | None = None
         try:
             async with lock, gate:
+                self._check_web_session_idle_reset(session_key, msg)
                 # Only the task that owns the session lock may publish the
                 # active mid-turn injection queue for this session.
                 pending = asyncio.Queue(maxsize=20)
@@ -1462,6 +1541,8 @@ class AgentLoop:
             on_stream = delivery.on_stream
         if on_stream_end is None:
             on_stream_end = delivery.on_stream_end
+        if tools is None:
+            tools = self.staff_policy.filter_tools(msg.sender_id, msg.channel, self.tools)
         t0 = time.time()
         ctx = TurnContext(
             msg=msg,
@@ -1643,6 +1724,10 @@ class AgentLoop:
             tools = restricted
         ctx.tools = tools
 
+        if "send_tool_hints" in session.metadata:
+            ctx.delivery.delivery_message.metadata["send_tool_hints"] = session.metadata["send_tool_hints"]
+            ctx.delivery.lifecycle_message.metadata["send_tool_hints"] = session.metadata["send_tool_hints"]
+
         if ctx.kind is TurnKind.SYSTEM:
             logger.info("Processing system message from {}", msg.sender_id)
         elif session.policy.log_content:
@@ -1674,10 +1759,21 @@ class AgentLoop:
         ctx.pending_summary = pending
 
     async def _dispatch_command(self, ctx: TurnContext) -> bool:
-        if ctx.kind is TurnKind.SYSTEM:
+        if ctx.kind is TurnKind.SYSTEM or self._is_guide_session(ctx.msg, ctx.session_key):
             return False
         session = ctx.require_session()
         raw = ctx.msg.content.strip()
+        if not raw.startswith("/"):
+            return False
+        if not self.staff_policy.is_command_allowed(ctx.msg.sender_id, ctx.delivery.route.channel, raw):
+            cmd_name = raw.split()[0] if raw else ""
+            ctx.outbound = OutboundMessage(
+                channel=ctx.msg.channel,
+                chat_id=ctx.msg.chat_id,
+                content=f"Command '{cmd_name}' is restricted for staff users.",
+                metadata=dict(ctx.msg.metadata or {}),
+            )
+            return True
         _, automation_metadata = automation_history_overrides(ctx.msg.metadata)
         is_user_turn = (
             ctx.original_user_text is not None
@@ -1695,7 +1791,10 @@ class AgentLoop:
             is_user_turn=is_user_turn,
             turn_scopes=ctx.turn_scopes,
         )
-        result = await self.commands.dispatch(cmd_ctx)
+        if self.commands.is_priority(raw):
+            result = await self.commands.dispatch_priority(cmd_ctx)
+        else:
+            result = await self.commands.dispatch(cmd_ctx)
         if result is not None:
             ctx.outbound = result
             # Shortcut commands skip BUILD and SAVE, so we must persist the
@@ -2008,6 +2107,15 @@ class AgentLoop:
     ) -> None:
         """Save new-turn messages into session, truncating large tool results."""
         from datetime import datetime
+
+        if session.metadata.pop("_was_cleared_during_turn", False):
+            logger.info(
+                "[Session Reset] Session {} was cleared during turn; skipping persistence of turn tail.",
+                session.key,
+            )
+            session.messages = []
+            session.provider_state = None
+            return
 
         declared_tool_call_ids = {
             str(tc["id"])

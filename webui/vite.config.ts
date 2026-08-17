@@ -91,7 +91,11 @@ export function webuiManualChunk(id: string): string | undefined {
   if (
     id.includes("node_modules/streamdown")
     || id.includes("node_modules/remend")
-    || id.includes("node_modules/remark-")
+  ) {
+    return "streamdown";
+  }
+  if (
+    id.includes("node_modules/remark-")
     || id.includes("node_modules/rehype-")
     || id.includes("node_modules/unified")
     || id.includes("node_modules/mdast-")
@@ -99,10 +103,29 @@ export function webuiManualChunk(id: string): string | undefined {
     || id.includes("node_modules/micromark")
     || id.includes("node_modules/unist-")
   ) {
-    return "markdown-vendor";
+    return "markdown-parser";
   }
   if (id.includes("node_modules/katex")) {
     return "katex";
+  }
+  if (
+    id.includes("node_modules/react/") ||
+    id.includes("node_modules/react-dom/") ||
+    id.includes("node_modules/scheduler/")
+  ) {
+    return "react-vendor";
+  }
+  if (id.includes("node_modules/lucide-react")) {
+    return "lucide";
+  }
+  if (id.includes("node_modules/@radix-ui")) {
+    return "radix";
+  }
+  if (id.includes("node_modules/i18next") || id.includes("node_modules/react-i18next")) {
+    return "i18n-vendor";
+  }
+  if (id.includes("node_modules/diff") || id.includes("node_modules/qrcode")) {
+    return "utils-vendor";
   }
 }
 

@@ -336,10 +336,11 @@ def serve(
     from nanobot.providers.image_generation import image_gen_provider_configs
     from nanobot.session.manager import SessionManager
 
-    _set_nanobot_logs(verbose)
-
     runtime_config = _load_runtime_config(config, workspace)
     api_cfg = runtime_config.api
+    is_verbose = verbose or api_cfg.verbose or os.environ.get("NANOBOT_VERBOSE", "").strip().lower() in ("1", "true", "yes")
+    _set_nanobot_logs(is_verbose)
+
     host = host if host is not None else api_cfg.host
     port = port if port is not None else api_cfg.port
     timeout = timeout if timeout is not None else api_cfg.timeout
@@ -373,6 +374,10 @@ def serve(
     console.print(f"  [cyan]Model[/cyan]    : {model_name}{preset_tag}")
     console.print("  [cyan]Session[/cyan]  : api:default")
     console.print(f"  [cyan]Timeout[/cyan]  : {timeout}s")
+    if is_verbose:
+        console.print("  [cyan]Logs[/cyan]     : Enabled")
+    else:
+        console.print("  [dim]Logs[/dim]     : Disabled (pass -v / --verbose or set api.verbose: true to enable)")
     if not is_loopback_host(host):
         console.print(
             "[yellow]API is available beyond this device "
