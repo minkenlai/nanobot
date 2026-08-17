@@ -1,3 +1,60 @@
+# studio-agent
+
+🪩 **studio-agent** is an enterprise-hardened AI agent runtime and management platform built on [nanobot](https://github.com/HKUDS/nanobot). It extends the core architecture with multi-role governance, dual-instance channel routing, safe skill automation in virtual environments, comprehensive multi-workspace auditing, and granular per-chat notification controls designed for studio and collaborative team workflows.
+
+---
+
+### 🌟 Key Enhancements & Capabilities
+
+1. **Deterministic Dual-Instance Routing (WhatsApp & Telegram)**:
+   - Run public-facing guest/guide bots side-by-side with private internal staff assistants.
+   - Public inquiries route through isolated Guide nodes via REST/HTTP, while internal staff and administrator requests are executed locally with full session memory and tool access.
+   - Dual-bot identity tokens and `/guide` prompt testing built in.
+
+2. **Granular Staff Access Policy (`StaffPolicy`)**:
+   - Role-based policy separating unrestricted administrators from staff users.
+   - Restricts sensitive capabilities (e.g., generic `exec`, destructive filesystem operations) and administrative slash commands.
+   - Channel user ID normalization across multi-channel backends (phone numbers, JIDs, LID tags, usernames).
+   - System tasks and autonomous background workflows execute cleanly without privilege escalation loopholes.
+
+3. **Safe Skill Script Execution (`run_skill_script`)**:
+   - Dedicated `RunSkillScriptTool` allowing agents and staff to execute curated skill automation scripts without granting broad shell/exec privileges.
+   - Automatically resolves and activates workspace-local virtual environments (`<workspace>/.venv/bin/python`) with isolated dependency environments.
+   - Enforces strict path traversal defenses (locks execution strictly to `skills/<skill_name>/scripts/`).
+
+4. **Multi-Workspace Session Auditing & Timeline Viewer (`audit_sessions`)**:
+   - Automated discovery engine resolving default session stores (`~/.nanobot/sessions/`), hashed workspace subdirectories, and archive snapshots.
+   - Interactive WebUI Sessions management dashboard with node filtering, token consumption analytics, flagging, and assistant tool-call timeline rendering.
+   - Programmatic REST API endpoints (`/api/sessions/audit/*`) and automated daily cron audits.
+
+5. **Per-Chat Tool Notification Control (`/hints`)**:
+   - Silence noisy intermediate tool execution notifications (`read_file`, `grep`, `run_skill_script`) in busy group chats while leaving them active in direct messages.
+   - `/hints on`, `/hints off`, and `/hints reset` commands persist per session. All tool executions remain fully recorded in session history and transcripts.
+
+6. **Hardened Core Runtime & Sandboxing**:
+   - Filesystem tools inherit container/bwrap sandbox bind paths from `exec_config`.
+   - Programmatic session resets with pre-reset snapshot archiving (`reset_session`).
+   - Mock-safe and crash-resilient memory token budgeting.
+
+---
+
+### ⚠️ Important Caveats & Best Practices
+
+- **Staff Policy vs. Skill Execution**: Staff members are restricted from using the generic `exec` tool. If an automated skill script requires Python dependencies, place the script inside the skill's `scripts/` directory and install dependencies in `<workspace>/.venv`.
+- **Tool Hints vs. Session History**: Using `/hints off` only suppresses the interim `ProgressEvent` messages in chat channels; all tool invocations and structured outputs continue to be persisted into session transcripts and WebUI logs.
+- **Dual-Instance WhatsApp**: When dual-instance routing is enabled, ensure the Guide node HTTP endpoint is accessible and healthy. Unmatched public traffic will automatically forward to the Guide node.
+- **Upstream Isolation**: Core modifications follow modular plugin and schema extension patterns documented in [`.agent/design.md`](.agent/design.md) to maintain seamless compatibility with upstream `nanobot/main`.
+
+---
+
+<br />
+
+<div align="center">
+  <p><b>━━━━━━━━━━━━━━━━━━━━━━━━  Upstream nanobot Reference Documentation  ━━━━━━━━━━━━━━━━━━━━━━━━</b></p>
+</div>
+
+<br />
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./images/readme-cover-dark.svg">
   <img alt="nanobot README cover" src="./images/readme-cover-light.svg">
