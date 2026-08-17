@@ -41,6 +41,24 @@ class ToolRegistry:
         """Get a tool by name."""
         return self._tools.get(name)
 
+    def filter(
+        self,
+        allowed_tools: list[str] | set[str] | None = None,
+        disabled_tools: list[str] | set[str] | None = None,
+    ) -> ToolRegistry:
+        """Return a new ToolRegistry containing only allowed and non-disabled tools."""
+        filtered = ToolRegistry()
+        allowed: set[str] | None = set(allowed_tools) if allowed_tools is not None else None
+        disabled: set[str] = set(disabled_tools) if disabled_tools is not None else set()
+
+        for name, tool in self._tools.items():
+            if disabled and (name in disabled or f"mcp_{name}" in disabled):
+                continue
+            if allowed is not None and "*" not in allowed and name not in allowed and f"mcp_{name}" not in allowed:
+                continue
+            filtered.register(tool)
+        return filtered
+
     def get_runtime_context_providers(self) -> list[RuntimeContextProvider]:
         """Return tool-owned providers in stable tool-name order."""
         providers: list[RuntimeContextProvider] = []

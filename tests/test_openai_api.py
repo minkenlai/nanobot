@@ -227,8 +227,10 @@ async def test_stream_true_returns_sse(aiohttp_client, app) -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_mismatch_returns_400() -> None:
+async def test_model_mismatch_logs_warning_and_proceeds() -> None:
+    mock_agent = _make_mock_agent()
     request = MagicMock()
+    request.content_type = "application/json"
     request.json = AsyncMock(
         return_value={
             "model": "other-model",
@@ -236,16 +238,14 @@ async def test_model_mismatch_returns_400() -> None:
         }
     )
     request.app = {
-        "agent_loop": _make_mock_agent(),
+        "agent_loop": mock_agent,
         "model_name": "test-model",
         "request_timeout": 10.0,
-        "session_lock": asyncio.Lock(),
+        "session_locks": {},
     }
 
     resp = await handle_chat_completions(request)
-    assert resp.status == 400
-    body = json.loads(resp.body)
-    assert "test-model" in body["error"]["message"]
+    assert resp.status == 200
 
 
 @pytest.mark.asyncio
@@ -527,3 +527,114 @@ async def test_process_direct_accepts_media() -> None:
     assert captured_msg is not None
     assert captured_msg.media == ["/tmp/image.png", "/tmp/report.pdf"]
     assert captured_msg.content == "analyze this"
+
+
+@pytest.mark.asyncio
+async def test_user_param_resolves_session_id(aiohttp_client) -> None:
+    agent = _make_mock_agent("user param response")
+    app = create_app(agent, api_key=API_KEY)
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        "/v1/chat/completions",
+        headers=AUTH_HEADERS,
+        json={"user": "web:user_12345", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status == 200
+    agent.process_direct.assert_awaited_once()
+    assert agent.process_direct.call_args.kwargs["session_key"] == "api:web:user_12345"
+
+
+@pytest.mark.asyncio
+async def test_anonymous_web_user_fallback(aiohttp_client) -> None:
+    agent = _make_mock_agent("anon response")
+    app = create_app(agent, api_key=API_KEY)
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        "/v1/chat/completions",
+        headers={**AUTH_HEADERS, "X-Session-Id": "web:anon_9f8e7d"},
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status == 200
+    agent.process_direct.assert_awaited_once()
+    session_key = agent.process_direct.call_args.kwargs["session_key"]
+    assert session_key == "api:web:anon_9f8e7d"
+
+
+@pytest.mark.asyncio
+async def test_browser_origin_without_session_id_falls_back_to_ip_hash(aiohttp_client) -> None:
+    agent = _make_mock_agent("browser response")
+    app = create_app(agent, api_key=API_KEY)
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        "/v1/chat/completions",
+        headers={**AUTH_HEADERS, "Origin": "https://mywebsite.com"},
+        json={"messages": [{"role": "user", "content": "hi from web"}]},
+    )
+    assert resp.status == 200
+    agent.process_direct.assert_awaited_once()
+    session_key = agent.process_direct.call_args.kwargs["session_key"]
+    assert session_key.startswith("api:web:anon_")
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_and_headers(aiohttp_client) -> None:
+    agent = _make_mock_agent("cors response")
+    app = create_app(agent, api_key=API_KEY, cors_origins=["https://mywebsite.com"])
+    client = await aiohttp_client(app)
+
+    # OPTIONS preflight
+    options_resp = await client.options(
+        "/v1/chat/completions",
+        headers={"Origin": "https://mywebsite.com"},
+    )
+    assert options_resp.status == 200
+    assert options_resp.headers["Access-Control-Allow-Origin"] == "https://mywebsite.com"
+    assert "POST" in options_resp.headers["Access-Control-Allow-Methods"]
+
+    # POST response CORS header
+    post_resp = await client.post(
+        "/v1/chat/completions",
+        headers={**AUTH_HEADERS, "Origin": "https://mywebsite.com"},
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert post_resp.status == 200
+    assert post_resp.headers["Access-Control-Allow-Origin"] == "https://mywebsite.com"
+
+
+@pytest.mark.asyncio
+async def test_turn_prompt_length_ceiling(aiohttp_client) -> None:
+    agent = _make_mock_agent()
+    app = create_app(agent, api_key=API_KEY, max_turn_prompt_length=50)
+    client = await aiohttp_client(app)
+
+    long_prompt = "x" * 51
+    resp = await client.post(
+        "/v1/chat/completions",
+        headers=AUTH_HEADERS,
+        json={"messages": [{"role": "user", "content": long_prompt}]},
+    )
+    assert resp.status == 400
+    data = await resp.json()
+    assert "exceeds turn limit" in data["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_session(aiohttp_client) -> None:
+    agent = _make_mock_agent()
+    app = create_app(agent, api_key=API_KEY, rate_limit_session_per_min=2, rate_limit_ip_per_min=100)
+    client = await aiohttp_client(app)
+
+    headers = {**AUTH_HEADERS}
+    payload = {"session_id": "test_rate_session", "messages": [{"role": "user", "content": "hi"}]}
+
+    r1 = await client.post("/v1/chat/completions", headers=headers, json=payload)
+    assert r1.status == 200
+    r2 = await client.post("/v1/chat/completions", headers=headers, json=payload)
+    assert r2.status == 200
+    r3 = await client.post("/v1/chat/completions", headers=headers, json=payload)
+    assert r3.status == 429
+    data = await r3.json()
+    assert "Rate limit exceeded" in data["error"]["message"]

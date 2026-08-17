@@ -98,6 +98,7 @@ tmp/
 temp/
 *.tmp
 exp/
+audit_reports/
 .playwright-mcp/
 bridge/node_modules/
 webui/.verify-*

@@ -69,3 +69,8 @@ def get_cli_history_path() -> Path:
 def get_legacy_sessions_dir() -> Path:
     """Return the legacy global session directory used for migration fallback."""
     return Path.home() / ".nanobot" / "sessions"
+
+
+def get_sessions_dir() -> Path:
+    """Return the default sessions directory."""
+    return get_legacy_sessions_dir()

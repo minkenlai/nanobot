@@ -115,7 +115,7 @@ const TOKEN_REFRESH_MIN_DELAY_MS = 5_000;
 const PAIRING_POLL_INTERVAL_MS = 5_000;
 const PAIRING_IDLE_POLL_INTERVAL_MS = 15_000;
 const PAIRING_DISMISS_SNOOZE_MS = 30_000;
-type ShellView = "chat" | "settings" | "apps" | "automations" | "skills";
+type ShellView = "chat" | "settings" | "apps" | "automations" | "skills" | "audit";
 type ShellRoute = {
   view: ShellView;
   activeKey: string | null;
@@ -126,6 +126,10 @@ const loadSettingsView = () => import("@/components/settings/SettingsView");
 const SettingsView = lazy(async () => {
   const module = await loadSettingsView();
   return { default: module.SettingsView };
+});
+const AuditSessionsView = lazy(async () => {
+  const module = await import("@/components/audit/AuditSessionsView");
+  return { default: module.AuditSessionsView };
 });
 const SessionSearchDialog = lazy(async () => {
   const module = await import("@/components/SessionSearchDialog");
@@ -2004,6 +2008,12 @@ function Shell({
     setMobileSidebarOpen(false);
   }, [activeKey, navigate]);
 
+  const onOpenAudit = useCallback(() => {
+    setSessionSearchOpen(false);
+    navigate({ view: "audit", activeKey, settingsSection: "overview" });
+    setMobileSidebarOpen(false);
+  }, [activeKey, navigate]);
+
   const onSettingsSectionChange = useCallback(
     (section: SettingsSectionKey) => {
       navigate({
@@ -2535,11 +2545,15 @@ function Shell({
     onNewChatInProject,
     onOpenSettings,
     onOpenApps,
-    onOpenAutomations,
     onOpenSkills,
+    onOpenAutomations,
+    onOpenAudit,
     onSettingsIntent,
     onOpenSearch: onOpenSessionSearch,
-    activeUtility: view === "apps" || view === "automations" || view === "skills" ? view : null,
+    activeUtility:
+      view === "audit" || view === "apps" || view === "skills" || view === "automations"
+        ? view
+        : null,
     onToggleArchived,
     pinnedKeys: sidebarPinnedTabKeys,
     archivedKeys: sidebarArchivedTabKeys,
@@ -2839,7 +2853,14 @@ function Shell({
                 }}
               />
             </div>
-            {view !== "chat" && (
+            {view === "audit" && (
+              <div className="absolute inset-0 flex flex-col">
+                <Suspense fallback={<SurfaceLoadingFallback />}>
+                  <AuditSessionsView />
+                </Suspense>
+              </div>
+            )}
+            {view !== "chat" && view !== "audit" && (
               <div className="absolute inset-0 flex flex-col">
                 <Suspense fallback={<SurfaceLoadingFallback />}>
                   <SettingsView

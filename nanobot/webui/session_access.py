@@ -104,6 +104,10 @@ class WebuiSessionAccess:
     def __init__(self, sessions: SessionManager) -> None:
         self._sessions = sessions
 
+    @property
+    def sessions(self) -> SessionManager:
+        return self._sessions
+
     def _metadata(
         self,
         session_key: str,
