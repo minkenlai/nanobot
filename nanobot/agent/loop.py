@@ -1763,6 +1763,8 @@ class AgentLoop:
             return False
         session = ctx.require_session()
         raw = ctx.msg.content.strip()
+        if not raw.startswith("/"):
+            return False
         if not self.staff_policy.is_command_allowed(ctx.msg.sender_id, ctx.delivery.route.channel, raw):
             cmd_name = raw.split()[0] if raw else ""
             ctx.outbound = OutboundMessage(
@@ -1789,7 +1791,10 @@ class AgentLoop:
             is_user_turn=is_user_turn,
             turn_scopes=ctx.turn_scopes,
         )
-        result = await self.commands.dispatch(cmd_ctx)
+        if self.commands.is_priority(raw):
+            result = await self.commands.dispatch_priority(cmd_ctx)
+        else:
+            result = await self.commands.dispatch(cmd_ctx)
         if result is not None:
             ctx.outbound = result
             # Shortcut commands skip BUILD and SAVE, so we must persist the
