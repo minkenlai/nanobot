@@ -11,7 +11,6 @@ import pytest_asyncio
 
 from nanobot.agent.tools.audit_sessions import AuditSessionsTool
 from nanobot.api.server import (
-    API_SESSION_KEY,
     create_app,
 )
 
@@ -234,6 +233,7 @@ async def test_audit_sessions_api_endpoint_response(api_client) -> None:
 async def test_cmd_new_archiving_end_to_end(tmp_path: Path) -> None:
     """Verify end-to-end flow: staff executes /new, session is archived to sessions/archives/, and audit_sessions generates report containing pre-reset messages."""
     from datetime import datetime
+
     from nanobot.agent.tools.audit_sessions import AuditSessionsTool
     from nanobot.bus.events import InboundMessage
     from nanobot.command import CommandContext
@@ -322,6 +322,7 @@ async def test_reset_session_tool(tmp_path: Path) -> None:
 async def test_web_session_idle_reset(tmp_path: Path) -> None:
     """Verify AgentLoop automatically resets web sessions after idle threshold."""
     from datetime import datetime, timedelta
+
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.events import InboundMessage
     from nanobot.session.manager import SessionManager

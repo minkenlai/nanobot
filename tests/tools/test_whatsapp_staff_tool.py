@@ -1,8 +1,9 @@
 """Tests for WhatsAppStaffTool."""
 
 import json
-import pytest
 from pathlib import Path
+
+import pytest
 
 from nanobot.agent.tools.whatsapp_staff import WhatsAppStaffTool
 

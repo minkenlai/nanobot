@@ -307,7 +307,7 @@ export function AuditSessionsView() {
               <span>Sort:</span>
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
+                onChange={(e) => setSortBy(e.target.value as "updated_desc" | "updated_asc" | "messages_desc")}
                 className="rounded-md border border-border bg-background px-2 py-0.5 text-[11px] text-foreground focus:outline-none cursor-pointer"
               >
                 <option value="updated_desc">Most Recent</option>
@@ -472,18 +472,20 @@ export function AuditSessionsView() {
                               <span>Tool Call{m.tool_calls.length > 1 ? "s" : ""}</span>
                             </div>
                             {m.tool_calls.map((tc, tcIdx) => {
-                              const rawFn = (tc as any).function || tc;
-                              const fnName = String(rawFn?.name || (tc as any).name || "tool");
-                              const rawArgs = rawFn?.arguments || (tc as any).arguments;
+                              const tcObj = typeof tc === "object" && tc !== null ? (tc as Record<string, unknown>) : {};
+                              const fnObj = typeof tcObj.function === "object" && tcObj.function !== null ? (tcObj.function as Record<string, unknown>) : tcObj;
+                              const fnName = String(fnObj.name || tcObj.name || "tool");
+                              const rawArgs = fnObj.arguments ?? tcObj.arguments;
                               const argsStr =
-                                typeof rawArgs === "object"
+                                typeof rawArgs === "object" && rawArgs !== null
                                   ? JSON.stringify(rawArgs, null, 2)
                                   : String(rawArgs || "");
+                              const tcId = typeof tcObj.id === "string" ? tcObj.id : undefined;
                               return (
                                 <div key={tcIdx} className="flex flex-col gap-1 font-mono text-[11px]">
                                   <div className="font-semibold text-purple-200 flex items-center gap-1.5">
                                     <span className="rounded bg-purple-500/20 px-1.5 py-0.5">{fnName}</span>
-                                    {tc.id && <span className="text-[10px] text-purple-300/60">({tc.id})</span>}
+                                    {tcId && <span className="text-[10px] text-purple-300/60">({tcId})</span>}
                                   </div>
                                   {argsStr && (
                                     <pre className="overflow-x-auto rounded border border-purple-500/20 bg-black/50 p-2 text-[10.5px] text-purple-200/90 whitespace-pre-wrap break-all max-h-48">
