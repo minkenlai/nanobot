@@ -1678,6 +1678,15 @@ class AgentLoop:
             return False
         session = ctx.require_session()
         raw = ctx.msg.content.strip()
+        if not self.staff_policy.is_command_allowed(ctx.msg.sender_id, ctx.delivery.route.channel, raw):
+            cmd_name = raw.split()[0] if raw else ""
+            ctx.outbound = OutboundMessage(
+                channel=ctx.msg.channel,
+                chat_id=ctx.msg.chat_id,
+                content=f"Command '{cmd_name}' is restricted for staff users.",
+                metadata=dict(ctx.msg.metadata or {}),
+            )
+            return True
         _, automation_metadata = automation_history_overrides(ctx.msg.metadata)
         is_user_turn = (
             ctx.original_user_text is not None

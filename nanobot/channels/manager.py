@@ -197,7 +197,10 @@ class ChannelManager:
                 logger=logger,
             )
             kwargs["gateway"] = gateway
+        from nanobot.agent.staff_policy import StaffPolicy
+
         channel = cls(section, self.bus, **kwargs)
+        channel.staff_policy = StaffPolicy.from_config(getattr(self.config, "staff_policy", None))
         if runtime_name and runtime_name != channel.name:
             channel.name = runtime_name
         progress_default, tool_hints_default = channel.progress_transport_defaults() or (
