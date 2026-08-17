@@ -185,6 +185,14 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "<prompt>",
         accepts_args=True,
     ),
+    BuiltinCommandSpec(
+        "/hints",
+        "Configure tool hints",
+        "Toggle or show real-time tool notifications for this chat.",
+        "bell",
+        "[on|off|reset]",
+        accepts_args=True,
+    ),
 )
 
 
@@ -1210,6 +1218,55 @@ async def cmd_guide(ctx: CommandContext) -> OutboundMessage | None:
         )
 
 
+SESSION_TOOL_HINTS_METADATA_KEY = "send_tool_hints"
+
+
+async def cmd_hints(ctx: CommandContext) -> OutboundMessage:
+    """Toggle or show real-time tool execution notifications for the current chat session."""
+    session = ctx.session or ctx.loop.sessions.get_or_create(ctx.key)
+    args = ctx.args.strip().lower() if ctx.args else ""
+
+    channel_default = getattr(ctx.loop.channels_config, "send_tool_hints", True)
+    current_override = session.metadata.get(SESSION_TOOL_HINTS_METADATA_KEY)
+
+    if args in ("on", "enable", "true", "1"):
+        session.metadata[SESSION_TOOL_HINTS_METADATA_KEY] = True
+        ctx.loop.sessions.save(session)
+        msg_text = "🔧 **Tool hints enabled** for this chat.\nReal-time tool execution notifications will be sent."
+    elif args in ("off", "disable", "false", "0"):
+        session.metadata[SESSION_TOOL_HINTS_METADATA_KEY] = False
+        ctx.loop.sessions.save(session)
+        msg_text = "🔇 **Tool hints disabled** for this chat.\nTool notifications are silenced (all tool calls remain fully recorded in session logs)."
+    elif args in ("reset", "default", "auto"):
+        session.metadata.pop(SESSION_TOOL_HINTS_METADATA_KEY, None)
+        ctx.loop.sessions.save(session)
+        effective = "enabled" if channel_default else "disabled"
+        msg_text = f"🔄 **Tool hints reset to default** ({effective}) for this chat."
+    else:
+        if current_override is True:
+            status_text = "✅ **Enabled** (chat-level override)"
+        elif current_override is False:
+            status_text = "❌ **Disabled** (chat-level override)"
+        else:
+            status_text = f"ℹ️ **Default ({'enabled' if channel_default else 'disabled'})**"
+
+        msg_text = (
+            f"**Tool Hints Configuration for this chat:**\n"
+            f"• Status: {status_text}\n\n"
+            f"**Usage:**\n"
+            f"• `/hints on` — Enable real-time tool notifications in this chat\n"
+            f"• `/hints off` — Silence tool notifications in this chat\n"
+            f"• `/hints reset` — Revert to channel default\n"
+        )
+
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=msg_text,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
 async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     """Return available slash commands."""
     return OutboundMessage(
@@ -1256,6 +1313,8 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/evaluator-prompt", cmd_evaluator_prompt)
     router.prefix("/evaluator-prompt ", cmd_evaluator_prompt)
     router.exact("/skill", cmd_skill)
+    router.exact("/hints", cmd_hints)
+    router.prefix("/hints ", cmd_hints)
     router.exact("/help", cmd_help)
     router.exact("/pairing", cmd_pairing)
     router.prefix("/pairing ", cmd_pairing)

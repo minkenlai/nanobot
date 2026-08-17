@@ -1724,6 +1724,10 @@ class AgentLoop:
             tools = restricted
         ctx.tools = tools
 
+        if "send_tool_hints" in session.metadata:
+            ctx.delivery.delivery_message.metadata["send_tool_hints"] = session.metadata["send_tool_hints"]
+            ctx.delivery.lifecycle_message.metadata["send_tool_hints"] = session.metadata["send_tool_hints"]
+
         if ctx.kind is TurnKind.SYSTEM:
             logger.info("Processing system message from {}", msg.sender_id)
         elif session.policy.log_content:
