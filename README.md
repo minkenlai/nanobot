@@ -6,9 +6,10 @@
 
 ### 🌟 Key Enhancements & Capabilities
 
-1. **Deterministic Dual-Instance Routing (WhatsApp & Telegram)**:
+1. **Deterministic Dual-Instance Routing & Guide Node API (WhatsApp, Telegram & Web Chat)**:
    - Run public-facing guest/guide bots side-by-side with private internal staff assistants.
-   - Public inquiries route through isolated Guide nodes via REST/HTTP, while internal staff and administrator requests are executed locally with full session memory and tool access.
+   - Public inquiries across WhatsApp and Telegram route through an isolated Guide node via REST/HTTP API (`/v1/chat/completions`), while internal staff and administrator requests execute locally with full session memory and administrative tools.
+   - **Unified Web Chat Support**: The exact same Guide node API server directly powers public web chat widgets, embedded website guest assistants, and landing page chatbots with independent, per-visitor session isolation (`session_id: "web:<visitor_id>"` or `x-session-key`).
    - Dual-bot identity tokens and `/guide` prompt testing built in.
 
 2. **Granular Staff Access Policy (`StaffPolicy`)**:

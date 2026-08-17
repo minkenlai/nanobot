@@ -88,6 +88,13 @@ Running a single WhatsApp instance for both administrative staff operations and 
   - Supports `action="add"`, `action="remove"`, and `action="list"` for phone numbers and JIDs.
   - Updates `channels.whatsapp.allow_from`, `channels.whatsapp.enabled`, `channels.whatsapp.routing.enabled`, and `channels.whatsapp.routing.staff_numbers`.
 
+### 4.4 Unified Multi-Channel & Web Chat Architecture
+The isolated Guide Node API server (`POST /v1/chat/completions`) serves as a unified, shared public assistant backend for multiple frontends simultaneously:
+- **WhatsApp Public Traffic**: Routed via `WhatsAppRoutingConfig` forwarder with `session_id: "whatsapp:<chat_jid>"`.
+- **Telegram Guide Identity**: Routed via Telegram dual-bot configuration with `session_id: "telegram:<chat_id>"`.
+- **Embedded Web Chat Widgets**: Direct HTTP/SSE integration from public websites, landing pages, or embedded guest widgets using `session_id: "web:<visitor_uuid>"` or standard `x-session-key` header.
+- **Session Isolation**: Each channel and visitor gets independent session history and compaction on the Guide node without polluting administrative memory or exposing internal studio tools.
+
 ---
 
 ## 5. Plugin vs. Built-in Architectural Trade-Offs
