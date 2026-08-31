@@ -18,9 +18,11 @@
 
 ## Discovery and Reading
 
-- Use `find_files` or `list_dir` for uncertain paths, `grep` for content, and `read_file` for a known path.
-- `grep` returns matches with five context lines by default; use `files_with_matches` for paths or `count` for totals.
+- Use `find_files` or `list_dir` to locate workspace paths before `read_file` when a path is uncertain.
+- Use `grep` for content search inside the workspace; prefer it over shell grep for ordinary searches.
+- `grep` defaults to `output_mode="files_with_matches"`; use `output_mode="content"` for matching lines with context.
 - Use `fixed_strings=true` for literal keywords containing regex characters.
+- Use `output_mode="count"` to size a broad search before reading full matches.
 - Use `head_limit` and `offset` to page across large result sets.
 - Search tools enforce binary and file-size limits and report skipped files in the result.
 
@@ -40,15 +42,19 @@
   result with its original consumer or checker when one is available.
 - Use `apply_patch` as the default code editing tool, especially for multi-file changes, structural edits, generated code, moves, adds, or deletes.
 - Use `apply_patch dry_run=true` when the patch is uncertain and you want validation plus a change summary before writing.
-- Use `edit_file` only for small exact replacements in one file, with `old_text` copied from `read_file`.
+- Use `edit_file` only for small exact replacements in one file, with `old_text` copied from `read_file`; when editing a specific numbered line, pass that exact line as `line_hint`; add `occurrence` or `expected_replacements` when ambiguity matters.
 - Use `write_file` for new files or intentional full-file rewrites, not routine partial edits.
 - If `apply_patch` or `edit_file` fails, re-read with `force=true`, narrow the context, and try a smaller patch rather than switching to shell `sed` or `echo`.
 
 ## Process Execution
 
-- Use `exec` for processes, not file inspection or editing.
-- For interaction or early output, set `yield_time_ms` and continue with `exec_session` (`until_exit=true` when no further input is needed).
-- Use `list_exec_sessions` to recover session IDs.
+- Use `exec` for tests, builds, package commands, git commands, and other process execution.
+- Prefer dedicated file/search tools over `cat`, shell `find`, shell `grep`, `sed`, or `echo` for ordinary workspace inspection and edits.
+- Use non-interactive flags such as `-y` or `--yes` when available.
+- Commands have a configurable timeout (default 60s), dangerous commands are blocked, and output is truncated.
+- For long-running or interactive commands, pass `yield_time_ms`; if the process keeps running, continue with `write_stdin`.
+- Use `write_stdin` to poll, provide stdin, close stdin, wait for expected output with `wait_for`, or terminate an existing exec session.
+- Use `list_exec_sessions` to recover active session IDs after context shifts.
 
 ## CLI App Attachments
 
@@ -71,7 +77,7 @@
 - When 'generate_image' creates images, call 'message' with the artifact paths in the 'media' parameter.
 
 ## Scheduling and Background Work
-
-- Use `cron` for scheduled reminders or recurring jobs; do not run `nanobot cron` through `exec`.
+ 
+- Use `cron` for scheduled reminders or recurring jobs (supports agent prompts with `message`, or deterministic executions with `command` or `skill_name` + `script_name`); do not run `nanobot cron` through `exec`.
 - For heartbeat tasks, update `HEARTBEAT.md`; the default gateway heartbeat cron job handles periodic checks when enabled.
 - Do not write reminders only to memory files when the user expects an actual notification.

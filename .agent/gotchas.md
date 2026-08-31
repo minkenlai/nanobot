@@ -38,3 +38,11 @@ Built-in skills live in `nanobot/skills/` (markdown + YAML frontmatter format). 
 ## Atomic Session Writes
 
 `agent/memory.py` writes `history.jsonl` atomically (temp file + fsync + rename + directory fsync). This guarantees durability across crashes. Do not replace this with a plain `open(..., "w")` write.
+
+## Adding New Slash Commands & Channel Command Filtering
+
+When registering new slash commands in `nanobot/command/builtin.py` (e.g. `router.exact("/hints", ...)`):
+- **Telegram Command Regex**: In `nanobot/channels/telegram/runtime.py`, `python-telegram-bot` filters incoming text by `~filters.COMMAND` and uses `TELEGRAM_BUS_SLASH_COMMAND_RE` for command dispatch. Any new slash command **must** be added to `TELEGRAM_BUS_SLASH_COMMAND_RE` and `DEFAULT_COMMANDS`, or Telegram will silently drop it.
+- **Staff Policy Allowlist**: If `StaffPolicy` is enabled with `allowed_commands`, ensure any user-facing command (e.g. `/hints`, `/guide`) is added to the allowlist or documented.
+- **WebUI Lifecycle**: Specify `BuiltinCommandSpec(..., lifecycle=...)` properly (`side_channel`, `finalize_active_turn`, `stop_active_turn`, or `agent_turn`).
+

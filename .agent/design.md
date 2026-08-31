@@ -35,3 +35,12 @@ Stable first-party dependencies must be typed where they are stored or passed. D
 ## Explicit over magical
 
 Configuration must be declared explicitly in `config/schema.py` Pydantic models. Error handling should raise clear exceptions rather than silently correcting bad input. Provider auto-detection exists, but every resolution path must be traceable from the factory to the concrete provider class.
+
+## Upstream isolation & fork-friendly design
+
+To prevent merge conflicts when rebasing or syncing local features with `upstream/main`:
+- **Core loop changes should be hook-based**: Keep modifications to central engine files (`nanobot/agent/loop.py`, `nanobot/api/server.py`, `nanobot/webui/ws_http.py`) as thin, isolated calls to dedicated local modules (e.g., `staff_policy.py`, `audit_sessions.py`).
+- **Self-contained modules**: Implement new capabilities in isolated files under `tools/`, `channels/`, or `webui/src/components/`.
+- **Clean Pydantic schema extensions**: Define custom configuration sections as standalone Pydantic classes in `config/schema.py` using `AliasChoices` for standard camelCase / snake_case serialization.
+- **Auto-discovery over core registries**: Prefer `pkgutil` auto-discovery for tools and skills over hardcoded imports in central registries.
+

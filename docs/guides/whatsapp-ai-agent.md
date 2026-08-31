@@ -98,6 +98,7 @@ workspace as your local CLI check.
   mapping at runtime or use `lidMappings` in the full reference.
 - If a first private message returns a pairing code, approve it before testing
   normal replies.
+- When reconnecting after downtime, nanobot automatically ignores backlogged message syncs (`ignoreConnectBacklog` and `maxMessageAgeSeconds`). Note that ignored messages do not reach session history or generate responses.
 
 ## Next: memory, automations, MCP tools
 

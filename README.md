@@ -1,3 +1,61 @@
+# studio-agent
+
+🪩 **studio-agent** is an enterprise-hardened AI agent runtime and management platform built on [nanobot](https://github.com/HKUDS/nanobot). It extends the core architecture with multi-role governance, dual-instance channel routing, safe skill automation in virtual environments, comprehensive multi-workspace auditing, and granular per-chat notification controls designed for studio and collaborative team workflows.
+
+---
+
+### 🌟 Key Enhancements & Capabilities
+
+1. **Deterministic Dual-Instance Routing & Guide Node API (WhatsApp, Telegram & Web Chat)**:
+   - Run public-facing guest/guide bots side-by-side with private internal staff assistants.
+   - Public inquiries across WhatsApp and Telegram route through an isolated Guide node via REST/HTTP API (`/v1/chat/completions`), while internal staff and administrator requests execute locally with full session memory and administrative tools.
+   - **Unified Web Chat Support**: The exact same Guide node API server directly powers public web chat widgets, embedded website guest assistants, and landing page chatbots with independent, per-visitor session isolation (`session_id: "web:<visitor_id>"` or `x-session-key`).
+   - Dual-bot identity tokens and `/guide` prompt testing built in.
+
+2. **Granular Staff Access Policy (`StaffPolicy`)**:
+   - Role-based policy separating unrestricted administrators from staff users.
+   - Restricts sensitive capabilities (e.g., generic `exec`, destructive filesystem operations) and administrative slash commands.
+   - Channel user ID normalization across multi-channel backends (phone numbers, JIDs, LID tags, usernames).
+   - System tasks and autonomous background workflows execute cleanly without privilege escalation loopholes.
+
+3. **Safe Skill Script Execution (`run_skill_script`)**:
+   - Dedicated `RunSkillScriptTool` allowing agents and staff to execute curated skill automation scripts without granting broad shell/exec privileges.
+   - Automatically resolves and activates workspace-local virtual environments (`<workspace>/.venv/bin/python`) with isolated dependency environments.
+   - Enforces strict path traversal defenses (locks execution strictly to `skills/<skill_name>/scripts/`).
+
+4. **Multi-Workspace Session Auditing & Timeline Viewer (`audit_sessions`)**:
+   - Automated discovery engine resolving default session stores (`~/.nanobot/sessions/`), hashed workspace subdirectories, and archive snapshots.
+   - Interactive WebUI Sessions management dashboard with node filtering, token consumption analytics, flagging, and assistant tool-call timeline rendering.
+   - Programmatic REST API endpoints (`/api/sessions/audit/*`) and automated daily cron audits.
+
+5. **Per-Chat Tool Notification Control (`/hints`)**:
+   - Silence noisy intermediate tool execution notifications (`read_file`, `grep`, `run_skill_script`) in busy group chats while leaving them active in direct messages.
+   - `/hints on`, `/hints off`, and `/hints reset` commands persist per session. All tool executions remain fully recorded in session history and transcripts.
+
+6. **Hardened Core Runtime & Sandboxing**:
+   - Filesystem tools inherit container/bwrap sandbox bind paths from `exec_config`.
+   - Programmatic session resets with pre-reset snapshot archiving (`reset_session`).
+   - Mock-safe and crash-resilient memory token budgeting.
+
+---
+
+### ⚠️ Important Caveats & Best Practices
+
+- **Staff Policy vs. Skill Execution**: Staff members are restricted from using the generic `exec` tool. If an automated skill script requires Python dependencies, place the script inside the skill's `scripts/` directory and install dependencies in `<workspace>/.venv`.
+- **Tool Hints vs. Session History**: Using `/hints off` only suppresses the interim `ProgressEvent` messages in chat channels; all tool invocations and structured outputs continue to be persisted into session transcripts and WebUI logs.
+- **Dual-Instance WhatsApp**: When dual-instance routing is enabled, ensure the Guide node HTTP endpoint is accessible and healthy. Unmatched public traffic will automatically forward to the Guide node.
+- **Upstream Isolation**: Core modifications follow modular plugin and schema extension patterns documented in [`.agent/design.md`](.agent/design.md) to maintain seamless compatibility with upstream `nanobot/main`.
+
+---
+
+<br />
+
+<div align="center">
+  <p><b>━━━━━━━━━━━━━━━━━━━━━━━━  Upstream nanobot Reference Documentation  ━━━━━━━━━━━━━━━━━━━━━━━━</b></p>
+</div>
+
+<br />
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./images/readme-cover-dark.svg">
   <img alt="nanobot README cover" src="./images/readme-cover-light.svg">
@@ -146,7 +204,7 @@ Activate it with `source .venv/bin/activate` on macOS/Linux or
 python -m pip install -e .
 ```
 
-After that, the normal commands are identical to a stable install. `nanobot` runs the TUI
+After that, the normal commands are identical to a stable install. `nanobot agent` runs the TUI
 from this checkout, and `nanobot webui` rebuilds stale frontend assets automatically. A later
 `git pull --ff-only` updates the Python, TUI, and WebUI source together; rerun
 `python -m pip install -e .` when Python dependencies change. Contributors should also read
@@ -206,10 +264,10 @@ Use `nanobot gateway --background` for the same direct entry point without keepi
 **Prefer to work entirely in the terminal?**
 
 ```bash
-nanobot
+nanobot agent
 ```
 
-This opens the native terminal client with the launch directory as its workspace. It shares saved conversations and the local gateway with the WebUI. The explicit `nanobot agent` form remains available for compatibility.
+This opens the native terminal client with the launch directory as its workspace. It shares saved conversations and the local gateway with the WebUI.
 
 - Type `/` to discover commands, `/sessions` to switch conversations, or `@` to mention an app, MCP server, or saved session.
 - Paste clipboard images with `Ctrl+V` or `Alt+V`, and use `$` to complete skill references.
@@ -222,7 +280,7 @@ Each launch starts a new session by default. Use `--session` to resume one and `
 For one request and an immediate exit, use:
 
 ```bash
-nanobot -m "Hello!"
+nanobot agent -m "Hello!"
 ```
 
 The one-shot form is useful for a quick provider check, shell scripts, and local automation. If you have not configured a model yet, run `nanobot webui` and open **Settings → Models** first.
