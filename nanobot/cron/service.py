@@ -142,7 +142,7 @@ def _normalize_agent_turn_job(job: CronJob) -> bool:
     changed = origin_metadata != payload.origin_metadata
     payload.origin_metadata = origin_metadata
 
-    if payload.kind != "agent_turn" or not _has_legacy_delivery_context(payload):
+    if payload.kind not in ("agent_turn", "exec_command", "skill_script") or not _has_legacy_delivery_context(payload):
         return changed
 
     if not payload.channel or not payload.to:
@@ -196,7 +196,10 @@ class CronService:
         return self._running or self._active_executions > 0
 
     def _is_unbound_agent_job(self, job: CronJob) -> bool:
-        return job.payload.kind == "agent_turn" and not is_bound_cron_job(job)
+        return (
+            job.payload.kind in ("agent_turn", "exec_command", "skill_script")
+            and not is_bound_cron_job(job)
+        )
 
     def _enforce_agent_binding(self, job: CronJob) -> bool:
         """Disable user cron jobs that cannot be routed to a concrete session."""
@@ -393,6 +396,10 @@ class CronService:
                     "payload": {
                         "kind": j.payload.kind,
                         "message": j.payload.message,
+                        "command": j.payload.command,
+                        "skillName": j.payload.skill_name,
+                        "scriptName": j.payload.script_name,
+                        "args": j.payload.args,
                         "deliver": j.payload.deliver,
                         "channel": j.payload.channel,
                         "to": j.payload.to,
@@ -672,7 +679,7 @@ class CronService:
         self,
         name: str,
         schedule: CronSchedule,
-        message: str,
+        message: str = "",
         deliver: bool = False,
         channel: str | None = None,
         to: str | None = None,
@@ -682,6 +689,11 @@ class CronService:
         origin_channel: str | None = None,
         origin_chat_id: str | None = None,
         origin_metadata: dict[str, Any] | None = None,
+        kind: Literal["agent_turn", "exec_command", "skill_script"] = "agent_turn",
+        command: str | None = None,
+        skill_name: str | None = None,
+        script_name: str | None = None,
+        args: list[str] | None = None,
     ) -> CronJob:
         """Add a new job."""
         _validate_schedule_for_add(schedule)
@@ -693,8 +705,12 @@ class CronService:
             enabled=True,
             schedule=schedule,
             payload=CronPayload(
-                kind="agent_turn",
+                kind=kind,
                 message=message,
+                command=command,
+                skill_name=skill_name,
+                script_name=script_name,
+                args=args or [],
                 deliver=deliver,
                 channel=channel,
                 to=to,

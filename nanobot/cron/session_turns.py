@@ -66,7 +66,7 @@ def is_bound_cron_job(job: CronJob) -> bool:
     """True for session-bound cron jobs with complete delivery context."""
     payload = job.payload
     if (
-        payload.kind != "agent_turn"
+        payload.kind not in ("agent_turn", "exec_command", "skill_script")
         or not payload.session_key
         or not payload.origin_channel
         or not payload.origin_chat_id

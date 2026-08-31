@@ -50,8 +50,12 @@ class CronSchedule:
 @dataclass
 class CronPayload:
     """What to do when the job runs."""
-    kind: Literal["system_event", "agent_turn"] = "agent_turn"
+    kind: Literal["system_event", "agent_turn", "exec_command", "skill_script"] = "agent_turn"
     message: str = ""
+    command: str | None = None
+    skill_name: str | None = None
+    script_name: str | None = None
+    args: list[str] = field(default_factory=list)
     # Legacy delivery fields used by pre-session-bound cron jobs.
     deliver: bool = False
     channel: str | None = None  # e.g. "whatsapp"
@@ -67,6 +71,10 @@ class CronPayload:
         return cls(
             kind=data.get("kind", "agent_turn"),
             message=data.get("message", ""),
+            command=get_camel_snake(data, "command", "command"),
+            skill_name=get_camel_snake(data, "skillName", "skill_name"),
+            script_name=get_camel_snake(data, "scriptName", "script_name"),
+            args=list(get_camel_snake(data, "args", "args", []) or []),
             deliver=data.get("deliver", False),
             channel=data.get("channel"),
             to=data.get("to"),

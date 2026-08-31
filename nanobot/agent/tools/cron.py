@@ -11,6 +11,7 @@ from typing import Any
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext, current_request_context
 from nanobot.agent.tools.schema import (
+    ArraySchema,
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
@@ -23,12 +24,29 @@ _CRON_PARAMETERS = tool_parameters_schema(
     action=StringSchema("Action to perform", enum=["add", "list", "remove"]),
     name=StringSchema(
         "Optional short human-readable label for the job "
-        "(e.g., 'weather-monitor', 'daily-standup'). Defaults to first 30 chars of message."
+        "(e.g., 'weather-monitor', 'daily-standup'). Defaults to first 30 chars of message or command."
     ),
     message=StringSchema(
-        "REQUIRED when action='add'. Instruction for the agent to execute when the job triggers "
+        "REQUIRED when action='add' (unless command or skill_name is provided). "
+        "Instruction for the agent to execute when the job triggers as an LLM agent turn "
         "(e.g., 'Send a reminder to WeChat: xxx' or 'Check system status and report'). "
         "Not used for action='list' or action='remove'."
+    ),
+    command=StringSchema(
+        "Optional shell command to execute deterministically without invoking the LLM "
+        "(e.g., 'python scripts/check_health.py')."
+    ),
+    skill_name=StringSchema(
+        "Optional skill name for executing a pre-approved skill script deterministically "
+        "(e.g., 'poll-lead-sheets'). Used together with script_name."
+    ),
+    script_name=StringSchema(
+        "Optional script name within the skill's scripts/ directory (e.g., 'poll_lead_sheets.py'). "
+        "Used together with skill_name."
+    ),
+    args=ArraySchema(
+        items=StringSchema("Command line argument for skill script"),
+        description="Optional list of string arguments passed to the skill script.",
     ),
     every_seconds=IntegerSchema(description="Interval in seconds (for recurring tasks)"),
     cron_expr=StringSchema("Cron expression like '0 9 * * *' (for scheduled tasks)"),
@@ -43,8 +61,9 @@ _CRON_PARAMETERS = tool_parameters_schema(
     job_id=StringSchema("REQUIRED when action='remove'. Job ID to remove (obtain via action='list')."),
     required=["action"],
     description=(
-        "Action-specific parameters: add requires a non-empty message plus one schedule "
-        "(every_seconds, cron_expr, or at); remove requires job_id; list only needs action. "
+        "Action-specific parameters: add requires a schedule (every_seconds, cron_expr, or at) "
+        "plus one of: message (for agent turn), command (for shell command), or "
+        "skill_name + script_name (for skill script); remove requires job_id; list only needs action. "
         "Per-action requirements are enforced at runtime (see field descriptions) so the "
         "top-level schema stays compatible with providers (e.g. OpenAI Codex/Responses) that "
         "reject oneOf/anyOf/allOf/enum/not at the root of function parameters."
@@ -127,8 +146,17 @@ class CronTool(Tool):
     def validate_params(self, params: dict[str, Any]) -> list[str]:
         errors = super().validate_params(params)
         action = params.get("action")
-        if action == "add" and not str(params.get("message") or "").strip():
-            errors.append("message is required when action='add'")
+        if action == "add":
+            has_message = bool(str(params.get("message") or "").strip())
+            has_command = bool(str(params.get("command") or "").strip())
+            skill_name = str(params.get("skill_name") or "").strip()
+            script_name = str(params.get("script_name") or "").strip()
+            has_skill = bool(skill_name and script_name)
+
+            if not (has_message or has_command or has_skill):
+                errors.append("message is required when action='add'")
+            if (skill_name and not script_name) or (script_name and not skill_name):
+                errors.append("both 'skill_name' and 'script_name' are required when scheduling a skill script")
         if action == "remove" and not str(params.get("job_id") or "").strip():
             errors.append("job_id is required when action='remove'")
         return errors
@@ -143,11 +171,26 @@ class CronTool(Tool):
         tz: str | None = None,
         at: str | None = None,
         job_id: str | None = None,
+        command: str | None = None,
+        skill_name: str | None = None,
+        script_name: str | None = None,
+        args: list[str] | None = None,
     ) -> str:
         if action == "add":
             if self._in_cron_context.get():
                 return ToolResult.error("Error: cannot schedule new jobs from within a cron job execution")
-            return self._add_job(name, message, every_seconds, cron_expr, tz, at)
+            return self._add_job(
+                name=name,
+                message=message,
+                every_seconds=every_seconds,
+                cron_expr=cron_expr,
+                tz=tz,
+                at=at,
+                command=command,
+                skill_name=skill_name,
+                script_name=script_name,
+                args=args,
+            )
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
@@ -157,22 +200,41 @@ class CronTool(Tool):
     def _add_job(
         self,
         name: str | None,
-        message: str,
-        every_seconds: int | None,
-        cron_expr: str | None,
-        tz: str | None,
-        at: str | None,
+        message: str = "",
+        every_seconds: int | None = None,
+        cron_expr: str | None = None,
+        tz: str | None = None,
+        at: str | None = None,
+        command: str | None = None,
+        skill_name: str | None = None,
+        script_name: str | None = None,
+        args: list[str] | None = None,
     ) -> str:
-        if not message:
+        command_clean = (command or "").strip()
+        skill_clean = (skill_name or "").strip()
+        script_clean = (script_name or "").strip()
+        msg_clean = (message or "").strip()
+
+        from typing import Literal
+
+        if command_clean:
+            kind: Literal["agent_turn", "exec_command", "skill_script"] = "exec_command"
+            default_name = f"exec: {command_clean[:24]}"
+        elif skill_clean and script_clean:
+            kind = "skill_script"
+            default_name = f"skill: {skill_clean}/{script_clean}"
+        elif msg_clean:
+            kind = "agent_turn"
+            default_name = msg_clean[:30]
+        else:
             return ToolResult.error(
                 "Error: cron action='add' requires a non-empty 'message' parameter "
-                "describing what to do when the job triggers "
-                "(e.g. the reminder text). Retry including message=\"...\"."
+                "describing what to do when the job triggers (e.g. the reminder text), "
+                "or 'command', or 'skill_name' + 'script_name'. Retry including message=\"...\"."
             )
+
         session_key, origin_channel, origin_chat_id, origin_metadata = self._request_route()
-        if not session_key:
-            return ToolResult.error("Error: scheduled cron jobs must be created from a chat session")
-        if not origin_channel or not origin_chat_id:
+        if not session_key or not origin_channel or not origin_chat_id:
             return ToolResult.error("Error: scheduled cron jobs must be created from a chat session")
         if tz and not cron_expr:
             return ToolResult.error("Error: tz can only be used with cron_expr")
@@ -207,14 +269,19 @@ class CronTool(Tool):
             return ToolResult.error("Error: either every_seconds, cron_expr, or at is required")
 
         job = self._cron.add_job(
-            name=name or message[:30],
+            name=name or default_name,
             schedule=schedule,
-            message=message,
+            message=msg_clean,
             delete_after_run=delete_after,
             session_key=session_key,
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
             origin_metadata=origin_metadata,
+            kind=kind,
+            command=command_clean or None,
+            skill_name=skill_clean or None,
+            script_name=script_clean or None,
+            args=args or [],
         )
         return f"Created job '{job.name}' (id: {job.id})"
 
@@ -269,6 +336,10 @@ class CronTool(Tool):
             if j.payload.kind == "system_event":
                 parts.append(f"  Purpose: {self._system_job_purpose(j)}")
                 parts.append("  Protected: visible for inspection, but cannot be removed.")
+            elif j.payload.kind == "exec_command":
+                parts.append(f"  Command: {j.payload.command or j.payload.message}")
+            elif j.payload.kind == "skill_script":
+                parts.append(f"  Skill Script: {j.payload.skill_name}/{j.payload.script_name}")
             parts.extend(self._format_state(j.state, j.schedule))
             lines.append("\n".join(parts))
         return "Scheduled jobs:\n" + "\n".join(lines)
