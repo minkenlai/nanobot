@@ -174,6 +174,22 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "wrench",
     ),
     BuiltinCommandSpec(
+        "/hints",
+        "Tool hints",
+        "Toggle or show real-time tool execution notifications for this chat.",
+        "bell",
+        "[on|off|reset]",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
+        "/guide",
+        "Guide assistant",
+        "Send a test prompt to the Guide assistant via SSE HTTP API.",
+        "compass",
+        "<prompt>",
+        accepts_args=True,
+    ),
+    BuiltinCommandSpec(
         "/help",
         "Show help",
         "List available slash commands.",
@@ -1034,6 +1050,253 @@ async def cmd_help(ctx: CommandContext) -> OutboundMessage:
     )
 
 
+def _extract_sse_delta_content(data_str: str) -> str:
+    """Extract token string from an SSE data line payload."""
+    import json
+
+    try:
+        data_obj = json.loads(data_str)
+        if isinstance(data_obj, dict):
+            data: dict[str, Any] = cast(dict[str, Any], data_obj)
+            raw_choices = data.get("choices")
+            if isinstance(raw_choices, list) and raw_choices:
+                choices: list[Any] = cast(list[Any], raw_choices)
+                first_obj: Any = choices[0]
+                if isinstance(first_obj, dict):
+                    first: dict[str, Any] = cast(dict[str, Any], first_obj)
+                    delta_obj = first.get("delta")
+                    if isinstance(delta_obj, dict):
+                        delta: dict[str, Any] = cast(dict[str, Any], delta_obj)
+                        return str(delta.get("content") or "")
+    except Exception:
+        pass
+    return ""
+
+
+def _extract_response_content(body_bytes: bytes) -> str:
+    """Extract content string from a non-streaming JSON response."""
+    import json
+
+    try:
+        body_data_obj = json.loads(body_bytes.decode("utf-8"))
+        if isinstance(body_data_obj, dict):
+            body_data: dict[str, Any] = cast(dict[str, Any], body_data_obj)
+            raw_body_choices = body_data.get("choices")
+            if isinstance(raw_body_choices, list) and raw_body_choices:
+                body_choices: list[Any] = cast(list[Any], raw_body_choices)
+                body_first_obj: Any = body_choices[0]
+                if isinstance(body_first_obj, dict):
+                    body_first: dict[str, Any] = cast(dict[str, Any], body_first_obj)
+                    body_message_obj = body_first.get("message")
+                    if isinstance(body_message_obj, dict):
+                        body_message: dict[str, Any] = cast(dict[str, Any], body_message_obj)
+                        return str(body_message.get("content") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _resolve_guide_config(ctx: CommandContext) -> tuple[str, str, float]:
+    """Resolve Guide instance URL, model, and timeout from channels_config or environment."""
+    guide_url = ""
+    guide_model = "nanobot"
+    timeout_seconds = 45.0
+
+    channels_cfg = getattr(ctx.loop, "channels_config", None)
+    if channels_cfg:
+        try:
+            tg = getattr(channels_cfg, "telegram", None)
+            if tg:
+                guide_bot = getattr(tg, "guide_bot", None)
+                if guide_bot:
+                    val = getattr(guide_bot, "guide_instance_url", None)
+                    if val and str(val).strip():
+                        guide_url = str(val).strip()
+                    val = getattr(guide_bot, "guide_model_name", None)
+                    if val and str(val).strip():
+                        guide_model = str(val).strip()
+                    val = getattr(guide_bot, "forward_timeout_seconds", None)
+                    if val is not None:
+                        with suppress(ValueError, TypeError):
+                            timeout_seconds = float(val)  # type: ignore[arg-type]
+
+            if not guide_url:
+                wa = getattr(channels_cfg, "whatsapp", None)
+                if wa:
+                    routing = getattr(wa, "routing", None)
+                    if routing:
+                        val = getattr(routing, "guide_instance_url", None)
+                        if val and str(val).strip():
+                            guide_url = str(val).strip()
+                        val = getattr(routing, "guide_model_name", None)
+                        if val and str(val).strip():
+                            guide_model = str(val).strip()
+                        val = getattr(routing, "forward_timeout_seconds", None)
+                        if val is not None:
+                            with suppress(ValueError, TypeError):
+                                timeout_seconds = float(val)  # type: ignore[arg-type]
+        except Exception:
+            pass
+
+    if not guide_url:
+        guide_url = os.environ.get("NANOBOT_GUIDE_INSTANCE_URL", "http://127.0.0.1:18791/v1/chat/completions")
+
+    return guide_url, guide_model, timeout_seconds
+
+
+async def cmd_guide(ctx: CommandContext) -> OutboundMessage | None:
+    """Send a test prompt to the Guide assistant via SSE HTTP API."""
+    import httpx
+
+    prompt = ctx.args.strip()
+    if not prompt:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Usage: /guide <prompt>\nSend a test prompt to the Guide assistant.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+    guide_url, guide_model, timeout_seconds = _resolve_guide_config(ctx)
+
+    # Construct isolated test session ID and user ID
+    channel = ctx.msg.channel or "chat"
+    chat_id = ctx.msg.chat_id or "default"
+    thread_id = (ctx.msg.metadata or {}).get("message_thread_id")
+
+    if thread_id is not None:
+        session_id = f"{channel}:guide:test:{chat_id}:topic:{thread_id}"
+    else:
+        session_id = f"{channel}:guide:test:{chat_id}"
+
+    user_id = f"{channel}:{ctx.msg.sender_id}"
+
+    payload = {
+        "model": guide_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "user": user_id,
+        "session_id": session_id,
+        "stream": True,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            async with client.stream(
+                "POST",
+                guide_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            ) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+
+                if "text/event-stream" in content_type:
+                    chunks: list[str] = []
+                    async for line in response.aiter_lines():
+                        line_str = line.strip()
+                        if not line_str.startswith("data:"):
+                            continue
+                        data_str = line_str[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        if content := _extract_sse_delta_content(data_str):
+                            chunks.append(content)
+                    reply_text = "".join(chunks).strip()
+                else:
+                    body_bytes = await response.aread()
+                    reply_text = _extract_response_content(body_bytes)
+
+                if reply_text:
+                    return OutboundMessage(
+                        channel=ctx.msg.channel,
+                        chat_id=ctx.msg.chat_id,
+                        content=reply_text,
+                        metadata={
+                            **dict(ctx.msg.metadata or {}),
+                            "bot_identity": "admin",
+                            "node_type": "guide",
+                        },
+                    )
+                else:
+                    return OutboundMessage(
+                        channel=ctx.msg.channel,
+                        chat_id=ctx.msg.chat_id,
+                        content="Received empty response from Guide assistant.",
+                        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+                    )
+
+    except httpx.ConnectError:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=f"The Guide assistant at {guide_url} is unreachable. Please ensure the Guide Node server is running.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    except httpx.TimeoutException:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content="Timeout waiting for Guide assistant response.",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+    except Exception as e:
+        return OutboundMessage(
+            channel=ctx.msg.channel,
+            chat_id=ctx.msg.chat_id,
+            content=f"Error communicating with Guide assistant: {e}",
+            metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+        )
+
+
+SESSION_TOOL_HINTS_METADATA_KEY = "send_tool_hints"
+
+
+async def cmd_hints(ctx: CommandContext) -> OutboundMessage:
+    """Toggle or show real-time tool execution notifications for the current chat session."""
+    session = ctx.session or ctx.loop.sessions.get_or_create(ctx.key)
+    args = ctx.args.strip().lower() if ctx.args else ""
+
+    channel_default = getattr(ctx.loop.channels_config, "send_tool_hints", True)
+    current_override = session.metadata.get(SESSION_TOOL_HINTS_METADATA_KEY)
+
+    if args in ("on", "enable", "true", "1"):
+        session.metadata[SESSION_TOOL_HINTS_METADATA_KEY] = True
+        ctx.loop.sessions.save(session)
+        msg_text = "🔧 **Tool hints enabled** for this chat.\nReal-time tool execution notifications will be sent."
+    elif args in ("off", "disable", "false", "0"):
+        session.metadata[SESSION_TOOL_HINTS_METADATA_KEY] = False
+        ctx.loop.sessions.save(session)
+        msg_text = "🔇 **Tool hints disabled** for this chat.\nTool notifications are silenced (all tool calls remain fully recorded in session logs)."
+    elif args in ("reset", "default", "auto"):
+        session.metadata.pop(SESSION_TOOL_HINTS_METADATA_KEY, None)
+        ctx.loop.sessions.save(session)
+        effective = "enabled" if channel_default else "disabled"
+        msg_text = f"🔄 **Tool hints reset to default** ({effective}) for this chat."
+    else:
+        if current_override is True:
+            status_text = "✅ **Enabled** (chat-level override)"
+        elif current_override is False:
+            status_text = "❌ **Disabled** (chat-level override)"
+        else:
+            status_text = f"ℹ️ **Default ({'enabled' if channel_default else 'disabled'})**"
+
+        msg_text = (
+            f"**Tool Hints Configuration for this chat:**\n"
+            f"• Status: {status_text}\n\n"
+            f"**Usage:**\n"
+            f"• `/hints on` — Enable real-time tool notifications in this chat\n"
+            f"• `/hints off` — Silence tool notifications in this chat\n"
+            f"• `/hints reset` — Revert to channel default\n"
+        )
+
+    return OutboundMessage(
+        channel=ctx.msg.channel,
+        chat_id=ctx.msg.chat_id,
+        content=msg_text,
+        metadata={**dict(ctx.msg.metadata or {}), "render_as": "text"},
+    )
+
+
 async def cmd_user_shell(ctx: CommandContext) -> OutboundMessage:
     """Run a trusted local ``!command`` through nanobot's exec policy."""
     metadata = dict(ctx.msg.metadata or {})
@@ -1095,8 +1358,12 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.exact("/evaluator-prompt", cmd_evaluator_prompt)
     router.prefix("/evaluator-prompt ", cmd_evaluator_prompt)
     router.exact("/skill", cmd_skill)
+    router.exact("/hints", cmd_hints)
+    router.prefix("/hints ", cmd_hints)
     router.exact("/help", cmd_help)
     router.exact("/pairing", cmd_pairing)
     router.prefix("/pairing ", cmd_pairing)
+    router.exact("/guide", cmd_guide)
+    router.prefix("/guide ", cmd_guide)
     router.exact(USER_SHELL_COMMAND, cmd_user_shell)
     router.prefix(f"{USER_SHELL_COMMAND} ", cmd_user_shell)

@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 from pydantic import Field, field_validator, model_validator
 from telegram import (
     BotCommand,
+    BotCommandScopeChat,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -401,6 +402,27 @@ class _QueuedTelegramUpdate:
     sort_key: tuple[int, int]
 
 
+class TelegramGuideBotCommandConfig(Base):
+    """Command definition for Telegram Guide Bot menu."""
+
+    command: str
+    description: str
+
+
+class TelegramGuideBotConfig(Base):
+    """Configuration for secondary customer-facing Guide Bot identity."""
+
+    enabled: bool = False
+    token: str = ""
+    allow_from: list[str] = Field(default_factory=list)
+    group_policy: Literal["open", "mention"] = "mention"
+    session_prefix: str = "telegram:guide:"
+    guide_instance_url: str = ""
+    guide_model_name: str = "nanobot"
+    forward_timeout_seconds: float = 45.0
+    commands: list[TelegramGuideBotCommandConfig] | None = Field(default=None)
+
+
 class TelegramConfig(Base):
     """Telegram channel configuration."""
 
@@ -408,6 +430,7 @@ class TelegramConfig(Base):
     token: str = ""
     mode: Literal["polling", "webhook"] = "polling"
     allow_from: list[str] = Field(default_factory=list)
+    guide_bot: TelegramGuideBotConfig = Field(default_factory=TelegramGuideBotConfig)
     proxy: str | None = None
     reply_to_message: bool = False
     react_emoji: str = "👀"
@@ -484,13 +507,15 @@ class TelegramChannel(BaseChannel):
         BotCommand("dream_log", "Show the latest Dream memory change"),
         BotCommand("dream_restore", "Restore Dream memory to an earlier version"),
         BotCommand("dream_prompt", "Tell Dream how to organize memory"),
+        BotCommand("hints", "Configure real-time tool notifications"),
+        BotCommand("guide", "Test the Guide assistant"),
         BotCommand("help", "Show available commands"),
     ]
 
     # Regex for slash commands routed to AgentLoop via ``_forward_command``.
     # Hyphenated ``dream-*`` commands stay on a separate handler (below).
     TELEGRAM_BUS_SLASH_COMMAND_RE = re.compile(
-        r"^/(?:new|stop|restart|status|dream|history|goal|trigger|pairing|model|skill)(?:@\w+)?(?:\s+.*)?$"
+        r"^/(?:new|stop|restart|status|dream|history|goal|trigger|pairing|model|skill|guide|hints)(?:@\w+)?(?:\s+.*)?$"
     )
 
     @classmethod
@@ -509,6 +534,9 @@ class TelegramChannel(BaseChannel):
         self._message_threads: dict[tuple[str, int], int] = {}
         self._bot_user_id: int | None = None
         self._bot_username: str | None = None
+        self._guide_app: TelegramApplication | None = None
+        self._guide_bot_user_id: int | None = None
+        self._guide_bot_username: str | None = None
         self._stream_bufs: dict[str, _StreamBuf] = {}  # chat_id -> streaming state
         self._inbound_buffers: dict[str, list[_QueuedTelegramUpdate]] = {}
         self._inbound_workers: dict[str, asyncio.Task[None]] = {}
@@ -521,6 +549,38 @@ class TelegramChannel(BaseChannel):
         if self._app is None:
             raise RuntimeError("Telegram application is not started")
         return self._app
+
+    def _get_bot(
+        self,
+        chat_id: str | int | None = None,
+        metadata: dict[str, Any] | None = None,
+        is_guide: bool | None = None,
+    ) -> Any:
+        if not self._guide_app:
+            return self._require_app().bot
+        if is_guide is True:
+            return self._guide_app.bot
+        if is_guide is False:
+            return self._require_app().bot
+        if metadata:
+            bot_identity = metadata.get("bot_identity")
+            if bot_identity == "admin":
+                return self._require_app().bot
+            if bot_identity == "guide":
+                return self._guide_app.bot
+            if metadata.get("node_type") == "guide":
+                return self._guide_app.bot
+        if chat_id and "guide" in str(chat_id).lower():
+            return self._guide_app.bot
+        return self._require_app().bot
+
+    @staticmethod
+    def _parse_chat_id(raw_chat_id: str | int) -> int:
+        """Extract numeric Telegram chat_id from raw string or int (e.g. 'telegram:guide:8466578140' -> 8466578140)."""
+        clean = str(raw_chat_id).strip()
+        if ":" in clean:
+            clean = clean.rsplit(":", 1)[-1]
+        return int(clean)
 
     def is_allowed(self, sender_id: str) -> bool:
         """Preserve Telegram's legacy id|username allowlist matching."""
@@ -691,8 +751,28 @@ class TelegramChannel(BaseChannel):
         self.logger.info("bot @{} connected", bot_info.username)
 
         try:
-            await self._app.bot.set_my_commands(self.BOT_COMMANDS)
-            self.logger.debug("bot commands registered")
+            default_cmds = self.BOT_COMMANDS
+            staff_policy = getattr(self, "staff_policy", None)
+
+            if staff_policy and staff_policy.enabled:
+                default_cmds = [
+                    cmd for cmd in self.BOT_COMMANDS
+                    if staff_policy.is_command_allowed(None, "telegram", f"/{cmd.command}")
+                ]
+
+            await self._app.bot.set_my_commands(default_cmds)
+            self.logger.debug("default bot commands registered ({} commands)", len(default_cmds))
+
+            if staff_policy and staff_policy.enabled and staff_policy.unrestricted_users:
+                for user_id_str in staff_policy.unrestricted_users:
+                    clean_id = str(user_id_str or "").rsplit(":", 1)[-1]
+                    if clean_id.isdigit():
+                        with suppress(Exception):
+                            await self._app.bot.set_my_commands(
+                                self.BOT_COMMANDS,
+                                scope=BotCommandScopeChat(chat_id=int(clean_id)),
+                            )
+                            self.logger.debug("unrestricted command menu registered for chat {}", clean_id)
         except Exception as e:
             self.logger.warning("Failed to register bot commands: {}", e)
 
@@ -717,6 +797,70 @@ class TelegramChannel(BaseChannel):
                 error_callback=self._on_polling_error,
             )
 
+        # Initialize secondary Guide Bot identity if enabled
+        if self.config.guide_bot.enabled and self.config.guide_bot.token.strip():
+            guide_token = self.config.guide_bot.token.strip()
+            self.logger.info("Initializing secondary Telegram Guide Bot identity...")
+            guide_api_req = HTTPXRequest(
+                connection_pool_size=self.config.connection_pool_size,
+                pool_timeout=self.config.pool_timeout,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                proxy=proxy,
+            )
+            guide_poll_req = HTTPXRequest(
+                connection_pool_size=4,
+                pool_timeout=self.config.pool_timeout,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                proxy=proxy,
+            )
+            guide_builder = (
+                Application.builder()
+                .token(guide_token)
+                .request(guide_api_req)
+                .get_updates_request(guide_poll_req)
+            )
+            self._guide_app = guide_builder.build()
+            self._guide_app.add_error_handler(self._on_error)
+            self._guide_app.add_handler(MessageHandler(filters.Regex(r"^/start(?:@\w+)?$"), self._on_start))
+            self._guide_app.add_handler(MessageHandler(filters.Regex(r"^/help(?:@\w+)?$"), self._on_help))
+            self._guide_app.add_handler(
+                MessageHandler(
+                    filters.TEXT | filters.PHOTO | filters.VIDEO | filters.VIDEO_NOTE
+                    | filters.ANIMATION | filters.VOICE | filters.AUDIO
+                    | filters.Document.ALL | filters.LOCATION,
+                    self._on_message
+                )
+            )
+            await self._guide_app.initialize()
+            await self._guide_app.start()
+            guide_info = await self._guide_app.bot.get_me()
+            self._guide_bot_user_id = getattr(guide_info, "id", None)
+            self._guide_bot_username = getattr(guide_info, "username", None)
+            self.logger.info("Guide bot @{} connected", guide_info.username)
+
+            try:
+                if self.config.guide_bot.commands:
+                    guide_cmds = [
+                        BotCommand(cmd.command.lstrip("/"), cmd.description)
+                        for cmd in self.config.guide_bot.commands
+                    ]
+                    await self._guide_app.bot.set_my_commands(guide_cmds)
+                    self.logger.info("Registered {} custom commands for Guide bot @{}", len(guide_cmds), guide_info.username)
+                else:
+                    await self._guide_app.bot.delete_my_commands()
+                    self.logger.info("Cleared command menu for Guide bot @{}", guide_info.username)
+            except Exception as e:
+                self.logger.warning("Failed to configure Guide bot command menu: {}", e)
+            if self.config.mode != "webhook":
+                await cast(Any, self._guide_app.updater).start_polling(
+                    allowed_updates=allowed_updates,
+                    drop_pending_updates=False,
+                    error_callback=self._on_polling_error,
+                )
+
+        # Keep running until stopped
         self._app_ready.set()
 
     @staticmethod
@@ -790,8 +934,9 @@ class TelegramChannel(BaseChannel):
         self._running = False
 
         # Cancel all typing indicators
-        for chat_id in list(self._typing_tasks):
-            self._stop_typing(chat_id)
+        for task in self._typing_tasks.values():
+            task.cancel()
+        self._typing_tasks.clear()
 
         for task in self._media_group_tasks.values():
             task.cancel()
@@ -802,6 +947,14 @@ class TelegramChannel(BaseChannel):
             task.cancel()
         self._inbound_workers.clear()
         self._inbound_buffers.clear()
+
+        if self._guide_app:
+            self.logger.info("Stopping Guide bot...")
+            if getattr(self._guide_app, "updater", None):
+                await cast(Any, self._guide_app.updater).stop()
+            await self._guide_app.stop()
+            await self._guide_app.shutdown()
+            self._guide_app = None
 
         if self._app:
             self.logger.info("Stopping bot...")
@@ -844,10 +997,10 @@ class TelegramChannel(BaseChannel):
         reply_params: ReplyParameters | dict[str, int | bool] | None = None,
         thread_kwargs: dict[str, int] | None = None,
         reply_markup: InlineKeyboardMarkup | None = None,
+        bot: Any | None = None,
     ) -> bool:
         """Attempt sendRichMessage (Bot API 10.1). Returns True on success."""
-        if not self._app:
-            return False
+        target_bot = bot or self._require_app().bot
 
         payload: dict[str, Any] = {
             "chat_id": chat_id,
@@ -875,7 +1028,7 @@ class TelegramChannel(BaseChannel):
 
         try:
             await self._call_with_retry(
-                self._app.bot.do_api_request,
+                target_bot.do_api_request,
                 "sendRichMessage",
                 api_kwargs=payload,
             )
@@ -896,7 +1049,13 @@ class TelegramChannel(BaseChannel):
             self.logger.debug("sendRichMessage failed: {}", exc)
             return False
 
-    async def _try_edit_rich(self, chat_id: int, message_id: int, content: str) -> bool:
+    async def _try_edit_rich(
+        self,
+        chat_id: int,
+        message_id: int,
+        content: str,
+        target_bot: Any = None,
+    ) -> bool:
         """Upgrade an existing message to rich in place via editMessageText (Bot API 10.1).
 
         Editing in place keeps the message identity, so the streaming preview is
@@ -912,7 +1071,8 @@ class TelegramChannel(BaseChannel):
         contract is preserved — ChannelManager retries the buffered send
         instead of an immediate legacy edit doubling connection demand.
         """
-        if not self._app:
+        bot = target_bot or (self._app.bot if self._app else None)
+        if not bot:
             return False
 
         payload: dict[str, Any] = {
@@ -924,7 +1084,7 @@ class TelegramChannel(BaseChannel):
         }
         try:
             await self._call_with_retry(
-                self._app.bot.do_api_request,
+                bot.do_api_request,
                 "editMessageText",
                 api_kwargs=payload,
             )
@@ -969,13 +1129,14 @@ class TelegramChannel(BaseChannel):
 
         # Only stop typing indicator and remove reaction for final responses
         if progress_event is None:
-            self._stop_typing(msg.chat_id)
+            self._stop_typing(msg.chat_id, metadata=msg.metadata)
             if reply_to_message_id := msg.metadata.get("message_id"):
                 with suppress(ValueError):
-                    await self._remove_reaction(msg.chat_id, int(reply_to_message_id))
+                    await self._remove_reaction(msg.chat_id, int(reply_to_message_id), metadata=msg.metadata)
 
         try:
-            chat_id = int(msg.chat_id)
+            bot = self._get_bot(msg.chat_id, metadata=msg.metadata)
+            chat_id = self._parse_chat_id(msg.chat_id)
         except ValueError:
             self.logger.exception("Invalid chat_id: {}", msg.chat_id)
             return
@@ -1000,11 +1161,11 @@ class TelegramChannel(BaseChannel):
             try:
                 media_type = self._get_media_type(media_path)
                 sender = {
-                    "photo": app.bot.send_photo,
-                    "video": app.bot.send_video,
-                    "voice": app.bot.send_voice,
-                    "audio": app.bot.send_audio,
-                }.get(media_type, app.bot.send_document)
+                    "photo": bot.send_photo,
+                    "video": bot.send_video,
+                    "voice": bot.send_voice,
+                    "audio": bot.send_audio,
+                }.get(media_type, bot.send_document)
                 param = {
                     "photo": "photo",
                     "video": "video",
@@ -1044,7 +1205,7 @@ class TelegramChannel(BaseChannel):
             except Exception:
                 filename = media_path.rsplit("/", 1)[-1]
                 self.logger.exception("Failed to send media {}", media_path)
-                await app.bot.send_message(
+                await bot.send_message(
                     chat_id=chat_id,
                     text=f"[Failed to send: {filename}]",
                     reply_parameters=reply_params,
@@ -1070,7 +1231,7 @@ class TelegramChannel(BaseChannel):
                 and not getattr(self, "_rich_send_disabled", False)
             ):
                 rich_ok = await self._try_send_rich(
-                    chat_id, text, reply_params, thread_kwargs, reply_markup,
+                    chat_id, text, reply_params, thread_kwargs, reply_markup, bot=bot,
                 )
                 if rich_ok:
                     return
@@ -1082,6 +1243,7 @@ class TelegramChannel(BaseChannel):
                     chat_id, chunk, reply_params, thread_kwargs,
                     render_as_blockquote=render_as_blockquote,
                     reply_markup=reply_markup if is_last else None,
+                    bot=bot,
                 )
 
     async def _call_with_retry(
@@ -1129,13 +1291,14 @@ class TelegramChannel(BaseChannel):
         thread_kwargs: dict[str, int] | None = None,
         render_as_blockquote: bool = False,
         reply_markup: InlineKeyboardMarkup | None = None,
+        bot: Any | None = None,
     ) -> None:
         """Send a plain text message with HTML fallback."""
-        app = self._require_app()
+        target_bot = bot or self._require_app().bot
         try:
             html = _tool_hint_to_telegram_blockquote(text) if render_as_blockquote else _markdown_to_telegram_html(text)
             await self._call_with_retry(
-                app.bot.send_message,
+                target_bot.send_message,
                 chat_id=chat_id, text=html, parse_mode="HTML",
                 reply_parameters=reply_params,
                 reply_markup=reply_markup,
@@ -1145,7 +1308,7 @@ class TelegramChannel(BaseChannel):
             self.logger.warning("HTML parse failed, falling back to plain text: {}", e)
             try:
                 await self._call_with_retry(
-                    app.bot.send_message,
+                    target_bot.send_message,
                     chat_id=chat_id,
                     text=text,
                     reply_parameters=reply_params,
@@ -1176,7 +1339,8 @@ class TelegramChannel(BaseChannel):
         if app is None:
             return
         meta = metadata or {}
-        int_chat_id = int(chat_id)
+        bot = self._get_bot(chat_id, metadata=meta)
+        int_chat_id = self._parse_chat_id(chat_id)
 
         if stream_end and merge_next:
             if not delta:
@@ -1188,10 +1352,10 @@ class TelegramChannel(BaseChannel):
                 return
             if stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id:
                 return
-            self._stop_typing(chat_id)
+            self._stop_typing(chat_id, metadata=meta)
             if reply_to_message_id := meta.get("message_id"):
                 with suppress(ValueError):
-                    await self._remove_reaction(chat_id, int(reply_to_message_id))
+                    await self._remove_reaction(chat_id, int(reply_to_message_id), metadata=meta)
             thread_kwargs: dict[str, int] = {}
             if message_thread_id := meta.get("message_thread_id"):
                 thread_kwargs["message_thread_id"] = message_thread_id
@@ -1201,11 +1365,8 @@ class TelegramChannel(BaseChannel):
             # editMessageText gained a rich_message parameter). Editing in place
             # keeps the message identity, so there is no delete-and-resend and
             # none of the flickering / dropped line breaks from issue #4470.
-            # The previous branch here was unreachable: it was guarded by
-            # ``not buf.message_id`` after an early return had already ensured
-            # ``buf.message_id`` is set (issue #5516).
             if self.config.rich_messages and not getattr(self, "_rich_send_disabled", False):
-                rich_ok = await self._try_edit_rich(int_chat_id, buf.message_id, raw_text)
+                rich_ok = await self._try_edit_rich(int_chat_id, buf.message_id, raw_text, target_bot=bot)
                 if rich_ok:
                     self._stream_bufs.pop(chat_id, None)
                     return
@@ -1216,7 +1377,7 @@ class TelegramChannel(BaseChannel):
             extra_html_chunks = html_chunks[1:]
             try:
                 await self._call_with_retry(
-                    app.bot.edit_message_text,
+                    bot.edit_message_text,
                     chat_id=int_chat_id, message_id=buf.message_id,
                     text=primary_html, parse_mode="HTML",
                 )
@@ -1233,7 +1394,7 @@ class TelegramChannel(BaseChannel):
                 primary_plain = split_message(raw_text, TELEGRAM_MAX_MESSAGE_LEN)[0] if len(raw_text) > TELEGRAM_MAX_MESSAGE_LEN else raw_text
                 try:
                     await self._call_with_retry(
-                        app.bot.edit_message_text,
+                        bot.edit_message_text,
                         chat_id=int_chat_id, message_id=buf.message_id,
                         text=primary_plain,
                     )
@@ -1246,7 +1407,7 @@ class TelegramChannel(BaseChannel):
             for extra_html_chunk in extra_html_chunks:
                 try:
                     await self._call_with_retry(
-                        app.bot.send_message,
+                        bot.send_message,
                         chat_id=int_chat_id, text=extra_html_chunk,
                         parse_mode="HTML",
                         **thread_kwargs,
@@ -1276,7 +1437,7 @@ class TelegramChannel(BaseChannel):
             preview = _strip_md_block(buf.text)
             try:
                 sent = await self._call_with_retry(
-                    app.bot.send_message,
+                    bot.send_message,
                     chat_id=int_chat_id, text=preview,
                     **stream_thread_kwargs,
                 )
@@ -1287,13 +1448,13 @@ class TelegramChannel(BaseChannel):
                 raise  # Let ChannelManager handle retry
         elif (now - buf.last_edit) >= self.config.stream_edit_interval:
             if len(buf.text) > TELEGRAM_MAX_MESSAGE_LEN:
-                await self._flush_stream_overflow(int_chat_id, buf, stream_thread_kwargs)
+                await self._flush_stream_overflow(int_chat_id, buf, stream_thread_kwargs, bot=bot)
                 buf.last_edit = now
                 return
             preview = _strip_md_block(buf.text)
             try:
                 await self._call_with_retry(
-                    app.bot.edit_message_text,
+                    bot.edit_message_text,
                     chat_id=int_chat_id, message_id=buf.message_id,
                     text=preview,
                 )
@@ -1310,6 +1471,7 @@ class TelegramChannel(BaseChannel):
         chat_id: int,
         buf: "_StreamBuf",
         thread_kwargs: dict[str, int],
+        bot: Any | None = None,
     ) -> None:
         """Split an oversized stream buffer mid-flight.
 
@@ -1320,11 +1482,11 @@ class TelegramChannel(BaseChannel):
         chunks = _split_telegram_markdown_html_chunks(buf.text, TELEGRAM_HTML_MAX_LEN)
         if len(chunks) <= 1:
             return
-        app = self._require_app()
+        target_bot = bot or self._require_app().bot
         first_markdown, first_html = chunks[0]
         try:
             await self._call_with_retry(
-                app.bot.edit_message_text,
+                target_bot.edit_message_text,
                 chat_id=chat_id, message_id=buf.message_id,
                 text=first_html,
                 parse_mode="HTML",
@@ -1336,7 +1498,7 @@ class TelegramChannel(BaseChannel):
                 )
                 try:
                     await self._call_with_retry(
-                        app.bot.edit_message_text,
+                        target_bot.edit_message_text,
                         chat_id=chat_id, message_id=buf.message_id,
                         text=first_markdown,
                     )
@@ -1351,7 +1513,7 @@ class TelegramChannel(BaseChannel):
         async def send_chunk(markdown: str, html: str) -> Any:
             try:
                 return await self._call_with_retry(
-                    app.bot.send_message,
+                    target_bot.send_message,
                     chat_id=chat_id, text=html, parse_mode="HTML", **thread_kwargs,
                 )
             except BadRequest as e:
@@ -1359,7 +1521,7 @@ class TelegramChannel(BaseChannel):
                     "Stream overflow HTML send failed, falling back to plain text: {}", e
                 )
                 return await self._call_with_retry(
-                    app.bot.send_message,
+                    target_bot.send_message,
                     chat_id=chat_id, text=markdown, **thread_kwargs,
                 )
 
@@ -1417,15 +1579,16 @@ class TelegramChannel(BaseChannel):
         )
 
     @staticmethod
-    def _derive_topic_session_key(message: Message) -> str | None:
+    def _derive_topic_session_key(message: Message, prefix: str = "telegram:") -> str | None:
         """Derive topic-scoped session key for Telegram chats with threads."""
         message_thread_id = getattr(message, "message_thread_id", None)
         if message_thread_id is None:
             return None
-        return f"telegram:{message.chat_id}:topic:{message_thread_id}"
+        clean_prefix = prefix.rstrip(":")
+        return f"{clean_prefix}:{message.chat_id}:topic:{message_thread_id}"
 
     @staticmethod
-    def _build_message_metadata(message: Message, user: User) -> dict[str, Any]:
+    def _build_message_metadata(message: Message, user: User, is_guide: bool = False) -> dict[str, Any]:
         """Build common Telegram inbound metadata payload."""
         reply_to = getattr(message, "reply_to_message", None)
         return {
@@ -1437,6 +1600,9 @@ class TelegramChannel(BaseChannel):
             "message_thread_id": getattr(message, "message_thread_id", None),
             "is_forum": bool(getattr(message.chat, "is_forum", False)),
             "reply_to_message_id": getattr(reply_to, "message_id", None) if reply_to else None,
+            "timestamp": int(message.date.timestamp()) if getattr(message, "date", None) else None,
+            "node_type": "guide" if is_guide else "primary",
+            "bot_identity": "guide" if is_guide else "admin",
         }
 
     async def _extract_reply_context(self, message: Message) -> str | None:
@@ -1591,10 +1757,31 @@ class TelegramChannel(BaseChannel):
         if len(self._message_threads) > 1000:
             self._message_threads.pop(next(iter(self._message_threads)))
 
-    @staticmethod
-    def _queue_key_for_message(message: Message) -> str:
+    def _is_guide_update(self, context: ContextTypes.DEFAULT_TYPE | None = None) -> bool:
+        if not context:
+            return False
+        bot = getattr(context, "bot", None)
+        bot_id = getattr(bot, "id", None) if bot else None
+        return bool(self._guide_bot_user_id and bot_id == self._guide_bot_user_id)
+
+    def _is_allowed_update(self, sender_id: str, is_guide: bool) -> bool:
+        if is_guide:
+            allow_list = getattr(self.config.guide_bot, "allow_from", [])
+            if not allow_list or "*" in allow_list:
+                return True
+            sender_str = str(sender_id)
+            if sender_str in allow_list:
+                return True
+            if sender_str.count("|") == 1:
+                sid, username = sender_str.split("|", 1)
+                return sid in allow_list or username in allow_list
+            return False
+        return self.is_allowed(sender_id)
+
+    def _queue_key_for_message(self, message: Message, is_guide: bool = False) -> str:
         """Return the final nanobot session key used for ordered Telegram ingress."""
-        return TelegramChannel._derive_topic_session_key(message) or f"telegram:{message.chat_id}"
+        prefix = "telegram:guide:" if is_guide else "telegram:"
+        return TelegramChannel._derive_topic_session_key(message, prefix=prefix) or f"{prefix}{message.chat_id}"
 
     @staticmethod
     def _sort_key_for_update(update: Update) -> tuple[int, int]:
@@ -1615,7 +1802,8 @@ class TelegramChannel(BaseChannel):
         message = update.message
         if message is None:
             return
-        key = self._queue_key_for_message(message)
+        is_guide = self._is_guide_update(context)
+        key = self._queue_key_for_message(message, is_guide=is_guide)
         self._inbound_buffers.setdefault(key, []).append(
             _QueuedTelegramUpdate(
                 kind=kind,
@@ -1676,8 +1864,9 @@ class TelegramChannel(BaseChannel):
         user = update.effective_user
         if message is None or user is None:
             return
+        is_guide = self._is_guide_update(context)
         sender_id = self._sender_id(user)
-        if not self.is_allowed(sender_id):
+        if not self._is_allowed_update(sender_id, is_guide):
             await self._send_pairing_code_if_private(sender_id, message, user)
             return
         self._remember_thread_context(message)
@@ -1690,12 +1879,15 @@ class TelegramChannel(BaseChannel):
             content = f"{cmd_part} {rest[0]}" if rest else cmd_part
         content = self._normalize_telegram_command(content)
 
+        prefix = "telegram:guide:" if is_guide else "telegram:"
+        session_key = self._derive_topic_session_key(message, prefix=prefix) or f"{prefix}{message.chat_id}"
+
         await self._handle_message(
             sender_id=sender_id,
             chat_id=str(message.chat_id),
             content=content,
-            metadata=self._build_message_metadata(message, user),
-            session_key=self._derive_topic_session_key(message),
+            metadata=self._build_message_metadata(message, user, is_guide=is_guide),
+            session_key=session_key,
             is_dm=message.chat.type == "private",
         )
 
@@ -1715,9 +1907,10 @@ class TelegramChannel(BaseChannel):
         user = update.effective_user
         if message is None or user is None:
             return
+        is_guide = self._is_guide_update(context)
         chat_id = message.chat_id
         sender_id = self._sender_id(user)
-        if not self.is_allowed(sender_id):
+        if not self._is_allowed_update(sender_id, is_guide):
             await self._send_pairing_code_if_private(sender_id, message, user)
             return
         self._remember_thread_context(message)
@@ -1766,8 +1959,9 @@ class TelegramChannel(BaseChannel):
         self.logger.debug("message from {}: {}...", sender_id, content[:50])
 
         str_chat_id = str(chat_id)
-        metadata = self._build_message_metadata(message, user)
-        session_key = self._derive_topic_session_key(message)
+        metadata = self._build_message_metadata(message, user, is_guide=is_guide)
+        prefix = "telegram:guide:" if is_guide else "telegram:"
+        session_key = self._derive_topic_session_key(message, prefix=prefix) or f"{prefix}{str_chat_id}"
 
         # Telegram media groups: buffer briefly, forward as one aggregated turn.
         if media_group_id := getattr(message, "media_group_id", None):
@@ -1779,8 +1973,8 @@ class TelegramChannel(BaseChannel):
                     "metadata": metadata,
                     "session_key": session_key,
                 }
-                self._start_typing(str_chat_id)
-                await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji)
+                self._start_typing(str_chat_id, metadata=metadata, is_guide=is_guide)
+                await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji, metadata=metadata, is_guide=is_guide)
             buf = self._media_group_buffers[key]
             if content and content != "[empty message]":
                 buf["contents"].append(content)
@@ -1790,8 +1984,32 @@ class TelegramChannel(BaseChannel):
             return
 
         # Start typing indicator before processing
-        self._start_typing(str_chat_id)
-        await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji)
+        self._start_typing(str_chat_id, metadata=metadata, is_guide=is_guide)
+        await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji, metadata=metadata, is_guide=is_guide)
+
+        # Enforce strict Guide Bot isolation: public Guide requests must be handled
+        # by an isolated Guide Node API instance. If unconfigured or unreachable, reply with
+        # maintenance notice and NEVER allow the Primary Admin Node to execute.
+        if is_guide:
+            if not self.config.guide_bot.guide_instance_url.strip():
+                self.logger.warning("[Telegram Routing] Guide Bot request received but guide_instance_url is unconfigured.")
+                outbound = OutboundMessage(
+                    channel=self.name,
+                    chat_id=str_chat_id,
+                    content="The studio guide assistant is temporarily unavailable. Please try again shortly!",
+                    metadata={"bot_identity": "guide", "node_type": "guide"},
+                )
+                await self.send(outbound)
+                return
+
+            await self._forward_to_guide_instance(
+                chat_id=str_chat_id,
+                session_key=session_key,
+                sender_id=sender_id,
+                text=content,
+                guide_cfg=self.config.guide_bot,
+            )
+            return
 
         # Forward to the message bus
         await self._handle_message(
@@ -1819,50 +2037,215 @@ class TelegramChannel(BaseChannel):
         finally:
             self._media_group_tasks.pop(key, None)
 
-    def _start_typing(self, chat_id: str) -> None:
-        """Start sending 'typing...' indicator for a chat."""
-        # Cancel any existing typing task for this chat
-        self._stop_typing(chat_id)
-        self._typing_tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
+    async def _forward_to_guide_instance(
+        self,
+        *,
+        chat_id: str,
+        session_key: str,
+        sender_id: str,
+        text: str,
+        guide_cfg: TelegramGuideBotConfig,
+    ) -> None:
+        """Forward public Telegram Guide message to isolated Guide Node API instance via HTTP SSE."""
+        import json
 
-    def _stop_typing(self, chat_id: str) -> None:
+        import httpx
+
+        payload = {
+            "model": guide_cfg.guide_model_name,
+            "messages": [{"role": "user", "content": text}],
+            "user": f"telegram:{sender_id}",
+            "session_id": session_key,
+            "stream": True,
+        }
+
+        guide_meta = {"bot_identity": "guide", "node_type": "guide"}
+        self.logger.info("[Telegram Routing] Forwarding Guide message from {} (session {}) to {}", sender_id, session_key, guide_cfg.guide_instance_url)
+        self._start_typing(chat_id, metadata=guide_meta, is_guide=True)
+        try:
+            async with httpx.AsyncClient(timeout=guide_cfg.forward_timeout_seconds) as client:
+                async with client.stream(
+                    "POST",
+                    guide_cfg.guide_instance_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                ) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "")
+                    reply_text = ""
+
+                    if "text/event-stream" in content_type:
+                        chunks: list[str] = []
+                        async for line in response.aiter_lines():
+                            line_str = line.strip()
+                            if not line_str.startswith("data:"):
+                                continue
+                            data_str = line_str[5:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                sse_data_obj = json.loads(data_str)
+                                if isinstance(sse_data_obj, dict):
+                                    sse_data: dict[str, Any] = cast(dict[str, Any], sse_data_obj)
+                                    raw_sse_choices = sse_data.get("choices")
+                                    if isinstance(raw_sse_choices, list) and raw_sse_choices:
+                                        sse_choices: list[Any] = cast(list[Any], raw_sse_choices)
+                                        sse_first_obj: Any = sse_choices[0]
+                                        if isinstance(sse_first_obj, dict):
+                                            sse_first: dict[str, Any] = cast(dict[str, Any], sse_first_obj)
+                                            delta_obj = sse_first.get("delta")
+                                            if isinstance(delta_obj, dict):
+                                                delta: dict[str, Any] = cast(dict[str, Any], delta_obj)
+                                                content = delta.get("content")
+                                                if isinstance(content, str) and content:
+                                                    chunks.append(content)
+                            except Exception:
+                                pass
+                        reply_text = "".join(chunks).strip()
+                    else:
+                        body_bytes = await response.aread()
+                        body_data_obj = json.loads(body_bytes.decode("utf-8"))
+                        if isinstance(body_data_obj, dict):
+                            body_data: dict[str, Any] = cast(dict[str, Any], body_data_obj)
+                            raw_body_choices = body_data.get("choices")
+                            if isinstance(raw_body_choices, list) and raw_body_choices:
+                                body_choices: list[Any] = cast(list[Any], raw_body_choices)
+                                body_first_obj: Any = body_choices[0]
+                                if isinstance(body_first_obj, dict):
+                                    body_first: dict[str, Any] = cast(dict[str, Any], body_first_obj)
+                                    body_message_obj = body_first.get("message")
+                                    if isinstance(body_message_obj, dict):
+                                        body_message: dict[str, Any] = cast(dict[str, Any], body_message_obj)
+                                        reply_text = str(body_message.get("content") or "").strip()
+
+                    if reply_text:
+                        self.logger.info("[Telegram Routing] Received Guide response for {} ({} chars)", session_key, len(reply_text))
+                        outbound = OutboundMessage(
+                            channel=self.name,
+                            chat_id=chat_id,
+                            content=reply_text,
+                            metadata={"bot_identity": "guide", "node_type": "guide"},
+                        )
+                        await self.send(outbound)
+                    else:
+                        self.logger.warning("[Telegram Routing] Empty response from Guide instance")
+
+        except httpx.ConnectError:
+            self.logger.error("[Telegram Routing] Guide instance at {} unreachable", guide_cfg.guide_instance_url)
+            outbound = OutboundMessage(
+                channel=self.name,
+                chat_id=chat_id,
+                content="The studio assistant is performing maintenance. Please try again shortly!",
+                metadata={"bot_identity": "guide", "node_type": "guide"},
+            )
+            await self.send(outbound)
+        except Exception as e:
+            self.logger.warning("[Telegram Routing] Error forwarding to Guide instance: {}", e)
+        finally:
+            self._stop_typing(chat_id, metadata=guide_meta, is_guide=True)
+
+    def _typing_key(
+        self,
+        chat_id: str | int,
+        metadata: dict[str, Any] | None = None,
+        is_guide: bool = False,
+    ) -> str:
+        clean_id = str(chat_id)
+        if is_guide:
+            return f"guide:{clean_id}"
+        if metadata:
+            bot_identity = metadata.get("bot_identity")
+            if bot_identity == "admin":
+                return f"admin:{clean_id}"
+            if bot_identity == "guide":
+                return f"guide:{clean_id}"
+            if metadata.get("node_type") == "guide":
+                return f"guide:{clean_id}"
+        if "guide" in clean_id.lower():
+            return f"guide:{clean_id}"
+        return f"admin:{clean_id}"
+
+    def _start_typing(
+        self,
+        chat_id: str,
+        metadata: dict[str, Any] | None = None,
+        is_guide: bool = False,
+    ) -> None:
+        """Start sending 'typing...' indicator for a chat."""
+        key = self._typing_key(chat_id, metadata=metadata, is_guide=is_guide)
+        self._stop_typing(chat_id, metadata=metadata, is_guide=is_guide)
+        self._typing_tasks[key] = asyncio.create_task(
+            self._typing_loop(chat_id, metadata=metadata, is_guide=is_guide)
+        )
+
+    def _stop_typing(
+        self,
+        chat_id: str,
+        metadata: dict[str, Any] | None = None,
+        is_guide: bool = False,
+    ) -> None:
         """Stop the typing indicator for a chat."""
-        task = self._typing_tasks.pop(chat_id, None)
+        key = self._typing_key(chat_id, metadata=metadata, is_guide=is_guide)
+        task = self._typing_tasks.pop(key, None)
         if task and not task.done():
             task.cancel()
 
-    async def _add_reaction(self, chat_id: str, message_id: int, emoji: str) -> None:
+    async def _add_reaction(
+        self,
+        chat_id: str,
+        message_id: int,
+        emoji: str,
+        metadata: dict[str, Any] | None = None,
+        is_guide: bool = False,
+    ) -> None:
         """Add emoji reaction to a message (best-effort, non-blocking)."""
         if not self._app or not emoji:
             return
         try:
-            await self._app.bot.set_message_reaction(
-                chat_id=int(chat_id),
+            bot = self._get_bot(chat_id, metadata=metadata, is_guide=is_guide)
+            target_chat_id = self._parse_chat_id(chat_id)
+            await bot.set_message_reaction(
+                chat_id=target_chat_id,
                 message_id=message_id,
                 reaction=[ReactionTypeEmoji(emoji=emoji)],
             )
         except Exception as e:
             self.logger.debug("reaction failed: {}", e)
 
-    async def _remove_reaction(self, chat_id: str, message_id: int) -> None:
+    async def _remove_reaction(
+        self,
+        chat_id: str,
+        message_id: int,
+        metadata: dict[str, Any] | None = None,
+        is_guide: bool = False,
+    ) -> None:
         """Remove emoji reaction from a message (best-effort, non-blocking)."""
         if not self._app:
             return
         try:
-            await self._app.bot.set_message_reaction(
-                chat_id=int(chat_id),
+            bot = self._get_bot(chat_id, metadata=metadata, is_guide=is_guide)
+            target_chat_id = self._parse_chat_id(chat_id)
+            await bot.set_message_reaction(
+                chat_id=target_chat_id,
                 message_id=message_id,
                 reaction=[],
             )
         except Exception as e:
             self.logger.debug("reaction removal failed: {}", e)
 
-    async def _typing_loop(self, chat_id: str) -> None:
+    async def _typing_loop(
+        self,
+        chat_id: str,
+        metadata: dict[str, Any] | None = None,
+        is_guide: bool = False,
+    ) -> None:
         """Repeatedly send 'typing' action until cancelled."""
         try:
             with suppress(asyncio.CancelledError):
-                while self._app:
-                    await self._app.bot.send_chat_action(chat_id=int(chat_id), action="typing")
+                bot = self._get_bot(chat_id, metadata=metadata, is_guide=is_guide)
+                target_chat_id = self._parse_chat_id(chat_id)
+                while self._running:
+                    await bot.send_chat_action(chat_id=target_chat_id, action="typing")
                     await asyncio.sleep(4)
         except Exception as e:
             self.logger.debug("Typing indicator stopped for {}: {}", chat_id, e)
@@ -1970,7 +2353,8 @@ class TelegramChannel(BaseChannel):
             with suppress(Exception):
                 await query_message.edit_reply_markup(reply_markup=None)
         self.logger.debug("Inline button tap from {}: {}", sender_id, button_label)
-        self._start_typing(str(chat_id))
+        is_guide = self._is_guide_update(context)
+        self._start_typing(str(chat_id), is_guide=is_guide)
         await self._handle_message(
             sender_id=sender_id,
             chat_id=str(chat_id),
