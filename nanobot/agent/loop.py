@@ -304,6 +304,7 @@ class AgentLoop:
         local_trigger_store: LocalTriggerStore | None = None,
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
+        staff_policy: Any = None,
     ):
         from nanobot.config.schema import ToolsConfig
 
@@ -384,7 +385,13 @@ class AgentLoop:
         # SessionManager owns every durable deletion entrypoint, including the
         # WebUI and fork rollback paths.  Observe that boundary once instead of
         # duplicating cleanup in each consumer.
-        self.sessions.set_delete_observer(self._file_state_store.discard)
+        from nanobot.agent.staff_policy import StaffPolicy
+
+        self.staff_policy = (
+            staff_policy
+            if isinstance(staff_policy, StaffPolicy)
+            else StaffPolicy.from_config(staff_policy)
+        )
         self.tools = tool_registry if tool_registry is not None else ToolRegistry()
         self._exec_session_manager = ExecSessionManager()
         self.runner = AgentRunner()
@@ -800,6 +807,18 @@ class AgentLoop:
             return
 
         async def dispatch_and_publish() -> None:
+            if not self.staff_policy.is_command_allowed(msg.sender_id, msg.channel, raw):
+                cmd_name = raw.split()[0] if raw else ""
+                await self.bus.publish_outbound(
+                    OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content=f"Command '{cmd_name}' is restricted for staff users.",
+                        metadata=dict(msg.metadata or {}),
+                    )
+                )
+                return
+
             ctx = CommandContext(msg=msg, session=None, key=key, raw=raw, loop=self)
             result = await dispatch_fn(ctx)
             if result:
@@ -1134,7 +1153,9 @@ class AgentLoop:
                 request_ctx,
                 workspace=effective_scope.project_path,
             )
-        effective_tools = tools or self.tools
+        effective_tools = self.staff_policy.filter_tools(
+            request_ctx.sender_id, request_ctx.channel, tools or self.tools
+        )
         file_state_token = bind_file_states(self._file_state_store.for_session(active_session_key))
         request_token = bind_request_context(request_ctx)
         workspace_token = bind_workspace_scope(effective_scope)
@@ -1637,6 +1658,11 @@ class AgentLoop:
         elif delivery.session_key != key:
             raise ValueError("turn delivery session does not match the processing session")
         t0 = time.time()
+        effective_tools = (
+            tools
+            if tools is not None
+            else self.staff_policy.filter_tools(msg.sender_id, msg.channel, self.tools)
+        )
         ctx = TurnContext(
             msg=msg,
             session=None,
@@ -1668,7 +1694,7 @@ class AgentLoop:
             run_extra_hooks_for_ephemeral=run_extra_hooks_for_ephemeral,
             hooks=list(hooks or []),
             hook_factories=list(hook_factories or []),
-            tools=tools,
+            tools=effective_tools,
             attributes=dict(attributes or {}),
         )
         # A streaming callback may be present even when the final text comes from a
@@ -1824,11 +1850,34 @@ class AgentLoop:
         )
         ctx.pending_summary = pending
 
+    def _is_guide_session(self, msg: InboundMessage, session_key: str) -> bool:
+        meta = dict(msg.metadata or {})
+        return bool(
+            meta.get("node_type") == "guide"
+            or meta.get("bot_identity") == "guide"
+            or ":guide:" in session_key
+        )
+
     async def _dispatch_command(self, ctx: TurnContext) -> bool:
-        if ctx.kind is TurnKind.SYSTEM or ctx.msg.channel == "system":
+        if (
+            ctx.kind is TurnKind.SYSTEM
+            or ctx.msg.channel == "system"
+            or self._is_guide_session(ctx.msg, ctx.session_key)
+        ):
             return False
         session = ctx.require_session()
         raw = ctx.msg.content.strip()
+        if not raw.startswith("/"):
+            return False
+        if not self.staff_policy.is_command_allowed(ctx.msg.sender_id, ctx.delivery.route.channel, raw):
+            cmd_name = raw.split()[0] if raw else ""
+            ctx.outbound = OutboundMessage(
+                channel=ctx.msg.channel,
+                chat_id=ctx.msg.chat_id,
+                content=f"Command '{cmd_name}' is restricted for staff users.",
+                metadata=dict(ctx.msg.metadata or {}),
+            )
+            return True
         _, automation_metadata = automation_history_overrides(ctx.msg.metadata)
         is_user_turn = (
             ctx.original_user_text is not None
