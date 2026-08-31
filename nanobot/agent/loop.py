@@ -1900,7 +1900,8 @@ class AgentLoop:
         )
         ctx.pending_summary = pending
 
-    def _is_guide_session(self, msg: InboundMessage, session_key: str) -> bool:
+    @staticmethod
+    def _is_guide_session(msg: InboundMessage, session_key: str) -> bool:
         meta = dict(msg.metadata or {})
         return bool(
             meta.get("node_type") == "guide"

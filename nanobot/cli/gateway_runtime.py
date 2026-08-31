@@ -616,6 +616,22 @@ def _run_gateway(
                     logger.info("Dream commit: {}", sha)
                 store.compact_history()
                 prune_dream_sessions(agent.sessions)
+        if job.name == "audit_sessions_daily":
+            try:
+                from nanobot.agent.tools.audit_sessions import AuditSessionsTool
+                from nanobot.agent.tools.context import ToolContext
+
+                tool = AuditSessionsTool.from_config(config)
+                tool_ctx = ToolContext(
+                    config=cast(Any, config),
+                    workspace=str(config.workspace_path),
+                    bus=bus,
+                    sessions=session_manager,
+                )
+                await tool.execute(tool_ctx, action="generate_report", timeframe="today")
+                logger.info("Daily Guide Audit system job executed successfully")
+            except Exception:
+                logger.exception("Daily Guide Audit system job failed")
             return None
 
         # Heartbeat is a system job that checks HEARTBEAT.md for active tasks.
@@ -857,6 +873,31 @@ def _run_gateway(
     cron_job_count = cast(int, cron_status["jobs"])
     if cron_job_count > 0:
         console.print(f"[green]✓[/green] Cron: {cron_job_count} scheduled jobs")
+
+    # Register Audit Sessions daily report system job (idempotent on restart)
+    audit_cfg = getattr(config, "audit_sessions", None)
+    if audit_cfg and getattr(audit_cfg, "enabled", True):
+        if getattr(audit_cfg, "auto_report_daily", True):
+            from nanobot.agent.tools.audit_sessions import AuditSessionsTool
+
+            audit_tool = AuditSessionsTool.from_config(config)
+            resolved_dirs = [str(d) for d in audit_tool.resolve_session_dirs()]
+            cron_expr = getattr(audit_cfg, "cron_expression", "0 0 * * *")
+            cron.register_system_job(CronJob(
+                id="audit_sessions_daily",
+                name="audit_sessions_daily",
+                schedule=CronSchedule(
+                    kind="cron",
+                    expr=cron_expr,
+                    tz=config.agents.defaults.timezone,
+                ),
+                payload=CronPayload(kind="system_event"),
+            ))
+            console.print(f"[green]✓[/green] Audit Sessions: daily report scheduled ({cron_expr} {config.agents.defaults.timezone}, dirs: {resolved_dirs})")
+        else:
+            console.print("[yellow]○[/yellow] Audit Sessions: enabled (auto_report_daily: false)")
+    else:
+        console.print("[yellow]○[/yellow] Guide Audit: disabled")
 
     async def _open_browser_when_ready() -> None:
         """Wait for the gateway to bind, then point the user's browser at the webui."""
