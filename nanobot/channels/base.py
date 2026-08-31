@@ -350,7 +350,7 @@ class BaseChannel(ABC):
 
         if isinstance(raw_ts, (int, float)):
             val = float(raw_ts)
-            if val <= 0:
+            if val <= 86400 * 365:
                 return datetime.now(), None
             epoch_sec = val / 1000.0 if val > 1e11 else val
             try:

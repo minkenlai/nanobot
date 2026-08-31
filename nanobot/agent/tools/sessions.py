@@ -53,6 +53,7 @@ def _session_ref(session_key: str) -> str:
 
 class _SessionTool(Tool):
     def __init__(self, sessions: SessionManager) -> None:
+        self._manager = sessions
         self._access = WebuiSessionAccess(sessions)
 
     @classmethod
@@ -259,15 +260,13 @@ class ResetSessionTool(_SessionTool):
         return False
 
     async def execute(self, *args: Any, **kwargs: Any) -> ToolResult:
-        ctx = args[0] if args else getattr(self, "context", None)
         reason = str(kwargs.get("reason") or "user_request_reset").strip()
+        session_key = current_request_session_key()
 
-        session_key = current_request_session_key() or (getattr(ctx, "session_key", None) if ctx else None)
-        sessions: SessionManager | None = self._access.sessions if hasattr(self._access, "sessions") else (getattr(ctx, "sessions", None) if ctx else None)
-
-        if not session_key or sessions is None:
+        if not session_key:
             return ToolResult.error("Error: Active session context unavailable for reset.")
 
+        sessions = self._manager
         session = sessions.get_or_create(session_key)
         if session.messages:
             sessions.archive_session_snapshot(session, reason=reason)

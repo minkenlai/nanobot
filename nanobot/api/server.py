@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
 from aiohttp import web
 from loguru import logger
 
+from nanobot.agent.hook import AgentHook, AgentRunHookContext
 from nanobot.config.paths import get_media_dir
 from nanobot.providers.base import LLMUsage
 from nanobot.utils.helpers import safe_filename
@@ -57,6 +58,17 @@ _RATE_LIMIT_IP_KEY = web.AppKey[int]("rate_limit_ip_per_min")
 _RATE_LIMIT_SESSION_KEY = web.AppKey[int]("rate_limit_session_per_min")
 _RATE_LIMITER_KEY = web.AppKey[Any]("rate_limiter")
 _MISSING = object()
+
+
+class _UsageCaptureHook(AgentHook):
+    """Capture the aggregate usage owned by one API run."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.usage: LLMUsage | None = None
+
+    async def after_run(self, context: AgentRunHookContext) -> None:
+        self.usage = context.usage
 
 
 def _app_value(
@@ -427,11 +439,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         return _error_json(400, f"Prompt length ({len(text)} chars) exceeds turn limit of {max_prompt_len} chars.", headers=headers)
 
     if requested_model and requested_model not in (model_name, "nanobot"):
-        logger.warning(
-            "API request requested model '{}', but server is running configured model '{}'. Proceeding.",
-            requested_model,
-            model_name,
-        )
+        return _error_json(400, f"Only configured model '{model_name}' is available", headers=headers)
 
     session_locks: dict[str, asyncio.Lock] = _app_value(
         request.app,
@@ -519,6 +527,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         return resp
 
     # -- non-streaming path (original logic) --
+    usage_capture = _UsageCaptureHook()
     try:
         async with session_lock:
             try:
@@ -530,6 +539,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
                         session_key=session_key,
                         channel="api",
                         chat_id=API_CHAT_ID,
+                        hooks=[usage_capture],
                     )
                 response_text = _response_text(response)
                 if not response_text or not response_text.strip():
@@ -548,7 +558,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
     duration = time.monotonic() - start_time
     logger.info("API request done [{}] status=200 duration={:.2f}s", session_key, duration)
     return web.json_response(
-        _chat_completion_response(response_text, model_name, getattr(agent_loop, "_last_usage", None)),
+        _chat_completion_response(response_text, model_name, usage_capture.usage),
         headers=headers,
     )
 
