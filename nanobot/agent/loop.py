@@ -961,6 +961,56 @@ class AgentLoop:
         if self._unified_session and session.key == UNIFIED_SESSION_KEY:
             remember_last_channel(session.metadata, msg.channel, msg.chat_id)
 
+    def _check_web_session_idle_reset(self, session_key: str, msg: InboundMessage) -> None:
+        """If a Web session has been inactive past idle threshold, archive pre-idle snapshot and start fresh."""
+        from datetime import datetime
+
+        if msg.sender_id == "subagent" or msg.channel in {"cli", "system"}:
+            return
+        is_web = (
+            msg.channel in {"web", "api"}
+            or "web" in session_key
+            or "api:web:" in session_key
+        )
+        if not is_web:
+            return
+
+        cfg: Any = getattr(self, "config", None) or getattr(self, "_config", None)
+        audit_cfg: Any = getattr(cfg, "audit_sessions", None) if cfg else None
+        idle_minutes = int(getattr(audit_cfg, "web_session_idle_reset_minutes", 30)) if audit_cfg else 30
+        if idle_minutes <= 0:
+            return
+
+        session = self.sessions.get_cached(session_key) or self.sessions.get_or_create(session_key)
+        if not session.messages or not session.updated_at:
+            return
+
+        elapsed_minutes = (datetime.now() - session.updated_at).total_seconds() / 60.0
+        if elapsed_minutes >= idle_minutes:
+            self.sessions.archive_session_snapshot(session, reason="idle_timeout")
+            session.clear()
+            self.sessions.save(session)
+            self.sessions.invalidate(session.key)
+            logger.info(
+                "[Idle Reset] Reset inactive Web session {} after {:.1f}m inactivity (> {}m limit)",
+                session.key,
+                elapsed_minutes,
+                idle_minutes,
+            )
+
+    @staticmethod
+    def _replay_token_budget(runtime: LLMRuntime) -> int:
+        """Derive a token budget for session history replay from the context window."""
+        if runtime.context_window_tokens <= 0:
+            return 0
+        max_output = runtime.generation.max_tokens
+        try:
+            reserved_output = int(max_output)
+        except (TypeError, ValueError):
+            reserved_output = 4096
+        budget = runtime.context_window_tokens - max(1, reserved_output) - 1024
+        return budget if budget > 0 else max(128, runtime.context_window_tokens // 2)
+
     async def _run_agent_loop(
         self,
         transcript_input: TranscriptInput,
@@ -2249,6 +2299,15 @@ class AgentLoop:
         input_persisted_early: bool = False,
     ) -> None:
         """Commit new-turn messages and an optional summary boundary."""
+        if session.metadata.pop("_was_cleared_during_turn", False):
+            logger.info(
+                "[Session Reset] Session {} was cleared during turn; skipping persistence of turn tail.",
+                session.key,
+            )
+            session.messages = []
+            session.provider_state = None
+            return
+
         declared_tool_call_ids = {
             str(tc["id"])
             for m in session.messages

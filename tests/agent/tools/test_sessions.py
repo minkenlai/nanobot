@@ -11,7 +11,7 @@ import pytest
 from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.sessions import ReadSessionTool, SearchSessionsTool
+from nanobot.agent.tools.sessions import ReadSessionTool, ResetSessionTool, SearchSessionsTool
 from nanobot.runtime_context import RuntimeContextBlock, append_runtime_context
 from nanobot.session.manager import SessionManager
 from nanobot.session.session_handles import SessionHandleResolver
@@ -52,7 +52,7 @@ def _webui_request(
 def test_session_tools_are_discovered() -> None:
     names = {tool.__name__ for tool in ToolLoader().discover()}
 
-    assert {"ReadSessionTool", "SearchSessionsTool"} <= names
+    assert {"ReadSessionTool", "SearchSessionsTool", "ResetSessionTool"} <= names
 
 
 def test_session_tools_stay_visible_when_enabled(tmp_path) -> None:
@@ -368,3 +368,43 @@ async def test_session_tools_work_without_request_context(tmp_path, monkeypatch)
 
     assert [row["session_key"] for row in result["results"]] == ["custom:history"]
     assert read["session_key"] == "custom:history"
+
+
+@pytest.mark.asyncio
+async def test_reset_session_tool_clears_and_archives(tmp_path):
+    manager = SessionManager(tmp_path)
+    session_key = "whatsapp:direct:12345"
+    _save_session(
+        manager,
+        session_key,
+        title="Active Chat",
+        messages=[
+            {"role": "user", "content": "Hello there"},
+            {"role": "assistant", "content": "How can I help you today?"},
+        ],
+    )
+
+    tool = ResetSessionTool(manager)
+
+    # Without active request context
+    res_no_ctx = await tool.execute()
+    assert res_no_ctx.is_error
+    assert "Active session context unavailable" in str(res_no_ctx)
+
+    # With active request context
+    with request_context(RequestContext(channel="whatsapp", chat_id="12345", session_key=session_key)):
+        res = await tool.execute(reason="user_requested_fresh_start")
+
+    assert not res.is_error
+    assert "Chat history reset to a fresh start." in str(res)
+
+    # Verify session messages cleared
+    session = manager.get_or_create(session_key)
+    assert len(session.messages) == 0
+
+    # Verify pre-reset archive exists
+    archive_dir = manager.sessions_dir / "archives"
+    assert archive_dir.exists()
+    archives = list(archive_dir.glob("*.json"))
+    assert len(archives) == 1
+

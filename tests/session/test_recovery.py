@@ -756,7 +756,11 @@ async def test_scan_failure_is_visible_instead_of_aborting_other_sessions(
 
 
 @pytest.mark.asyncio
-async def test_bus_remains_quiet_after_recovered_state(tmp_path: Path) -> None:
+async def test_bus_remains_quiet_after_recovered_state(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "nanobot.webui.transcript.has_unfinished_transcript_tail",
+        lambda _key: False,
+    )
     coordinator, bus, sessions = _coordinator(tmp_path)
     session = sessions.get_or_create("websocket:chat")
     session.metadata[RECOVERY_METADATA_KEY] = {
