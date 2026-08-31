@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,6 +18,13 @@ from nanobot.pairing import (
     generate_code,
     is_approved,
 )
+
+_BOOL_CAMEL_ALIASES: dict[str, str] = {
+    "ignore_connect_backlog": "ignoreConnectBacklog",
+}
+_INT_CAMEL_ALIASES: dict[str, str] = {
+    "max_message_age_seconds": "maxMessageAgeSeconds",
+}
 
 
 class BaseChannel(ABC):
@@ -31,6 +40,7 @@ class BaseChannel(ABC):
     send_progress: bool = True
     send_tool_hints: bool = True
     show_reasoning: bool = True
+    staff_policy: Any = None
 
     def __init__(self, config: Any, bus: MessageBus):
         """
@@ -44,6 +54,67 @@ class BaseChannel(ABC):
         self.logger = logger.bind(channel=self.name)
         self.bus = bus
         self._running = False
+        self.max_message_age_seconds: int | None = self._extract_config_int(
+            "max_message_age_seconds", default=300
+        )
+        self.ignore_connect_backlog: bool = self._extract_config_bool(
+            "ignore_connect_backlog", default=True
+        )
+        self.connected_at: float | None = None
+
+    def _extract_config_int(self, key: str, default: int | None) -> int | None:
+        cfg = self.config
+        camel = _INT_CAMEL_ALIASES.get(key, key)
+        if isinstance(cfg, dict):
+            cfg_dict = cast(dict[str, Any], cfg)
+            if key in cfg_dict:
+                val: Any = cfg_dict[key]
+            elif camel in cfg_dict:
+                val = cfg_dict[camel]
+            else:
+                return default
+            if val is None:
+                return None
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return default
+        if hasattr(cfg, key):
+            val = getattr(cfg, key)
+        elif hasattr(cfg, camel):
+            val = getattr(cfg, camel)
+        else:
+            return default
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
+
+    def _extract_config_bool(self, key: str, default: bool) -> bool:
+        cfg = self.config
+        camel = _BOOL_CAMEL_ALIASES.get(key, key)
+        if isinstance(cfg, dict):
+            cfg_dict = cast(dict[str, Any], cfg)
+            if key in cfg_dict:
+                val: Any = cfg_dict[key]
+            elif camel in cfg_dict:
+                val = cfg_dict[camel]
+            else:
+                return default
+            return val if isinstance(val, bool) else default
+        if hasattr(cfg, key):
+            val = getattr(cfg, key)
+        elif hasattr(cfg, camel):
+            val = getattr(cfg, camel)
+        else:
+            return default
+        return val if isinstance(val, bool) else default
+
+    def mark_connected(self, connected_at: float | None = None) -> None:
+        """Record connection time for connect-backlog filtering."""
+        self.connected_at = time.time() if connected_at is None else float(connected_at)
 
     async def transcribe_audio(self, file_path: str | Path) -> str:
         """Transcribe an audio file via Whisper (OpenAI or Groq). Returns empty string on failure."""
@@ -252,6 +323,96 @@ class BaseChannel(ABC):
             return True
         return False
 
+    def _normalize_message_timestamp(
+        self,
+        timestamp: datetime | float | int | str | None,
+        metadata: dict[str, Any] | None,
+    ) -> tuple[datetime, float | None]:
+        """Normalize various timestamp representations to (datetime, epoch_seconds | None)."""
+        raw_ts = timestamp
+        if raw_ts is None and metadata:
+            raw_ts = (
+                metadata.get("timestamp")
+                or metadata.get("server_timestamp")
+                or metadata.get("create_time")
+            )
+
+        if raw_ts is None:
+            return datetime.now(), None
+
+        if isinstance(raw_ts, datetime):
+            dt = raw_ts
+            if dt.tzinfo is not None:
+                epoch_sec = dt.timestamp()
+            else:
+                epoch_sec = dt.replace(tzinfo=timezone.utc).timestamp()
+            return dt, epoch_sec
+
+        if isinstance(raw_ts, (int, float)):
+            val = float(raw_ts)
+            if val <= 0:
+                return datetime.now(), None
+            epoch_sec = val / 1000.0 if val > 1e11 else val
+            try:
+                dt = datetime.fromtimestamp(epoch_sec, tz=timezone.utc)
+            except (ValueError, OverflowError, OSError):
+                return datetime.now(), None
+            return dt, epoch_sec
+
+        if isinstance(raw_ts, str):
+            try:
+                val = float(raw_ts)
+                if val <= 0:
+                    return datetime.now(), None
+                epoch_sec = val / 1000.0 if val > 1e11 else val
+                dt = datetime.fromtimestamp(epoch_sec, tz=timezone.utc)
+                return dt, epoch_sec
+            except ValueError:
+                pass
+            try:
+                dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                epoch_sec = dt.timestamp()
+                return dt, epoch_sec
+            except ValueError:
+                pass
+
+        return datetime.now(), None
+
+    def _should_ignore_backlog(self, epoch_seconds: float | None, sender_id: str) -> bool:
+        """Check if incoming message is backlogged/outdated based on channel policy."""
+        if epoch_seconds is None or epoch_seconds <= 0:
+            return False
+
+        if (
+            self.ignore_connect_backlog
+            and self.connected_at is not None
+            and self.connected_at > 0
+            and epoch_seconds < self.connected_at
+        ):
+            self.logger.info(
+                "Ignoring backlogged message from {}: timestamp {} is prior to connect time {}",
+                sender_id,
+                epoch_seconds,
+                self.connected_at,
+            )
+            return True
+
+        if (
+            self.max_message_age_seconds is not None
+            and self.max_message_age_seconds > 0
+        ):
+            age = time.time() - epoch_seconds
+            if age > self.max_message_age_seconds:
+                self.logger.info(
+                    "Ignoring outdated message from {}: age {:.1f}s exceeds max_message_age_seconds ({}s)",
+                    sender_id,
+                    age,
+                    self.max_message_age_seconds,
+                )
+                return True
+
+        return False
+
     async def _handle_message(
         self,
         sender_id: str,
@@ -263,14 +424,13 @@ class BaseChannel(ABC):
         is_dm: bool = False,
         authorization_id: str | None = None,
         require_existing_session: bool = False,
+        timestamp: datetime | float | int | str | None = None,
     ) -> None:
-        """Handle a message after checking its authorization subject.
+        """Handle a message after checking backlog freshness and authorization."""
+        parsed_dt, epoch_seconds = self._normalize_message_timestamp(timestamp, metadata)
+        if self._should_ignore_backlog(epoch_seconds, str(sender_id)):
+            return
 
-        ``sender_id`` is the identity recorded on the inbound message.  Channels
-        where access is scoped to another entity (for example, a group or room)
-        can pass that entity as ``authorization_id`` without changing the
-        sender's identity.  When omitted, authorization remains sender-based.
-        """
         permission_id = authorization_id if authorization_id is not None else sender_id
         if not self.is_allowed(permission_id):
             if is_dm:
@@ -312,6 +472,7 @@ class BaseChannel(ABC):
             sender_id=str(sender_id),
             chat_id=str(chat_id),
             content=content,
+            timestamp=parsed_dt,
             media=media or [],
             metadata=meta,
             session_key_override=session_key,

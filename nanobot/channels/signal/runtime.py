@@ -11,6 +11,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -431,6 +432,7 @@ class SignalChannel(BaseChannel):
         is_dm: bool = False,
         authorization_id: str | None = None,
         require_existing_session: bool = False,
+        timestamp: datetime | float | int | str | None = None,
     ) -> None:
         """Handle an inbound message whose policy has already been checked.
 
@@ -441,6 +443,9 @@ class SignalChannel(BaseChannel):
         ``is_allowed`` and issues a pairing code.
         """
         del authorization_id
+        _, epoch_seconds = self._normalize_message_timestamp(timestamp, metadata)
+        if self._should_ignore_backlog(epoch_seconds, str(sender_id)):
+            return
         meta = metadata or {}
         if self.supports_streaming:
             meta = {**meta, "_wants_stream": True}

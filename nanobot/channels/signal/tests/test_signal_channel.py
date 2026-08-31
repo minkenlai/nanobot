@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -122,9 +123,10 @@ def _dm_envelope(
     message: str = "hello",
     attachments: list | None = None,
     reaction: dict | None = None,
-    timestamp: int = 1000,
+    timestamp: int | None = None,
 ) -> dict:
-    data_message: dict = {"message": message, "timestamp": timestamp}
+    ts = int(time.time() * 1000) if timestamp is None else timestamp
+    data_message: dict = {"message": message, "timestamp": ts}
     if attachments is not None:
         data_message["attachments"] = attachments
     if reaction is not None:
@@ -146,14 +148,15 @@ def _group_envelope(
     group_id: str = "group123==",
     message: str = "hey group",
     mentions: list | None = None,
-    timestamp: int = 2000,
+    timestamp: int | None = None,
     use_v2: bool = False,
 ) -> dict:
+    ts = int(time.time() * 1000) if timestamp is None else timestamp
     group_obj = {"groupId": group_id}
     key = "groupV2" if use_v2 else "groupInfo"
     data_message: dict = {
         "message": message,
-        "timestamp": timestamp,
+        "timestamp": ts,
         key: group_obj,
         "mentions": mentions or [],
     }

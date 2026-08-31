@@ -35,6 +35,17 @@ class ChannelsConfig(Base):
     show_reasoning: bool = True  # surface model reasoning when channel implements it
     extract_document_text: bool = True  # Deprecated and ignored; documents are read on demand
     send_max_retries: int = Field(default=3, ge=0, le=10)  # Max delivery attempts (initial send included)
+    max_message_age_seconds: int | None = Field(
+        default=300,
+        ge=0,
+        validation_alias=AliasChoices("max_message_age_seconds", "maxMessageAgeSeconds"),
+        serialization_alias="maxMessageAgeSeconds",
+    )  # Max age of incoming messages to process (seconds); None or 0 disables check
+    ignore_connect_backlog: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("ignore_connect_backlog", "ignoreConnectBacklog"),
+        serialization_alias="ignoreConnectBacklog",
+    )  # Drop messages timestamped prior to channel connection
     transcription_provider: str = "groq"  # Deprecated: use top-level transcription.provider
     transcription_language: str | None = Field(default=None, pattern=r"^[a-z]{2,3}$")  # Deprecated: use top-level transcription.language
 
@@ -337,6 +348,11 @@ class ApiConfig(Base):
     port: int = 8900
     timeout: float = 120.0  # Per-request timeout in seconds.
     api_key: str = Field(default="", repr=False)
+    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    max_turn_prompt_length: int = 2000
+    rate_limit_ip_per_min: int = 10
+    rate_limit_session_per_min: int = 5
+    verbose: bool = False
 
     @model_validator(mode="after")
     def wildcard_host_requires_auth(self) -> "ApiConfig":
@@ -348,6 +364,94 @@ class ApiConfig(Base):
             "host is 0.0.0.0 (all interfaces) but api_key is not set "
             "- set api.api_key to prevent unauthenticated access"
         )
+
+
+class StaffPolicyConfig(Base):
+    """Policy for restricting staff user access to commands, tools, and skills."""
+
+    enabled: bool = False
+    unrestricted_users: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("unrestrictedUsers", "unrestricted_users"),
+        serialization_alias="unrestrictedUsers",
+    )
+    allowed_commands: list[str] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("allowedCommands", "allowed_commands"),
+        serialization_alias="allowedCommands",
+    )
+    disabled_commands: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("disabledCommands", "disabled_commands"),
+        serialization_alias="disabledCommands",
+    )
+    allowed_tools: list[str] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("allowedTools", "allowed_tools"),
+        serialization_alias="allowedTools",
+    )
+    disabled_tools: list[str] = Field(
+        default_factory=lambda: [
+            "exec",
+            "write_to_file",
+            "replace_file_content",
+            "multi_replace_file_content",
+            "apply_diff",
+        ],
+        validation_alias=AliasChoices("disabledTools", "disabled_tools"),
+        serialization_alias="disabledTools",
+    )
+    allowed_skills: list[str] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("allowedSkills", "allowed_skills"),
+        serialization_alias="allowedSkills",
+    )
+    disabled_skills: list[str] = Field(
+        default_factory=lambda: ["skill-creator"],
+        validation_alias=AliasChoices("disabledSkills", "disabled_skills"),
+        serialization_alias="disabledSkills",
+    )
+
+
+class AuditSessionsConfig(Base):
+    """Configuration for session audit & reporting across all channels."""
+
+    enabled: bool = True
+    reports_dir: str = Field(
+        default="./audit_reports",
+        validation_alias=AliasChoices("reportsDir", "reports_dir"),
+        serialization_alias="reportsDir",
+    )
+    auto_report_daily: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("autoReportDaily", "auto_report_daily"),
+        serialization_alias="autoReportDaily",
+    )
+    dispatch_whatsapp_jid: str = Field(
+        default="",
+        validation_alias=AliasChoices("dispatchWhatsappJid", "dispatch_whatsapp_jid"),
+        serialization_alias="dispatchWhatsappJid",
+    )
+    dispatch_telegram_chat_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("dispatchTelegramChatId", "dispatch_telegram_chat_id"),
+        serialization_alias="dispatchTelegramChatId",
+    )
+    retention_days: int = Field(
+        default=30,
+        validation_alias=AliasChoices("retentionDays", "retention_days"),
+        serialization_alias="retentionDays",
+    )
+    cron_expression: str = Field(
+        default="0 0 * * *",
+        validation_alias=AliasChoices("cronExpression", "cron_expression", "cron"),
+        serialization_alias="cronExpression",
+    )
+    web_session_idle_reset_minutes: int = Field(
+        default=30,
+        validation_alias=AliasChoices("webSessionIdleResetMinutes", "web_session_idle_reset_minutes"),
+        serialization_alias="webSessionIdleResetMinutes",
+    )
 
 
 class GatewayConfig(Base):
@@ -431,6 +535,16 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    audit_sessions: AuditSessionsConfig = Field(
+        default_factory=AuditSessionsConfig,
+        validation_alias=AliasChoices("auditSessions", "audit_sessions"),
+        serialization_alias="auditSessions",
+    )
+    staff_policy: StaffPolicyConfig = Field(
+        default_factory=StaffPolicyConfig,
+        validation_alias=AliasChoices("staffPolicy", "staff_policy"),
+        serialization_alias="staffPolicy",
+    )
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("modelPresets", "model_presets"),

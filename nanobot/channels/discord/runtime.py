@@ -609,6 +609,7 @@ class DiscordChannel(BaseChannel):
                 metadata=metadata,
                 session_key=session_key,
                 is_dm=message.guild is None,
+                timestamp=getattr(message, "created_at", None),
             )
         except Exception:
             await self._clear_reactions(channel_id)

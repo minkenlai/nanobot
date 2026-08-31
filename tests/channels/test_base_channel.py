@@ -168,3 +168,143 @@ async def test_handle_message_rejects_when_authorization_id_is_not_allowed() -> 
 
     assert bus.inbound_size == 0
 
+
+@pytest.mark.asyncio
+async def test_handle_message_drops_outdated_messages() -> None:
+    import time
+
+    bus = MessageBus()
+    channel = _DummyChannel(
+        {"allowFrom": ["*"], "max_message_age_seconds": 60, "ignore_connect_backlog": False},
+        bus,
+    )
+    old_ts = time.time() - 100.0
+
+    await channel._handle_message(
+        sender_id="alice",
+        chat_id="chat1",
+        content="old message",
+        timestamp=old_ts,
+    )
+
+    assert bus.inbound_size == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_message_accepts_fresh_messages() -> None:
+    import time
+
+    bus = MessageBus()
+    channel = _DummyChannel(
+        {"allowFrom": ["*"], "max_message_age_seconds": 60, "ignore_connect_backlog": False},
+        bus,
+    )
+    fresh_ts = time.time() - 5.0
+
+    await channel._handle_message(
+        sender_id="alice",
+        chat_id="chat1",
+        content="fresh message",
+        timestamp=fresh_ts,
+    )
+
+    assert bus.inbound_size == 1
+    msg = await bus.consume_inbound()
+    assert msg.content == "fresh message"
+    assert abs(msg.timestamp.timestamp() - fresh_ts) < 1.0
+
+
+@pytest.mark.asyncio
+async def test_handle_message_drops_connect_backlog() -> None:
+    import time
+
+    bus = MessageBus()
+    channel = _DummyChannel(
+        {"allowFrom": ["*"], "max_message_age_seconds": 3600, "ignore_connect_backlog": True},
+        bus,
+    )
+    t0 = time.time()
+    channel.mark_connected(t0)
+
+    # Message timestamped 10 seconds before channel connection
+    await channel._handle_message(
+        sender_id="alice",
+        chat_id="chat1",
+        content="backlog message",
+        timestamp=t0 - 10.0,
+    )
+    assert bus.inbound_size == 0
+
+    # Message timestamped 1 second after channel connection
+    await channel._handle_message(
+        sender_id="alice",
+        chat_id="chat1",
+        content="post-connect message",
+        timestamp=t0 + 1.0,
+    )
+    assert bus.inbound_size == 1
+    msg = await bus.consume_inbound()
+    assert msg.content == "post-connect message"
+
+
+@pytest.mark.asyncio
+async def test_handle_message_disabled_backlog_filtering() -> None:
+    import time
+
+    bus = MessageBus()
+    channel = _DummyChannel(
+        {"allowFrom": ["*"], "max_message_age_seconds": None, "ignore_connect_backlog": False},
+        bus,
+    )
+    channel.mark_connected(time.time())
+
+    # Very old message before connect
+    await channel._handle_message(
+        sender_id="alice",
+        chat_id="chat1",
+        content="historical message",
+        timestamp=time.time() - 100_000.0,
+    )
+
+    assert bus.inbound_size == 1
+    msg = await bus.consume_inbound()
+    assert msg.content == "historical message"
+
+
+def test_normalize_message_timestamp_formats() -> None:
+    from datetime import datetime, timezone
+
+    channel = _DummyChannel({"allowFrom": ["*"]}, MessageBus())
+
+    # datetime timezone-aware
+    dt_aware = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    parsed_dt, epoch = channel._normalize_message_timestamp(dt_aware, None)
+    assert parsed_dt == dt_aware
+    assert epoch == dt_aware.timestamp()
+
+    # epoch seconds int/float
+    parsed_dt, epoch = channel._normalize_message_timestamp(1700000000, None)
+    assert epoch == 1700000000.0
+    assert parsed_dt.timestamp() == 1700000000.0
+
+    # epoch milliseconds int/float
+    parsed_dt, epoch = channel._normalize_message_timestamp(1700000000000, None)
+    assert epoch == 1700000000.0
+
+    # ISO string
+    parsed_dt, epoch = channel._normalize_message_timestamp("2026-01-01T12:00:00+00:00", None)
+    assert epoch == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+
+    # string float
+    parsed_dt, epoch = channel._normalize_message_timestamp("1700000000.5", None)
+    assert epoch == 1700000000.5
+
+    # metadata fallback
+    parsed_dt, epoch = channel._normalize_message_timestamp(None, {"timestamp": 1700000000})
+    assert epoch == 1700000000.0
+
+    # None
+    parsed_dt, epoch = channel._normalize_message_timestamp(None, None)
+    assert epoch is None
+
+

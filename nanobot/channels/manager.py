@@ -68,6 +68,10 @@ _BOOL_CAMEL_ALIASES: dict[str, str] = {
     "send_progress": "sendProgress",
     "send_tool_hints": "sendToolHints",
     "show_reasoning": "showReasoning",
+    "ignore_connect_backlog": "ignoreConnectBacklog",
+}
+_INT_CAMEL_ALIASES: dict[str, str] = {
+    "max_message_age_seconds": "maxMessageAgeSeconds",
 }
 
 def _default_channel_config(name: str) -> dict[str, Any] | None:
@@ -213,7 +217,10 @@ class ChannelManager:
                 logger=logger,
             )
             kwargs["gateway"] = gateway
+        from nanobot.agent.staff_policy import StaffPolicy
+
         channel = cls(section, self.bus, **kwargs)
+        channel.staff_policy = StaffPolicy.from_config(getattr(self.config, "staff_policy", None))
         if runtime_name and runtime_name != channel.name:
             channel.name = runtime_name
         progress_default, tool_hints_default = channel.progress_transport_defaults() or (
@@ -228,6 +235,12 @@ class ChannelManager:
         )
         channel.show_reasoning = self._resolve_bool_override(
             section, "show_reasoning", self.config.channels.show_reasoning,
+        )
+        channel.max_message_age_seconds = self._resolve_int_or_none_override(
+            section, "max_message_age_seconds", self.config.channels.max_message_age_seconds,
+        )
+        channel.ignore_connect_backlog = self._resolve_bool_override(
+            section, "ignore_connect_backlog", self.config.channels.ignore_connect_backlog,
         )
         return channel
 
@@ -344,8 +357,19 @@ class ChannelManager:
                     name,
                 )
 
-    def _should_send_progress(self, channel_name: str, *, tool_hint: bool = False) -> bool:
+    def _should_send_progress(
+        self,
+        channel_name: str,
+        *,
+        tool_hint: bool = False,
+        msg_metadata: Mapping[str, Any] | None = None,
+    ) -> bool:
         """Return whether progress (or tool-hints) may be sent to *channel_name*."""
+        if tool_hint and msg_metadata:
+            override = msg_metadata.get("send_tool_hints")
+            if isinstance(override, bool):
+                return override
+
         ch = self.channels.get(channel_name)
         if ch is None:
             logger.debug("Progress check for unknown channel: {}", channel_name)
@@ -361,14 +385,55 @@ class ChannelManager:
         """
         if isinstance(section, dict):
             section_data = cast(dict[str, Any], section)
-            value = section_data.get(key)
-            if value is None:
-                camel = _BOOL_CAMEL_ALIASES.get(key)
-                if camel:
-                    value = section_data.get(camel)
-            return value if isinstance(value, bool) else default
-        value = getattr(section, key, None)
-        return value if isinstance(value, bool) else default
+            if key in section_data:
+                val = section_data[key]
+            elif (camel := _BOOL_CAMEL_ALIASES.get(key)) and camel in section_data:
+                val = section_data[camel]
+            else:
+                return default
+            return val if isinstance(val, bool) else default
+        if hasattr(section, key):
+            val = getattr(section, key)
+        elif (camel := _BOOL_CAMEL_ALIASES.get(key)) and hasattr(section, camel):
+            val = getattr(section, camel)
+        else:
+            return default
+        return val if isinstance(val, bool) else default
+
+    def _resolve_int_or_none_override(
+        self, section: Any, key: str, default: int | None
+    ) -> int | None:
+        """Return *key* from *section* if it is an int/None, otherwise *default*.
+
+        For dict configs also checks the camelCase alias (e.g. ``maxMessageAgeSeconds``
+        for ``max_message_age_seconds``).
+        """
+        if isinstance(section, dict):
+            section_data = cast(dict[str, Any], section)
+            if key in section_data:
+                val = section_data[key]
+            elif (camel := _INT_CAMEL_ALIASES.get(key)) and camel in section_data:
+                val = section_data[camel]
+            else:
+                return default
+            if val is None:
+                return None
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return default
+        if hasattr(section, key):
+            val = getattr(section, key)
+        elif (camel := _INT_CAMEL_ALIASES.get(key)) and hasattr(section, camel):
+            val = getattr(section, camel)
+        else:
+            return default
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
 
     async def _start_channel(self, name: str, channel: BaseChannel) -> None:
         """Start a channel and log any exceptions."""
@@ -377,6 +442,7 @@ class ChannelManager:
             errors = self._channel_errors = {}
         errors.pop(name, None)
         try:
+            channel.mark_connected()
             await channel.start()
         except asyncio.CancelledError:
             raise
@@ -802,11 +868,15 @@ class ChannelManager:
 
                 if progress_event:
                     if progress_event.tool_hint and not self._should_send_progress(
-                        msg.channel, tool_hint=True,
+                        msg.channel,
+                        tool_hint=True,
+                        msg_metadata=msg.metadata,
                     ):
                         continue
                     if not progress_event.tool_hint and not self._should_send_progress(
-                        msg.channel, tool_hint=False,
+                        msg.channel,
+                        tool_hint=False,
+                        msg_metadata=msg.metadata,
                     ):
                         continue
 
