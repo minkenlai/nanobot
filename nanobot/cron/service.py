@@ -142,7 +142,7 @@ def _normalize_agent_turn_job(job: CronJob) -> bool:
     changed = origin_metadata != payload.origin_metadata
     payload.origin_metadata = origin_metadata
 
-    if payload.kind not in ("agent_turn", "exec_command", "skill_script") or not _has_legacy_delivery_context(payload):
+    if payload.kind not in ("agent_turn", "exec_command", "skill_script", "direct_message") or not _has_legacy_delivery_context(payload):
         return changed
 
     if not payload.channel or not payload.to:
@@ -197,7 +197,7 @@ class CronService:
 
     def _is_unbound_agent_job(self, job: CronJob) -> bool:
         return (
-            job.payload.kind in ("agent_turn", "exec_command", "skill_script")
+            job.payload.kind in ("agent_turn", "exec_command", "skill_script", "direct_message")
             and not is_bound_cron_job(job)
         )
 
@@ -401,6 +401,7 @@ class CronService:
                         "scriptName": j.payload.script_name,
                         "args": j.payload.args,
                         "deliver": j.payload.deliver,
+                        "quiet": j.payload.quiet,
                         "channel": j.payload.channel,
                         "to": j.payload.to,
                         "channelMeta": j.payload.channel_meta,
@@ -408,6 +409,11 @@ class CronService:
                         "originChannel": j.payload.origin_channel,
                         "originChatId": j.payload.origin_chat_id,
                         "originMetadata": j.payload.origin_metadata,
+                        "targetChannel": j.payload.target_channel,
+                        "targetChatId": j.payload.target_chat_id,
+                        "targetThreadId": j.payload.target_thread_id,
+                        "targetMetadata": j.payload.target_metadata,
+                        "recordSession": j.payload.record_session,
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -689,11 +695,17 @@ class CronService:
         origin_channel: str | None = None,
         origin_chat_id: str | None = None,
         origin_metadata: dict[str, Any] | None = None,
-        kind: Literal["agent_turn", "exec_command", "skill_script"] = "agent_turn",
+        kind: Literal["agent_turn", "exec_command", "skill_script", "direct_message"] = "agent_turn",
         command: str | None = None,
         skill_name: str | None = None,
         script_name: str | None = None,
         args: list[str] | None = None,
+        quiet: bool = False,
+        target_channel: str | None = None,
+        target_chat_id: str | None = None,
+        target_thread_id: str | None = None,
+        target_metadata: dict[str, Any] | None = None,
+        record_session: bool = True,
     ) -> CronJob:
         """Add a new job."""
         _validate_schedule_for_add(schedule)
@@ -712,6 +724,7 @@ class CronService:
                 script_name=script_name,
                 args=args or [],
                 deliver=deliver,
+                quiet=quiet,
                 channel=channel,
                 to=to,
                 channel_meta=channel_meta or {},
@@ -719,6 +732,11 @@ class CronService:
                 origin_channel=origin_channel,
                 origin_chat_id=origin_chat_id,
                 origin_metadata=origin_metadata or {},
+                target_channel=target_channel,
+                target_chat_id=target_chat_id,
+                target_thread_id=target_thread_id,
+                target_metadata=target_metadata or {},
+                record_session=record_session,
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,

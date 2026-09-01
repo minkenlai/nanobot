@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -11,7 +12,11 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine, Protocol
 
 from nanobot.agent.tools.cron import CronTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.cron.session_delivery import origin_delivery_context
+from nanobot.cron.session_delivery import (
+    has_custom_target,
+    origin_delivery_context,
+    target_delivery_context,
+)
 from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
 from nanobot.cron.types import CronJob
 from nanobot.cron.webui_metadata import cron_proactive_delivery_metadata
@@ -46,8 +51,12 @@ def _bound_session_delivery_context(
     *,
     turn_seed: str,
     source_label: str | None,
+    use_target: bool = False,
 ) -> tuple[str, str, dict[str, Any]]:
-    channel, chat_id, metadata = origin_delivery_context(job)
+    if use_target and has_custom_target(job):
+        channel, chat_id, metadata = target_delivery_context(job)
+    else:
+        channel, chat_id, metadata = origin_delivery_context(job)
 
     if channel == "websocket":
         metadata["webui"] = True
@@ -85,6 +94,7 @@ async def run_bound_cron_job(
         job,
         turn_seed=f"cron:{job.id}",
         source_label=job.name,
+        use_target=True,
     )
     metadata[CRON_TRIGGER_META] = {
         "job_id": job.id,
@@ -104,6 +114,9 @@ async def run_bound_cron_job(
         "prompt_vars": {"message": job.payload.message},
         "rendered_prompt": prompt,
     }
+    if has_custom_target(job):
+        run_record_base["target_channel"] = channel
+        run_record_base["target_chat_id"] = chat_id
 
     cron.write_run_record(
         run_id,
@@ -118,6 +131,11 @@ async def run_bound_cron_job(
     if isinstance(cron_tool, CronTool):
         cron_token = cron_tool.set_cron_context(True)
     try:
+        target_session = (
+            f"{channel}:{chat_id}"
+            if has_custom_target(job) and job.payload.record_session
+            else session_key
+        )
         resp = await agent.submit_cron_turn(
             InboundMessage(
                 channel=channel,
@@ -125,7 +143,7 @@ async def run_bound_cron_job(
                 chat_id=chat_id,
                 content=prompt,
                 metadata=metadata,
-                session_key_override=session_key,
+                session_key_override=target_session,
             )
         )
     except (Exception, asyncio.CancelledError) as exc:
@@ -162,19 +180,35 @@ async def run_bound_deterministic_cron_job(
     deliver_callback: Callable[..., Coroutine[Any, Any, None]] | None = None,
     cron: CronRunRecorder,
     timeout: float = 120.0,
+    exec_config: Any | None = None,
 ) -> str | None:
-    """Execute a session-bound deterministic cron job (command or skill script) without LLM."""
+    """Execute a session-bound deterministic cron job (command, skill script, or direct message) without LLM."""
     session_key = job.payload.session_key
     if not session_key:
         raise ValueError(f"cron job {job.id} is missing payload.session_key")
 
     run_id = f"{job.id}:{int(time.time() * 1000)}:{uuid.uuid4().hex[:8]}"
-    channel, chat_id, metadata = _bound_session_delivery_context(
+    origin_channel, origin_chat_id, origin_metadata = _bound_session_delivery_context(
         job,
         turn_seed=f"cron:{job.id}",
         source_label=job.name,
+        use_target=False,
     )
-    metadata[CRON_TRIGGER_META] = {
+    target_channel, target_chat_id, target_metadata = _bound_session_delivery_context(
+        job,
+        turn_seed=f"cron:{job.id}",
+        source_label=job.name,
+        use_target=True,
+    )
+    is_custom_target = has_custom_target(job)
+
+    origin_metadata[CRON_TRIGGER_META] = {
+        "job_id": job.id,
+        "job_name": job.name,
+        "run_id": run_id,
+        "persist_content": f"Scheduled deterministic job triggered: {job.name}",
+    }
+    target_metadata[CRON_TRIGGER_META] = {
         "job_id": job.id,
         "job_name": job.name,
         "run_id": run_id,
@@ -187,6 +221,9 @@ async def run_bound_deterministic_cron_job(
         "session_key": session_key,
         "kind": job.payload.kind,
     }
+    if is_custom_target:
+        run_record_base["target_channel"] = target_channel
+        run_record_base["target_chat_id"] = target_chat_id
 
     cron.write_run_record(
         run_id,
@@ -197,12 +234,34 @@ async def run_bound_deterministic_cron_job(
     )
 
     try:
-        if job.payload.kind == "exec_command":
+        if job.payload.kind == "direct_message":
+            msg_text = (job.payload.message or "").strip()
+            if not msg_text:
+                raise ValueError("direct_message cron job requires a non-empty message")
+            response = msg_text
+            has_output = True
+
+        elif job.payload.kind == "exec_command":
             cmd = (job.payload.command or job.payload.message or "").strip()
             if not cmd:
                 raise ValueError("exec_command cron job requires a non-empty command")
+            exec_cmd = cmd
+            sandbox = getattr(exec_config, "sandbox", "") or ""
+            if sandbox and sys.platform != "win32":
+                from nanobot.agent.tools.sandbox import wrap_command
+
+                sandbox_ro_binds = list(getattr(exec_config, "sandbox_ro_binds", []) or [])
+                sandbox_rw_binds = list(getattr(exec_config, "sandbox_rw_binds", []) or [])
+                exec_cmd = wrap_command(
+                    sandbox,
+                    cmd,
+                    str(workspace),
+                    str(workspace),
+                    sandbox_ro_binds=sandbox_ro_binds,
+                    sandbox_rw_binds=sandbox_rw_binds,
+                )
             proc = await asyncio.create_subprocess_shell(
-                cmd,
+                exec_cmd,
                 cwd=str(workspace),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -224,12 +283,13 @@ async def run_bound_deterministic_cron_job(
                 err_msg = stderr_str or stdout_str or f"Exited with code {proc.returncode}"
                 response = f"⚠️ Scheduled task '{job.name}' failed (code {proc.returncode}):\n{err_msg}"
                 if deliver_callback is not None:
+                    # Anomalous/error output always routes to the originating session
                     await deliver_callback(
                         OutboundMessage(
-                            channel=channel,
-                            chat_id=chat_id,
+                            channel=origin_channel,
+                            chat_id=origin_chat_id,
                             content=response,
-                            metadata=metadata,
+                            metadata=origin_metadata,
                         ),
                         record=True,
                         session_key=session_key,
@@ -245,9 +305,11 @@ async def run_bound_deterministic_cron_job(
                 )
                 raise RuntimeError(err_msg)
 
+            has_output = bool(stdout_str)
             response = stdout_str or f"Scheduled task '{job.name}' completed with no output."
             if stderr_str:
                 response += f"\n[stderr]: {stderr_str}"
+                has_output = True
 
         elif job.payload.kind == "skill_script":
             skill_name = (job.payload.skill_name or "").strip()
@@ -258,18 +320,29 @@ async def run_bound_deterministic_cron_job(
 
             from nanobot.agent.tools.skill_script import RunSkillScriptTool
 
-            tool = RunSkillScriptTool(workspace=workspace, timeout=timeout)  # pyright: ignore[reportAbstractUsage]
+            sandbox = getattr(exec_config, "sandbox", "") or ""
+            sandbox_ro_binds = list(getattr(exec_config, "sandbox_ro_binds", []) or [])
+            sandbox_rw_binds = list(getattr(exec_config, "sandbox_rw_binds", []) or [])
+
+            tool = RunSkillScriptTool(
+                workspace=workspace,
+                timeout=timeout,
+                sandbox=sandbox,
+                sandbox_ro_binds=sandbox_ro_binds,
+                sandbox_rw_binds=sandbox_rw_binds,
+            )  # pyright: ignore[reportAbstractUsage]
             res = await tool.execute(skill_name=skill_name, script_name=script_name, args=args)
             if getattr(res, "is_error", False):
                 err_msg = str(res)
                 response = f"⚠️ Scheduled task '{job.name}' failed:\n{err_msg}"
                 if deliver_callback is not None:
+                    # Anomalous/error output always routes to the originating session
                     await deliver_callback(
                         OutboundMessage(
-                            channel=channel,
-                            chat_id=chat_id,
+                            channel=origin_channel,
+                            chat_id=origin_chat_id,
                             content=response,
-                            metadata=metadata,
+                            metadata=origin_metadata,
                         ),
                         record=True,
                         session_key=session_key,
@@ -285,21 +358,42 @@ async def run_bound_deterministic_cron_job(
                 )
                 raise RuntimeError(err_msg)
 
-            response = str(res)
+            res_str = str(res).strip()
+            no_output_marker = f"Skill script '{script_name}' executed successfully with no output."
+            has_output = bool(res_str) and (res_str != no_output_marker)
+            response = res_str or no_output_marker
         else:
             raise ValueError(f"Unsupported deterministic cron payload kind: {job.payload.kind}")
 
-        if deliver_callback is not None and response:
-            await deliver_callback(
-                OutboundMessage(
-                    channel=channel,
-                    chat_id=chat_id,
-                    content=response,
-                    metadata=metadata,
-                ),
-                record=True,
-                session_key=session_key,
-            )
+        if deliver_callback is not None:
+            if has_output:
+                target_session_key = (
+                    f"{target_channel}:{target_chat_id}"
+                    if is_custom_target
+                    else session_key
+                )
+                await deliver_callback(
+                    OutboundMessage(
+                        channel=target_channel,
+                        chat_id=target_chat_id,
+                        content=response,
+                        metadata=target_metadata,
+                    ),
+                    record=job.payload.record_session,
+                    session_key=target_session_key,
+                )
+            elif not job.payload.quiet:
+                # No output and quiet is False: deliver notification to origin
+                await deliver_callback(
+                    OutboundMessage(
+                        channel=origin_channel,
+                        chat_id=origin_chat_id,
+                        content=response,
+                        metadata=origin_metadata,
+                    ),
+                    record=False,
+                    session_key=session_key,
+                )
 
         cron.write_run_record(
             run_id,

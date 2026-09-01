@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -59,14 +61,30 @@ class RunSkillScriptTool(Tool):
             "Use this instead of generic exec to run skill-specific automation scripts."
         )
 
-    def __init__(self, workspace: Path | None = None, timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        workspace: Path | None = None,
+        timeout: float = 120.0,
+        sandbox: str = "",
+        sandbox_ro_binds: list[str] | None = None,
+        sandbox_rw_binds: list[str] | None = None,
+    ) -> None:
         self._workspace = workspace
         self._timeout = timeout
+        self.sandbox = sandbox
+        self.sandbox_ro_binds = list(sandbox_ro_binds or [])
+        self.sandbox_rw_binds = list(sandbox_rw_binds or [])
 
     @classmethod
     def create(cls, ctx: ToolContext) -> RunSkillScriptTool:
         ws = Path(ctx.workspace).expanduser() if ctx.workspace else get_workspace_path()
-        return cls(workspace=ws)
+        exec_cfg = getattr(ctx.config, "exec", None)
+        return cls(
+            workspace=ws,
+            sandbox=getattr(exec_cfg, "sandbox", "") or "",
+            sandbox_ro_binds=list(getattr(exec_cfg, "sandbox_ro_binds", []) or []),
+            sandbox_rw_binds=list(getattr(exec_cfg, "sandbox_rw_binds", []) or []),
+        )
 
     def _find_skill_script(self, workspace: Path, skill_name: str, script_name: str) -> Path | None:
         """Locate the script and ensure it is strictly contained in the skill's scripts/ dir."""
@@ -132,15 +150,69 @@ class RunSkillScriptTool(Tool):
             bin_dir = venv_dir / ("Scripts" if sys.platform == "win32" else "bin")
             env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
 
+        sandbox = self.sandbox
+        sandbox_ro_binds = list(self.sandbox_ro_binds)
+        sandbox_rw_binds = list(self.sandbox_rw_binds)
+        if not sandbox and ctx and hasattr(ctx, "config") and hasattr(ctx.config, "exec"):
+            exec_cfg = ctx.config.exec
+            if exec_cfg:
+                sandbox = getattr(exec_cfg, "sandbox", "") or ""
+                sandbox_ro_binds = list(getattr(exec_cfg, "sandbox_ro_binds", []) or [])
+                sandbox_rw_binds = list(getattr(exec_cfg, "sandbox_rw_binds", []) or [])
+
         cmd = [python_bin, str(script_path), *script_args]
+        is_windows = sys.platform == "win32"
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=str(ws),
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
+            if sandbox and not is_windows:
+                from nanobot.agent.tools.sandbox import wrap_command
+
+                ro_binds = list(sandbox_ro_binds)
+                with suppress(Exception):
+                    builtin_resolved = BUILTIN_SKILLS_DIR.resolve()
+                    if builtin_resolved.exists() and str(builtin_resolved) not in ro_binds:
+                        ro_binds.append(str(builtin_resolved))
+                with suppress(Exception):
+                    py_path = Path(python_bin).resolve()
+                    if py_path.exists():
+                        try:
+                            py_path.relative_to(ws.resolve())
+                        except ValueError:
+                            try:
+                                py_path.relative_to(Path("/usr"))
+                            except ValueError:
+                                py_dir = str(py_path.parent)
+                                if py_dir not in ro_binds:
+                                    ro_binds.append(py_dir)
+
+                raw_cmd = shlex.join(cmd)
+                wrapped_cmd = wrap_command(
+                    sandbox,
+                    raw_cmd,
+                    str(ws),
+                    str(ws),
+                    sandbox_ro_binds=ro_binds,
+                    sandbox_rw_binds=sandbox_rw_binds,
+                )
+                proc = await asyncio.create_subprocess_shell(
+                    wrapped_cmd,
+                    cwd=str(ws),
+                    env=env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            else:
+                if sandbox and is_windows:
+                    logger.warning(
+                        "Sandbox '{}' is not supported on Windows; running unsandboxed",
+                        sandbox,
+                    )
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=str(ws),
+                    env=env,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
             try:
                 stdout_data, stderr_data = await asyncio.wait_for(
                     proc.communicate(),

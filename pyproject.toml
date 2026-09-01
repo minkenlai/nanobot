@@ -74,7 +74,7 @@ bedrock = [
 documents = [
     # Compatibility extra: document readers are bundled since v0.2.3.
     "defusedxml>=0.7.1,<1.0.0",
-    "pypdf>=5.0.0,<6.0.0",
+    "pypdf>=5.3.1,<6.0.0",
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",
@@ -84,7 +84,7 @@ langfuse = [
 ]
 pdf = [
     # Compatibility extra: PDF reading is bundled since v0.2.3.
-    "pypdf>=5.0.0,<6.0.0",
+    "pypdf>=5.3.1,<6.0.0",
 ]
 olostep = [
     "olostep>=0.1.0; python_version < '3.14'",
@@ -98,7 +98,7 @@ dev = [
     "ruff>=0.1.0",
     "basedpyright>=1.39.0,<2.0.0",
     "pymupdf>=1.25.0",
-    "pypdf>=5.0.0,<6.0.0",
+    "pypdf>=5.3.1,<6.0.0",
     "python-docx>=1.1.0,<2.0.0",
     "openpyxl>=3.1.0,<4.0.0",
     "python-pptx>=1.0.0,<2.0.0",

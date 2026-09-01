@@ -702,12 +702,13 @@ def _run_gateway(
             return response
 
         if is_bound_cron_job(job):
-            if job.payload.kind in ("exec_command", "skill_script"):
+            if job.payload.kind in ("exec_command", "skill_script", "direct_message"):
                 return await run_bound_deterministic_cron_job(
                     job,
                     workspace=config.workspace_path,
                     deliver_callback=_deliver_to_channel,
                     cron=cron,
+                    exec_config=config.tools.exec,
                 )
             return await run_bound_cron_job(job, agent=agent, cron=cron)
 

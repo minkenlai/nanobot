@@ -60,8 +60,15 @@ Scheduled automations normally deliver the result back to the session where they
 were created. Use them for work that should run on a predictable schedule and
 report each run.
 
-For background checks that should stay quiet unless there is something useful to
-report, use heartbeat instead of a user-created scheduled automation.
+### Advanced Cron Modes
+
+- **Quiet Mode (`quiet=True`)**: Deterministic cron commands or skill scripts can run in quiet mode, which suppresses notifications unless the command produces non-empty output or exits with an error.
+- **Deterministic Execution**: In addition to standard agent turns, `cron` jobs can directly invoke shell commands or workspace skill scripts under sandbox isolation (`bwrap`), bypassing LLM overhead for routine tasks.
+- **Destination Routing**: Scheduled jobs can explicitly specify a delivery destination (`channel`, `to` / `chat_id`, optional `thread_id`), allowing scheduled maintenance or monitoring tasks to deliver reports to dedicated alert channels.
+- **Direct Messaging**: For fixed reminders without agent invocation, `cron` jobs can deliver static messages directly to the recipient.
+
+For periodic checks across the workspace that should stay quiet unless there is something useful to
+report, you can also use heartbeat (`HEARTBEAT.md`).
 
 ## Local Triggers
 

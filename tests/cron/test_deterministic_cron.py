@@ -29,6 +29,7 @@ def test_cron_payload_store_dict_roundtrip() -> None:
         skill_name="my_skill",
         script_name="sync.py",
         args=["--verbose", "--force"],
+        quiet=True,
         session_key="telegram:12345",
         origin_channel="telegram",
         origin_chat_id="12345",
@@ -39,6 +40,7 @@ def test_cron_payload_store_dict_roundtrip() -> None:
         "skillName": payload.skill_name,
         "scriptName": payload.script_name,
         "args": payload.args,
+        "quiet": payload.quiet,
         "sessionKey": payload.session_key,
         "originChannel": payload.origin_channel,
         "originChatId": payload.origin_chat_id,
@@ -49,6 +51,7 @@ def test_cron_payload_store_dict_roundtrip() -> None:
     assert restored.skill_name == "my_skill"
     assert restored.script_name == "sync.py"
     assert restored.args == ["--verbose", "--force"]
+    assert restored.quiet is True
     assert restored.session_key == "telegram:12345"
 
 
@@ -237,4 +240,579 @@ async def test_run_bound_deterministic_skill_script(tmp_path: Path) -> None:
     assert delivered_messages[0].content == "demo output: param1 param2"
     assert delivered_messages[0].channel == "discord"
     assert delivered_messages[0].chat_id == "456"
+
+
+async def test_run_bound_deterministic_exec_command_quiet_empty_skips_delivery(tmp_path: Path) -> None:
+    recorder = _MockRecorder()
+    delivered_messages: list[OutboundMessage] = []
+
+    async def deliver(msg: OutboundMessage, **_kwargs: Any) -> None:
+        delivered_messages.append(msg)
+
+    job = CronJob(
+        id="test-cmd-quiet-empty",
+        name="test-cmd-quiet-empty",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="true",
+            quiet=True,
+            session_key="telegram:123",
+            origin_channel="telegram",
+            origin_chat_id="123",
+        ),
+    )
+
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        deliver_callback=deliver,
+        cron=recorder,
+    )
+
+    assert "completed with no output" in (result or "")
+    assert len(delivered_messages) == 0  # Delivery was skipped!
+
+    run_record = list(recorder.records.values())[-1]
+    assert run_record["status"] == "ok"
+
+
+async def test_run_bound_deterministic_exec_command_quiet_with_output_delivers(tmp_path: Path) -> None:
+    recorder = _MockRecorder()
+    delivered_messages: list[OutboundMessage] = []
+
+    async def deliver(msg: OutboundMessage, **_kwargs: Any) -> None:
+        delivered_messages.append(msg)
+
+    job = CronJob(
+        id="test-cmd-quiet-output",
+        name="test-cmd-quiet-output",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="echo 'non-empty report'",
+            quiet=True,
+            session_key="telegram:123",
+            origin_channel="telegram",
+            origin_chat_id="123",
+        ),
+    )
+
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        deliver_callback=deliver,
+        cron=recorder,
+    )
+
+    assert result == "non-empty report"
+    assert len(delivered_messages) == 1
+    assert delivered_messages[0].content == "non-empty report"
+
+
+async def test_run_bound_deterministic_exec_command_quiet_with_stderr_delivers(tmp_path: Path) -> None:
+    recorder = _MockRecorder()
+    delivered_messages: list[OutboundMessage] = []
+
+    async def deliver(msg: OutboundMessage, **_kwargs: Any) -> None:
+        delivered_messages.append(msg)
+
+    job = CronJob(
+        id="test-cmd-quiet-stderr",
+        name="test-cmd-quiet-stderr",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="echo 'warning from stderr' >&2",
+            quiet=True,
+            session_key="telegram:123",
+            origin_channel="telegram",
+            origin_chat_id="123",
+        ),
+    )
+
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        deliver_callback=deliver,
+        cron=recorder,
+    )
+
+    assert "warning from stderr" in (result or "")
+    assert len(delivered_messages) == 1
+    assert "warning from stderr" in delivered_messages[0].content
+
+
+async def test_run_bound_deterministic_skill_script_quiet_empty_skips_delivery(tmp_path: Path) -> None:
+    script_dir = tmp_path / "skills" / "silent-skill" / "scripts"
+    script_dir.mkdir(parents=True)
+    script_file = script_dir / "silent.py"
+    script_file.write_text("pass\n")
+
+    recorder = _MockRecorder()
+    delivered_messages: list[OutboundMessage] = []
+
+    async def deliver(msg: OutboundMessage, **_kwargs: Any) -> None:
+        delivered_messages.append(msg)
+
+    job = CronJob(
+        id="test-skill-quiet",
+        name="test-skill-quiet",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="skill_script",
+            skill_name="silent-skill",
+            script_name="silent.py",
+            quiet=True,
+            session_key="discord:456",
+            origin_channel="discord",
+            origin_chat_id="456",
+        ),
+    )
+
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        deliver_callback=deliver,
+        cron=recorder,
+    )
+
+    assert "executed successfully with no output" in (result or "")
+    assert len(delivered_messages) == 0  # Delivery was skipped!
+
+
+def test_cron_tool_add_with_quiet_flag(tmp_path: Path) -> None:
+    service = CronService(tmp_path / "cron" / "jobs.json")
+    tool = CronTool(service)
+
+    with request_context(
+        RequestContext(channel="telegram", chat_id="123", session_key="telegram:123")
+    ):
+        result = asyncio.run(
+            tool.execute(
+                action="add",
+                command="echo 'check'",
+                quiet=True,
+                every_seconds=60,
+            )
+        )
+    assert "Created job" in result
+    jobs = service.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].payload.quiet is True
+
+    list_output = tool._list_jobs()
+    assert "Quiet: True" in list_output
+
+
+async def test_run_bound_deterministic_exec_command_with_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from unittest.mock import MagicMock
+
+    from nanobot.agent.tools.shell import ExecToolConfig
+
+    executed_commands: list[str] = []
+
+    async def mock_create_subprocess_shell(cmd: str, **kwargs: Any) -> Any:
+        executed_commands.append(cmd)
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate = MagicMock(return_value=asyncio.sleep(0, result=(b"SANDBOX EXEC OK\n", b"")))
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", mock_create_subprocess_shell)
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    recorder = _MockRecorder()
+    job = CronJob(
+        id="test-sandbox-cmd",
+        name="test-sandbox-cmd",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="echo 'sandboxed task'",
+            session_key="telegram:123",
+            origin_channel="telegram",
+            origin_chat_id="123",
+        ),
+    )
+
+    exec_cfg = ExecToolConfig(sandbox="bwrap", sandbox_ro_binds=["/extra/ro"])
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        cron=recorder,
+        exec_config=exec_cfg,
+    )
+
+    assert result == "SANDBOX EXEC OK"
+    assert len(executed_commands) == 1
+    assert executed_commands[0].startswith("bwrap ")
+    assert "sandboxed task" in executed_commands[0]
+
+
+async def test_run_bound_deterministic_skill_script_with_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from unittest.mock import MagicMock
+
+    from nanobot.agent.tools.shell import ExecToolConfig
+
+    skill_dir = tmp_path / "skills" / "sandboxed_skill" / "scripts"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "run.py").write_text("print('test')\n")
+
+    executed_commands: list[str] = []
+
+    async def mock_create_subprocess_shell(cmd: str, **kwargs: Any) -> Any:
+        executed_commands.append(cmd)
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate = MagicMock(return_value=asyncio.sleep(0, result=(b"SANDBOX SKILL OK\n", b"")))
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", mock_create_subprocess_shell)
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    recorder = _MockRecorder()
+    job = CronJob(
+        id="test-sandbox-skill",
+        name="test-sandbox-skill",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="skill_script",
+            skill_name="sandboxed_skill",
+            script_name="run.py",
+            session_key="telegram:123",
+            origin_channel="telegram",
+            origin_chat_id="123",
+        ),
+    )
+
+    exec_cfg = ExecToolConfig(sandbox="bwrap", sandbox_ro_binds=["/extra/ro"])
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        cron=recorder,
+        exec_config=exec_cfg,
+    )
+
+    assert result == "SANDBOX SKILL OK"
+    assert len(executed_commands) == 1
+    assert executed_commands[0].startswith("bwrap ")
+    assert "run.py" in executed_commands[0]
+
+
+async def test_cron_tool_add_direct_message(tmp_path: Path) -> None:
+    service = CronService(tmp_path / "cron" / "jobs.json")
+    tool = CronTool(service)
+
+    with request_context(
+        RequestContext(channel="telegram", chat_id="123", session_key="telegram:123")
+    ):
+        result = await tool.execute(
+            action="add",
+            message="Daily standup in 5 minutes!",
+            direct=True,
+            every_seconds=3600,
+        )
+    assert "Created job" in result
+    jobs = service.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].payload.kind == "direct_message"
+    assert jobs[0].payload.message == "Daily standup in 5 minutes!"
+
+    list_output = tool._list_jobs()
+    assert "Direct Message: Daily standup in 5 minutes!" in list_output
+
+
+async def test_cron_tool_add_custom_destination_and_validation(tmp_path: Path) -> None:
+    service = CronService(tmp_path / "cron" / "jobs.json")
+    tool = CronTool(service)
+
+    # Validation: channel without chat_id
+    errs = tool.validate_params({"action": "add", "message": "hi", "channel": "slack"})
+    assert any("both 'channel' and 'chat_id' are required" in e for e in errs)
+
+    # Validation: chat_id without channel
+    errs = tool.validate_params({"action": "add", "message": "hi", "chat_id": "C123"})
+    assert any("both 'channel' and 'chat_id' are required" in e for e in errs)
+
+    with request_context(
+        RequestContext(channel="telegram", chat_id="123", session_key="telegram:123")
+    ):
+        result = await tool.execute(
+            action="add",
+            message="Weekly report",
+            direct=True,
+            channel="slack",
+            chat_id="C012345678",
+            thread_id="1712345678.000100",
+            record_session=False,
+            every_seconds=3600,
+        )
+    assert "Created job" in result
+    jobs = service.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0].payload.target_channel == "slack"
+    assert jobs[0].payload.target_chat_id == "C012345678"
+    assert jobs[0].payload.target_thread_id == "1712345678.000100"
+    assert jobs[0].payload.record_session is False
+
+    list_output = tool._list_jobs()
+    assert "Target: slack:C012345678 (thread: 1712345678.000100)" in list_output
+    assert "Record Session: False" in list_output
+
+
+async def test_run_bound_deterministic_direct_message(tmp_path: Path) -> None:
+    recorder = _MockRecorder()
+    delivered_messages: list[tuple[OutboundMessage, bool, str | None]] = []
+
+    async def mock_deliver(msg: OutboundMessage, *, record: bool = False, session_key: str | None = None) -> None:
+        delivered_messages.append((msg, record, session_key))
+
+    job = CronJob(
+        id="test-dm-job",
+        name="test-dm-job",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="direct_message",
+            message="Time for daily sync",
+            session_key="telegram:123",
+            origin_channel="telegram",
+            origin_chat_id="123",
+            target_channel="slack",
+            target_chat_id="C999",
+            target_thread_id="123.456",
+            record_session=True,
+        ),
+    )
+
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        deliver_callback=mock_deliver,
+        cron=recorder,
+    )
+
+    assert result == "Time for daily sync"
+    assert len(delivered_messages) == 1
+    msg, record, session_key = delivered_messages[0]
+    assert msg.channel == "slack"
+    assert msg.chat_id == "C999"
+    assert msg.content == "Time for daily sync"
+    assert msg.metadata.get("thread_id") == "123.456"
+    assert msg.metadata.get("thread_ts") == "123.456"  # slack specific mapping
+    assert record is True
+    assert session_key == "slack:C999"
+
+
+async def test_run_bound_deterministic_destination_routing_success_and_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    recorder = _MockRecorder()
+    delivered_messages: list[tuple[OutboundMessage, bool, str | None]] = []
+
+    async def mock_deliver(msg: OutboundMessage, *, record: bool = False, session_key: str | None = None) -> None:
+        delivered_messages.append((msg, record, session_key))
+
+    # 1. Success with output -> delivered to TARGET
+    async def mock_exec_ok(cmd: str, **kwargs: Any) -> Any:
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate = MagicMock(return_value=asyncio.sleep(0, result=(b"METRICS: 100\n", b"")))
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", mock_exec_ok)
+
+    job_ok = CronJob(
+        id="test-dest-ok",
+        name="test-dest-ok",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="python get_metrics.py",
+            session_key="telegram:admin",
+            origin_channel="telegram",
+            origin_chat_id="admin",
+            target_channel="discord",
+            target_chat_id="metrics-channel",
+            record_session=False,
+        ),
+    )
+
+    res_ok = await run_bound_deterministic_cron_job(
+        job_ok,
+        workspace=tmp_path,
+        deliver_callback=mock_deliver,
+        cron=recorder,
+    )
+    assert res_ok == "METRICS: 100"
+    assert len(delivered_messages) == 1
+    msg, record, session_key = delivered_messages.pop()
+    assert msg.channel == "discord"
+    assert msg.chat_id == "metrics-channel"
+    assert msg.content == "METRICS: 100"
+    assert record is False
+    assert session_key == "discord:metrics-channel"
+
+    # 2. Failure with error -> delivered to ORIGIN (admin chat)
+    async def mock_exec_err(cmd: str, **kwargs: Any) -> Any:
+        proc = MagicMock()
+        proc.returncode = 1
+        proc.communicate = MagicMock(return_value=asyncio.sleep(0, result=(b"", b"SyntaxError in script\n")))
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", mock_exec_err)
+
+    job_err = CronJob(
+        id="test-dest-err",
+        name="test-dest-err",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="python broken_script.py",
+            session_key="telegram:admin",
+            origin_channel="telegram",
+            origin_chat_id="admin",
+            target_channel="discord",
+            target_chat_id="metrics-channel",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="SyntaxError in script"):
+        await run_bound_deterministic_cron_job(
+            job_err,
+            workspace=tmp_path,
+            deliver_callback=mock_deliver,
+            cron=recorder,
+        )
+
+    # The error message should route to ORIGIN (telegram:admin), NOT discord
+    assert len(delivered_messages) == 1
+    msg, record, session_key = delivered_messages.pop()
+    assert msg.channel == "telegram"
+    assert msg.chat_id == "admin"
+    assert "SyntaxError in script" in msg.content
+    assert session_key == "telegram:admin"
+
+
+async def test_run_bound_deterministic_destination_routing_no_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    recorder = _MockRecorder()
+    delivered_messages: list[tuple[OutboundMessage, bool, str | None]] = []
+
+    async def mock_deliver(msg: OutboundMessage, *, record: bool = False, session_key: str | None = None) -> None:
+        delivered_messages.append((msg, record, session_key))
+
+    async def mock_exec_empty(cmd: str, **kwargs: Any) -> Any:
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate = MagicMock(return_value=asyncio.sleep(0, result=(b"", b"")))
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", mock_exec_empty)
+
+    # 1. quiet=False with custom destination -> delivers notice to ORIGIN, not target
+    job_no_output_not_quiet = CronJob(
+        id="test-no-out-not-quiet",
+        name="test-no-out-not-quiet",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="python poll.py",
+            session_key="telegram:admin",
+            origin_channel="telegram",
+            origin_chat_id="admin",
+            target_channel="discord",
+            target_chat_id="announcements",
+            quiet=False,
+        ),
+    )
+
+    await run_bound_deterministic_cron_job(
+        job_no_output_not_quiet,
+        workspace=tmp_path,
+        deliver_callback=mock_deliver,
+        cron=recorder,
+    )
+
+    assert len(delivered_messages) == 1
+    msg, record, session_key = delivered_messages.pop()
+    assert msg.channel == "telegram"
+    assert msg.chat_id == "admin"
+    assert "completed with no output" in msg.content
+    assert session_key == "telegram:admin"
+
+    # 2. quiet=True with custom destination -> completely silent (0 deliveries)
+    job_no_output_quiet = CronJob(
+        id="test-no-out-quiet",
+        name="test-no-out-quiet",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="python poll.py",
+            session_key="telegram:admin",
+            origin_channel="telegram",
+            origin_chat_id="admin",
+            target_channel="discord",
+            target_chat_id="announcements",
+            quiet=True,
+        ),
+    )
+
+    await run_bound_deterministic_cron_job(
+        job_no_output_quiet,
+        workspace=tmp_path,
+        deliver_callback=mock_deliver,
+        cron=recorder,
+    )
+
+    assert len(delivered_messages) == 0
+
+
+async def test_cron_payload_store_persistence(tmp_path: Path) -> None:
+    store_file = tmp_path / "cron" / "jobs.json"
+    service = CronService(store_file)
+    service._running = True
+    service.add_job(
+        name="dest-job",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        message="Test Msg",
+        kind="direct_message",
+        session_key="telegram:123",
+        origin_channel="telegram",
+        origin_chat_id="123",
+        target_channel="slack",
+        target_chat_id="C555",
+        target_thread_id="thread-888",
+        record_session=False,
+    )
+
+    # Load in a fresh service
+    reloaded_service = CronService(store_file)
+    jobs = reloaded_service.list_jobs()
+    assert len(jobs) == 1
+    j = jobs[0]
+    assert j.name == "dest-job"
+    assert j.payload.kind == "direct_message"
+    assert j.payload.message == "Test Msg"
+    assert j.payload.session_key == "telegram:123"
+    assert j.payload.origin_channel == "telegram"
+    assert j.payload.origin_chat_id == "123"
+    assert j.payload.target_channel == "slack"
+    assert j.payload.target_chat_id == "C555"
+    assert j.payload.target_thread_id == "thread-888"
+    assert j.payload.record_session is False
+
+
+
 

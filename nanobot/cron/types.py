@@ -50,7 +50,7 @@ class CronSchedule:
 @dataclass
 class CronPayload:
     """What to do when the job runs."""
-    kind: Literal["system_event", "agent_turn", "exec_command", "skill_script"] = "agent_turn"
+    kind: Literal["system_event", "agent_turn", "exec_command", "skill_script", "direct_message"] = "agent_turn"
     message: str = ""
     command: str | None = None
     skill_name: str | None = None
@@ -58,6 +58,7 @@ class CronPayload:
     args: list[str] = field(default_factory=list)
     # Legacy delivery fields used by pre-session-bound cron jobs.
     deliver: bool = False
+    quiet: bool = False
     channel: str | None = None  # e.g. "whatsapp"
     to: str | None = None  # e.g. phone number
     channel_meta: dict[str, Any] = field(default_factory=dict)
@@ -65,6 +66,11 @@ class CronPayload:
     origin_channel: str | None = None
     origin_chat_id: str | None = None
     origin_metadata: dict[str, Any] = field(default_factory=dict)
+    target_channel: str | None = None
+    target_chat_id: str | None = None
+    target_thread_id: str | None = None
+    target_metadata: dict[str, Any] = field(default_factory=dict)
+    record_session: bool = True
 
     @classmethod
     def from_store_dict(cls, data: dict[str, Any]) -> CronPayload:
@@ -76,6 +82,7 @@ class CronPayload:
             script_name=get_camel_snake(data, "scriptName", "script_name"),
             args=list(get_camel_snake(data, "args", "args", []) or []),
             deliver=data.get("deliver", False),
+            quiet=bool(get_camel_snake(data, "quiet", "quiet", False)),
             channel=data.get("channel"),
             to=data.get("to"),
             channel_meta=dict(
@@ -87,6 +94,13 @@ class CronPayload:
             origin_metadata=dict(
                 get_camel_snake(data, "originMetadata", "origin_metadata", {}) or {}
             ),
+            target_channel=get_camel_snake(data, "targetChannel", "target_channel"),
+            target_chat_id=get_camel_snake(data, "targetChatId", "target_chat_id"),
+            target_thread_id=get_camel_snake(data, "targetThreadId", "target_thread_id"),
+            target_metadata=dict(
+                get_camel_snake(data, "targetMetadata", "target_metadata", {}) or {}
+            ),
+            record_session=bool(get_camel_snake(data, "recordSession", "record_session", True)),
         )
 
 

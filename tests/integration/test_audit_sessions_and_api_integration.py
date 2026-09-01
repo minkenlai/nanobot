@@ -291,7 +291,7 @@ async def test_cmd_new_archiving_end_to_end(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_reset_session_tool(tmp_path: Path) -> None:
-    """Verify ResetSessionTool archives session history and resets active context."""
+    from nanobot.agent.tools.context import RequestContext, request_context
     from nanobot.agent.tools.sessions import ResetSessionTool
     from nanobot.session.manager import SessionManager
 
@@ -302,11 +302,10 @@ async def test_reset_session_tool(tmp_path: Path) -> None:
     manager.save(session)
 
     tool = ResetSessionTool(manager)
-    ctx = MagicMock()
-    ctx.session_key = "telegram:guide:8466578140"
-    ctx.sessions = manager
-
-    res = await tool.execute(ctx, reason="user_requested_reset")
+    with request_context(
+        RequestContext(channel="telegram", chat_id="8466578140", session_key="telegram:guide:8466578140")
+    ):
+        res = await tool.execute(reason="user_requested_reset")
     assert not res.is_error
     assert "Chat history reset to a fresh start." in str(res)
     assert len(session.messages) == 0
@@ -357,6 +356,7 @@ async def test_web_session_idle_reset(tmp_path: Path) -> None:
 async def test_reset_session_mid_turn_persistence_prevention(tmp_path: Path) -> None:
     """Verify that mid-turn session reset prevents saving turn-tail messages into active history."""
     from nanobot.agent.loop import AgentLoop
+    from nanobot.agent.tools.context import RequestContext, request_context
     from nanobot.agent.tools.sessions import ResetSessionTool
     from nanobot.session.manager import SessionManager
 
@@ -367,11 +367,10 @@ async def test_reset_session_mid_turn_persistence_prevention(tmp_path: Path) -> 
 
     # Tool executes mid-turn
     tool = ResetSessionTool(manager)
-    ctx = MagicMock()
-    ctx.session_key = "telegram:guide:8466578140"
-    ctx.sessions = manager
-
-    await tool.execute(ctx, reason="user_requested_reset")
+    with request_context(
+        RequestContext(channel="telegram", chat_id="8466578140", session_key="telegram:guide:8466578140")
+    ):
+        await tool.execute(reason="user_requested_reset")
 
     # Simulate _save_turn running at turn completion with turn 1's tail messages
     loop = MagicMock(spec=AgentLoop)

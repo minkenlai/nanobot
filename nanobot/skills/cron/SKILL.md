@@ -27,6 +27,16 @@ Dynamic task (agent executes each time):
 cron(action="add", message="Check HKUDS/nanobot GitHub stars and report", every_seconds=600)
 ```
 
+Deterministic shell command (with quiet mode to only notify on non-empty output/error):
+```
+cron(action="add", command="python scripts/check_health.py", every_seconds=300, quiet=True)
+```
+
+Deterministic skill script execution:
+```
+cron(action="add", skill_name="my_skill", script_name="sync.py", every_seconds=600, quiet=True)
+```
+
 One-time scheduled task (compute ISO datetime from current time):
 ```
 cron(action="add", message="Remind me about the meeting", at="<ISO datetime>")

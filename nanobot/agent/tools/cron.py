@@ -12,6 +12,7 @@ from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext, current_request_context
 from nanobot.agent.tools.schema import (
     ArraySchema,
+    BooleanSchema,
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
@@ -47,6 +48,35 @@ _CRON_PARAMETERS = tool_parameters_schema(
     args=ArraySchema(
         items=StringSchema("Command line argument for skill script"),
         description="Optional list of string arguments passed to the skill script.",
+    ),
+    channel=StringSchema(
+        "Optional target channel (e.g. 'telegram', 'discord', 'slack') for destination routing. "
+        "Defaults to current session."
+    ),
+    chat_id=StringSchema(
+        "Optional target chat/group/channel ID for destination routing. "
+        "Defaults to current session."
+    ),
+    thread_id=StringSchema(
+        "Optional topic or thread ID for destination routing (e.g. Telegram message_thread_id, Slack thread_ts)."
+    ),
+    direct=BooleanSchema(
+        description=(
+            "Optional flag. If true with 'message', delivers the message directly as a static "
+            "notification without invoking an LLM agent turn."
+        )
+    ),
+    record_session=BooleanSchema(
+        description=(
+            "Optional flag. If true (default), records the delivered message into the destination "
+            "session history so conversational context is preserved if a user replies. Set false for ephemeral pings."
+        )
+    ),
+    quiet=BooleanSchema(
+        description=(
+            "Optional flag. If true, skips delivering notification to the originating session "
+            "when execution completes with no output, but still delivers if there is output or an error."
+        )
     ),
     every_seconds=IntegerSchema(description="Interval in seconds (for recurring tasks)"),
     cron_expr=StringSchema("Cron expression like '0 9 * * *' (for scheduled tasks)"),
@@ -157,6 +187,11 @@ class CronTool(Tool):
                 errors.append("message is required when action='add'")
             if (skill_name and not script_name) or (script_name and not skill_name):
                 errors.append("both 'skill_name' and 'script_name' are required when scheduling a skill script")
+
+            channel = str(params.get("channel") or "").strip()
+            chat_id = str(params.get("chat_id") or "").strip()
+            if (channel and not chat_id) or (chat_id and not channel):
+                errors.append("both 'channel' and 'chat_id' are required when specifying a destination")
         if action == "remove" and not str(params.get("job_id") or "").strip():
             errors.append("job_id is required when action='remove'")
         return errors
@@ -175,6 +210,12 @@ class CronTool(Tool):
         skill_name: str | None = None,
         script_name: str | None = None,
         args: list[str] | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        thread_id: str | None = None,
+        direct: bool = False,
+        record_session: bool = True,
+        quiet: bool = False,
     ) -> str:
         if action == "add":
             if self._in_cron_context.get():
@@ -190,6 +231,12 @@ class CronTool(Tool):
                 skill_name=skill_name,
                 script_name=script_name,
                 args=args,
+                channel=channel,
+                chat_id=chat_id,
+                thread_id=thread_id,
+                direct=direct,
+                record_session=record_session,
+                quiet=quiet,
             )
         elif action == "list":
             return self._list_jobs()
@@ -209,16 +256,28 @@ class CronTool(Tool):
         skill_name: str | None = None,
         script_name: str | None = None,
         args: list[str] | None = None,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        thread_id: str | None = None,
+        direct: bool = False,
+        record_session: bool = True,
+        quiet: bool = False,
     ) -> str:
         command_clean = (command or "").strip()
         skill_clean = (skill_name or "").strip()
         script_clean = (script_name or "").strip()
         msg_clean = (message or "").strip()
+        target_channel = (channel or "").strip() or None
+        target_chat_id = (chat_id or "").strip() or None
+        target_thread_id = (thread_id or "").strip() or None
 
         from typing import Literal
 
-        if command_clean:
-            kind: Literal["agent_turn", "exec_command", "skill_script"] = "exec_command"
+        if direct and msg_clean:
+            kind: Literal["agent_turn", "exec_command", "skill_script", "direct_message"] = "direct_message"
+            default_name = f"msg: {msg_clean[:25]}"
+        elif command_clean:
+            kind = "exec_command"
             default_name = f"exec: {command_clean[:24]}"
         elif skill_clean and script_clean:
             kind = "skill_script"
@@ -282,6 +341,11 @@ class CronTool(Tool):
             skill_name=skill_clean or None,
             script_name=script_clean or None,
             args=args or [],
+            quiet=quiet,
+            target_channel=target_channel,
+            target_chat_id=target_chat_id,
+            target_thread_id=target_thread_id,
+            record_session=record_session,
         )
         return f"Created job '{job.name}' (id: {job.id})"
 
@@ -336,10 +400,23 @@ class CronTool(Tool):
             if j.payload.kind == "system_event":
                 parts.append(f"  Purpose: {self._system_job_purpose(j)}")
                 parts.append("  Protected: visible for inspection, but cannot be removed.")
+            elif j.payload.kind == "direct_message":
+                parts.append(f"  Direct Message: {j.payload.message}")
             elif j.payload.kind == "exec_command":
                 parts.append(f"  Command: {j.payload.command or j.payload.message}")
             elif j.payload.kind == "skill_script":
                 parts.append(f"  Skill Script: {j.payload.skill_name}/{j.payload.script_name}")
+            if j.payload.target_channel and j.payload.target_chat_id:
+                thread_info = (
+                    f" (thread: {j.payload.target_thread_id})"
+                    if j.payload.target_thread_id
+                    else ""
+                )
+                parts.append(f"  Target: {j.payload.target_channel}:{j.payload.target_chat_id}{thread_info}")
+            if not j.payload.record_session:
+                parts.append("  Record Session: False")
+            if j.payload.quiet:
+                parts.append("  Quiet: True (suppresses empty notifications)")
             parts.extend(self._format_state(j.state, j.schedule))
             lines.append("\n".join(parts))
         return "Scheduled jobs:\n" + "\n".join(lines)
