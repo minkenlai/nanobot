@@ -77,9 +77,54 @@ def agent(
         "--theme",
         help="Terminal UI appearance: auto, dark, or light",
     ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        "-M",
+        help="Override LLM model (e.g. 'openai/gpt-4o', 'anthropic/claude-3-7-sonnet', 'ollama/qwen3')",
+    ),
+    model_preset: str | None = typer.Option(
+        None,
+        "--preset",
+        "--model-preset",
+        "-P",
+        help="Use a named model preset from config (e.g. 'fast', 'smart')",
+    ),
 ):
-    """Chat in the terminal or send one message non-interactively."""
+    """Chat in the terminal or send one message non-interactively.
+
+    Examples:
+      # Start interactive terminal chat:
+      nanobot agent
+
+      # Start interactive chat with custom config and model preset:
+      nanobot agent -c path/to/config.json --preset smart
+
+      # Run a one-shot prompt non-interactively:
+      nanobot agent -c path/to/config.json -m "Analyze this file"
+
+      # Run a one-shot prompt overriding the model:
+      nanobot agent -m "Summarize" --model anthropic/claude-3-7-sonnet
+    """
     runtime_config = _load_runtime_config(config, workspace)
+    model_override = model if isinstance(model, str) else None
+    preset_override = model_preset if isinstance(model_preset, str) else None
+
+    if model_override:
+        runtime_config.agents.defaults.model = model_override.strip()
+        if not preset_override:
+            runtime_config.agents.defaults.model_preset = None
+    if preset_override:
+        preset_name = preset_override.strip()
+        if preset_name != "default" and preset_name not in runtime_config.model_presets:
+            available = list(runtime_config.model_presets.keys())
+            avail_str = ", ".join(f"'{k}'" for k in available) if available else "none defined"
+            console.print(
+                f"[red]Error: Model preset '{preset_name}' not found in configuration.[/red]\n"
+                f"[dim]Available presets: {avail_str}[/dim]"
+            )
+            raise typer.Exit(1)
+        runtime_config.agents.defaults.model_preset = preset_name
     theme = theme.strip().lower()
     if theme not in {"auto", "dark", "light"}:
         raise typer.BadParameter("must be auto, dark, or light", param_hint="--theme")

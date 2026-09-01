@@ -88,8 +88,15 @@ app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
     help=f"{__logo__} nanobot - Personal AI Assistant",
     epilog=(
-        "Run `nanobot` without a subcommand to start the terminal agent. "
-        "Use `nanobot agent --help` for agent options."
+        "Common Workflows:\n"
+        "  • Interactive terminal chat:         nanobot\n"
+        "  • One-shot prompt from CLI:          nanobot agent -m 'Your prompt here'\n"
+        "  • Run with custom config file:       nanobot agent -c path/to/config.json -m 'Prompt'\n"
+        "  • Override model from CLI:           nanobot agent -m 'Prompt' --model anthropic/claude-3-7-sonnet\n"
+        "  • Use configured model preset:       nanobot agent --preset fast\n"
+        "  • Launch browser WebUI workbench:    nanobot webui\n"
+        "  • Check configuration / providers:   nanobot status\n\n"
+        "For full options for any command, run `nanobot <command> --help`."
     ),
     invoke_without_command=True,
     no_args_is_help=False,

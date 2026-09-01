@@ -132,10 +132,45 @@ async def test_model_command_switches_back_to_default(tmp_path) -> None:
     out = await cmd_model(_ctx(loop, "/model default", args="default"))
 
     assert "Switched model preset to `default`." in out.content
-    assert _saved_model_preset(loop) == "default"
+    assert _saved_model_preset(loop) is None
     assert loop.model_preset is None
     assert loop.model == "base-model"
     assert loop.context_window_tokens == 1000
+
+
+@pytest.mark.asyncio
+async def test_model_command_switches_back_to_configured_default_preset(tmp_path) -> None:
+    loop = _make_loop(
+        tmp_path,
+        model_presets={
+            "default": ModelPresetConfig(model="base-model"),
+            "fast": ModelPresetConfig(
+                model="openai/gpt-4.1",
+                max_tokens=4096,
+                context_window_tokens=32_768,
+            ),
+            "deep": ModelPresetConfig(
+                model="deep-model",
+                max_tokens=8192,
+                context_window_tokens=65_536,
+            ),
+        },
+    )
+    # Configure fast as the global default preset
+    loop.set_model_preset("fast")
+
+    # Override session to deep
+    out_deep = await cmd_model(_ctx(loop, "/model deep", args="deep"))
+    assert "Switched model preset to `deep`." in out_deep.content
+    assert _saved_model_preset(loop) == "deep"
+
+    # Reset back to default
+    out_default = await cmd_model(_ctx(loop, "/model default", args="default"))
+    assert "Switched model preset to default (`fast`)." in out_default.content
+    assert _saved_model_preset(loop) is None
+    session_runtime = loop.runtime_for_session(loop.sessions.get_or_create("cli:direct"))
+    assert session_runtime.model_preset == "fast"
+    assert session_runtime.model == "openai/gpt-4.1"
 
 
 @pytest.mark.asyncio
@@ -231,7 +266,7 @@ async def test_model_command_reports_and_recovers_removed_session_preset(tmp_pat
     assert "Switch with `/model <preset>`" in status.content
     assert switched is not None
     assert "Switched model preset to `default`." in switched.content
-    assert _saved_model_preset(loop) == "default"
+    assert _saved_model_preset(loop) is None
 
 
 def test_model_command_in_help_and_palette() -> None:

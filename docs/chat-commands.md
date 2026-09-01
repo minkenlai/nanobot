@@ -8,6 +8,7 @@ These commands work inside chat channels and interactive agent sessions:
 | `/stop` | Stop the current task |
 | `/restart` | Restart the bot |
 | `/status` | Show bot status |
+| `/hints` | Toggle or inspect tool execution progress hints for the current chat |
 | `/model` | Show the current model and available model presets |
 | `/model <preset>` | Switch and persist the model preset for the current session |
 | `/dream` | Run Dream memory consolidation now |
@@ -57,7 +58,23 @@ To switch presets for future turns:
 /model default
 ```
 
+Running `/model default`, `/model reset`, or `/model unset` clears any per-session preset override so the session reverts to the global default preset (`agents.defaults.modelPreset` or runtime defaults).
+
 Preset names come from the top-level `modelPresets` config. Switching affects only the current session and persists the selection in that session, so later turns keep using it across process restarts. It does not rewrite `config.json`, does not change other sessions, and does not alter an in-progress turn's captured model. Sessions without a saved selection follow `agents.defaults.modelPreset` (or the implicit `default` preset when it is omitted). See [Configuration: Model presets](./configuration.md#model-presets) for setup details.
+
+## Tool Hints
+
+Use `/hints` to toggle or check whether nanobot sends intermediate tool execution notifications in the current chat:
+
+```text
+/hints          # Toggles hints on or off
+/hints on       # Enable tool hints for this chat
+/hints off      # Disable tool hints for this chat
+/hints status   # Check whether tool hints are currently active
+```
+
+When enabled, the bot posts short status messages while running tools (e.g. searching the web, executing code, reading files). Disabling tool hints keeps the chat clean by only delivering final responses. The setting is stored in the chat session's metadata and preserved across restarts.
+
 
 ## Local triggers
 

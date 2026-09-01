@@ -114,8 +114,13 @@ def _load_config_for_cli(
         raise typer.Exit(1) from exc
 
 
-def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
-    """Load config and optionally override the active workspace."""
+def _load_runtime_config(
+    config: str | None = None,
+    workspace: str | None = None,
+    model: str | None = None,
+    model_preset: str | None = None,
+) -> Config:
+    """Load config and optionally override the active workspace, model, or preset."""
     from nanobot.config.loader import set_config_path
 
     config_path = None
@@ -130,6 +135,21 @@ def _load_runtime_config(config: str | None = None, workspace: str | None = None
     loaded = _load_config_for_cli(config_path, resolve_env=True)
     if workspace:
         loaded.agents.defaults.workspace = workspace
+    if model:
+        loaded.agents.defaults.model = model.strip()
+        if not model_preset:
+            loaded.agents.defaults.model_preset = None
+    if model_preset:
+        preset_name = model_preset.strip()
+        if preset_name != "default" and preset_name not in loaded.model_presets:
+            available = list(loaded.model_presets.keys())
+            avail_str = ", ".join(f"'{k}'" for k in available) if available else "none defined"
+            console.print(
+                f"[red]Error: Model preset '{preset_name}' not found in configuration.[/red]\n"
+                f"[dim]Available presets: {avail_str}[/dim]"
+            )
+            raise typer.Exit(1)
+        loaded.agents.defaults.model_preset = preset_name
     return loaded
 
 

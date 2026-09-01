@@ -451,8 +451,17 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
         )
 
     max_tokens = runtime.generation.max_tokens
+    is_default = name.strip().lower() in ("default", "reset", "unset")
+    preset_name = runtime.model_preset or "default"
+    if is_default and runtime.model_preset:
+        header = f"Switched model preset to default (`{preset_name}`)."
+    elif is_default:
+        header = "Switched model preset to `default`."
+    else:
+        header = f"Switched model preset to `{preset_name}`."
+
     lines = [
-        f"Switched model preset to `{runtime.model_preset}`.",
+        header,
         "- Scope: current session",
         f"- Model: `{runtime.model}`",
         f"- Context window: {runtime.context_window_tokens}",

@@ -576,11 +576,16 @@ class AgentLoop:
     def set_session_model_preset(
         self,
         session_key: str,
-        name: str,
+        name: str | None,
     ) -> LLMRuntime:
-        """Validate and persist one session's preset selection."""
-        runtime = self.runtime_resolver.resolve_preset(name)
+        """Validate and persist one session's preset selection, or clear override if default/reset/unset/None."""
         session = self.sessions.get_or_create(session_key)
+        if name is None or name.strip().lower() in ("default", "reset", "unset"):
+            session.metadata.pop(SESSION_MODEL_PRESET_METADATA_KEY, None)
+            self.sessions.save(session)
+            return self.llm_runtime()
+
+        runtime = self.runtime_resolver.resolve_preset(name)
         session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
         self.sessions.save(session)
         return runtime

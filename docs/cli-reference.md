@@ -93,6 +93,8 @@ follow the printed WebUI **Settings → Models** or `nanobot onboard --wizard` r
 | `nanobot agent --config <path>` | Use a specific config file |
 | `nanobot agent --classic` | Use the classic Python prompt instead of the native terminal UI |
 | `nanobot agent --theme auto\|dark\|light` | Auto-detect the terminal appearance or force a TUI palette |
+| `nanobot agent --model <model>` | Override LLM model (e.g. `openai/gpt-4o`, `anthropic/claude-3-7-sonnet`, `-M`) |
+| `nanobot agent --preset <preset>` | Use a configured model preset (e.g. `fast`, `smart`, `-P`) |
 | `nanobot agent --no-markdown` | Use the classic prompt and print plain text instead of Markdown |
 | `nanobot agent --logs` | Use the classic prompt and show runtime logs while chatting |
 
