@@ -311,3 +311,29 @@ current Python executable with `python -m nanobot gateway --foreground`, and
 writes LaunchAgent logs under `~/.nanobot/logs/`.
 
 > **Note:** if startup fails with "address already in use", stop the manually started `nanobot gateway` process first.
+
+## Embeddable Web Chat Widget & Caddy Proxy
+
+For public-facing websites (such as Squarespace, WordPress, or custom web apps), nanobot provides a standalone widget generator in `scripts/setup_web_widget.py` that generates a lightweight, self-contained chat widget and Caddy reverse-proxy configuration.
+
+Run the installer:
+
+```bash
+python scripts/setup_web_widget.py --config ~/.nanobot/config.json
+```
+
+The installer can run interactively or via CLI flags, and generates:
+
+1. **`widget.js`**: A zero-dependency chat widget featuring:
+   - Streaming SSE responses with markdown rendering
+   - Quick prompt suggestion chips
+   - Custom branding, colors, avatar, and greeting badge
+   - In-widget confirmation dialog to clear conversation history
+   - Automatic preservation of existing widget parameters on update runs
+2. **Caddyfile snippet**: Reverse-proxy configuration for Caddy that terminates TLS, serves `widget.js`, and securely routes `/v1/chat/completions` to `nanobot serve` (port 8900) with proper CORS headers.
+3. **Embed Code**: A one-line snippet ready to paste into your website's header or footer code injection:
+
+```html
+<script src="https://guide.example.com/widget.js" async defer></script>
+```
+

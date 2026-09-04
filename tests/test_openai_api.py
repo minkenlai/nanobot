@@ -220,11 +220,41 @@ async def test_stream_true_returns_sse(aiohttp_client, app) -> None:
     client = await aiohttp_client(app)
     resp = await client.post(
         "/v1/chat/completions",
-        headers=AUTH_HEADERS,
+        headers={"Origin": "https://client.example.com", **AUTH_HEADERS},
         json={"messages": [{"role": "user", "content": "hello"}], "stream": True},
     )
     assert resp.status == 200
     assert resp.content_type == "text/event-stream"
+    assert resp.headers.get("Access-Control-Allow-Origin") == "https://client.example.com"
+    assert "GET, POST, OPTIONS" in resp.headers.get("Access-Control-Allow-Methods", "")
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_options_preflight_returns_cors_headers(aiohttp_client, app) -> None:
+    client = await aiohttp_client(app)
+    resp = await client.options(
+        "/v1/chat/completions",
+        headers={"Origin": "https://widget.example.com"},
+    )
+    assert resp.status == 200
+    assert resp.headers.get("Access-Control-Allow-Origin") == "https://widget.example.com"
+    assert "POST" in resp.headers.get("Access-Control-Allow-Methods", "")
+    assert "Authorization" in resp.headers.get("Access-Control-Allow-Headers", "")
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_auth_failure_returns_cors_headers(aiohttp_client, app) -> None:
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        "/v1/chat/completions",
+        headers={"Origin": "https://widget.example.com"},
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert resp.status == 401
+    assert resp.headers.get("Access-Control-Allow-Origin") == "https://widget.example.com"
+
 
 
 @pytest.mark.asyncio

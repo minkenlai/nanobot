@@ -459,7 +459,7 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
     )
     # -- streaming path --
     if stream:
-        resp = web.StreamResponse()
+        resp = web.StreamResponse(headers=headers)
         resp.content_type = "text/event-stream"
         resp.headers["Cache-Control"] = "no-cache"
         resp.headers["Connection"] = "keep-alive"
@@ -547,13 +547,13 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
                     response_text = EMPTY_FINAL_RESPONSE_MESSAGE
 
             except asyncio.TimeoutError:
-                return _error_json(504, f"Request timed out after {timeout_s}s")
+                return _error_json(504, f"Request timed out after {timeout_s}s", headers=headers)
             except Exception:
                 logger.exception("Error processing request for session {}", session_key)
-                return _error_json(500, "Internal server error", err_type="server_error")
+                return _error_json(500, "Internal server error", err_type="server_error", headers=headers)
     except Exception:
         logger.exception("Unexpected API lock error for session {}", session_key)
-        return _error_json(500, "Internal server error", err_type="server_error")
+        return _error_json(500, "Internal server error", err_type="server_error", headers=headers)
 
     duration = time.monotonic() - start_time
     logger.info("API request done [{}] status=200 duration={:.2f}s", session_key, duration)
