@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -118,3 +118,97 @@ def test_channel_manager_should_send_progress_respects_session_override() -> Non
 
     # With override send_tool_hints: False -> returns False
     assert manager._should_send_progress("telegram", tool_hint=True, msg_metadata={"send_tool_hints": False}) is False
+
+
+@pytest.mark.asyncio
+async def test_turn_delivery_applies_session_metadata_to_events() -> None:
+    from nanobot.agent.turn_delivery import TurnDelivery, TurnRoute
+    from nanobot.bus.events import InboundMessage
+    from nanobot.bus.outbound_events import ProgressEvent
+    from nanobot.bus.queue import MessageBus
+
+    bus = MessageBus()
+    published = []
+
+    async def fake_publish_event(event, *, channel, chat_id, metadata=None):
+        published.append({"event": event, "channel": channel, "chat_id": chat_id, "metadata": metadata})
+
+    bus.publish_event = fake_publish_event
+
+    msg = InboundMessage(channel="telegram", chat_id="123", content="hi", sender_id="user1", metadata={})
+    delivery = TurnDelivery(
+        bus=bus,
+        runtime_event_publisher=MagicMock(),
+        input_message=msg,
+        session_key="telegram:123",
+        route=TurnRoute(channel="telegram", chat_id="123", metadata={}, publish_lifecycle=True),
+    )
+
+    delivery.apply_session_metadata({"send_tool_hints": False})
+
+    await delivery.events.publish(ProgressEvent(content="read foo", tool_hint=True))
+    assert len(published) == 1
+    assert published[0]["metadata"].get("send_tool_hints") is False
+
+
+@pytest.mark.asyncio
+async def test_agent_progress_hook_drops_bare_thought_progress() -> None:
+    from nanobot.agent.hook import AgentHookContext
+    from nanobot.agent.progress_hook import AgentProgressHook
+    from nanobot.events import EventSink
+    from nanobot.providers.base import LLMResponse, ToolCallRequest
+
+    events = []
+
+    async def fake_publish(event):
+        events.append(event)
+
+    sink = EventSink(publish=fake_publish)
+    hook = AgentProgressHook(events=sink)
+
+    context = AgentHookContext(
+        iteration=1,
+        messages=[],
+        response=LLMResponse(content="thought", tool_calls=[ToolCallRequest(id="1", name="read_file", arguments={"path": "test.py"})]),
+        tool_calls=[ToolCallRequest(id="1", name="read_file", arguments={"path": "test.py"})],
+    )
+
+    await hook.before_execute_tools(context)
+
+    # Should only emit the tool_hint event, NOT a separate "thought" progress event
+    assert len(events) == 1
+    assert events[0].tool_hint is True
+    assert events[0].content != "thought"
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_restore_turn_applies_hints_override(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    from nanobot.agent.loop import AgentLoop, TurnContext
+    from nanobot.bus.events import InboundMessage
+    from nanobot.bus.queue import MessageBus
+
+    bus = MessageBus()
+    provider = SimpleNamespace(get_default_model=lambda: "dummy-model")
+    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path)
+
+    session = loop.sessions.get_or_create("telegram:chat_1")
+    session.metadata["send_tool_hints"] = False
+    loop.sessions.save(session)
+
+    mock_delivery = MagicMock()
+    mock_delivery.started = AsyncMock()
+    msg = InboundMessage(channel="telegram", chat_id="chat_1", sender_id="user_1", content="hello")
+    ctx = TurnContext(
+        msg=msg,
+        session=None,
+        session_key="telegram:chat_1",
+        turn_id="turn_1",
+        runtime=SimpleNamespace(),
+        kind=SimpleNamespace(),
+        delivery=mock_delivery,
+    )
+
+    await loop._restore_turn(ctx)
+    mock_delivery.apply_session_metadata.assert_called_with(session.metadata)

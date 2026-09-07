@@ -133,7 +133,7 @@ class AgentProgressHook(AgentHook):
         if self._publish:
             if not self._streaming and not context.streamed_content:
                 thought = self._strip_think(context.response.content if context.response else None)
-                if thought:
+                if thought and thought.strip().lower() not in {"thought", "thinking", "thought:", "thinking:"}:
                     await self._publish(ProgressEvent(content=thought))
             tool_hint = self._strip_think(self._tool_hint(context.tool_calls))
             tool_events = [build_tool_event_start_payload(tc) for tc in context.tool_calls]

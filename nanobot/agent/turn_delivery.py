@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -45,7 +45,6 @@ def _bind_events(
     bus: MessageBus, route: TurnRoute,
 ) -> EventSink:
     channel, chat_id = route.channel, route.chat_id
-    metadata = deepcopy(route.metadata)
 
     def accepts(event_type: type[AgentEvent]) -> bool:
         return notification_is_deliverable(
@@ -56,7 +55,7 @@ def _bind_events(
         if not accepts(type(event)):
             return
         await bus.publish_event(
-            event, channel=channel, chat_id=chat_id, metadata=deepcopy(metadata),
+            event, channel=channel, chat_id=chat_id, metadata=deepcopy(route.metadata),
         )
 
     return EventSink(publish, accepts)
@@ -196,6 +195,7 @@ class TurnDelivery:
     _retry_status: RetryStatusEvent | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
+        self.route = dataclasses.replace(self.route, metadata=deepcopy(self.route.metadata))
         self._routed_events = _bind_events(self.bus, self.route)
         self.events = EventSink(self._publish_event, self._routed_events.accepts)
         self.delivery_message = dataclasses.replace(
@@ -213,6 +213,14 @@ class TurnDelivery:
     @property
     def streaming(self) -> bool:
         return self._stream_base_id is not None
+
+    def apply_session_metadata(self, session_metadata: Mapping[str, Any] | None) -> None:
+        """Propagate session-level preferences (e.g. send_tool_hints) into route metadata."""
+        if not session_metadata:
+            return
+        if "send_tool_hints" in session_metadata:
+            self.route.metadata["send_tool_hints"] = session_metadata["send_tool_hints"]
+            self.delivery_message.metadata["send_tool_hints"] = session_metadata["send_tool_hints"]
 
     def remember_session_route(self, session_metadata: dict[str, Any]) -> None:
         """Keep only routing fields needed to deliver a later idle notification."""

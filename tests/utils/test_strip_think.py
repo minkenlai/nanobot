@@ -330,3 +330,32 @@ class TestStripReasoningTags:
 
     def test_non_string_reasoning_ignored(self):
         assert strip_reasoning_tags(object()) == ""
+
+
+class TestStripBareThinkingHeaders:
+    """Test bare 'thought' and 'thinking' headers without angle brackets (e.g. Gemma 4)."""
+
+    def test_standalone_thought_stripped(self):
+        assert strip_think("thought") == ""
+        assert strip_think("thought\n") == ""
+        assert strip_think("Thought:\n") == ""
+        assert strip_think("  thought  ") == ""
+
+    def test_standalone_thinking_stripped(self):
+        assert strip_think("thinking") == ""
+        assert strip_think("thinking\n") == ""
+        assert strip_think("Thinking:\n") == ""
+
+    def test_leading_thought_header_stripped(self):
+        assert strip_think("thought\nI will search the codebase.") == "I will search the codebase."
+        assert strip_think("thought:\nI will search the codebase.") == "I will search the codebase."
+        assert strip_think("Thought:\n\nStep 1 is ready.") == "Step 1 is ready."
+
+    def test_leading_thinking_header_stripped(self):
+        assert strip_think("thinking\nI will check the files.") == "I will check the files."
+        assert strip_think("thinking:\nI will check the files.") == "I will check the files."
+
+    def test_prose_containing_thought_preserved(self):
+        assert strip_think("I had a thought about this.") == "I had a thought about this."
+        assert strip_think("thought is a normal word in a sentence.") == "thought is a normal word in a sentence."
+        assert strip_think("My thinking on this is clear.") == "My thinking on this is clear."

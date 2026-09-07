@@ -209,6 +209,8 @@ def strip_think(text: str) -> str:
     text = re.sub(rf"\s*</{_THINKING_TAG}>\s*$", "", text)
     # Edge-only channel markers (harmony / Gemma 4 variant leaks).
     text = re.sub(r"^\s*<\|?channel\|?>\s*", "", text)
+    # Standalone or leading bare thinking header emitted without angle brackets (e.g. Gemma 4).
+    text = re.sub(r"^\s*(?:thought|thinking):?\s*(?:\n+|$)", "", text, flags=re.IGNORECASE)
     # Stream chunks may end in the middle of a control tag. Strip only known
     # control-token prefixes at the very end.
     partial_control_tag = (

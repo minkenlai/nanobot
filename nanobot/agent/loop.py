@@ -1882,6 +1882,7 @@ class AgentLoop:
         else:
             logger.info("Processing message from {}:{}: [content hidden]", msg.channel, msg.sender_id)
 
+        ctx.delivery.apply_session_metadata(session.metadata)
         self._remember_session_route(
             session,
             msg,
