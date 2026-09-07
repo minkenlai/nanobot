@@ -485,7 +485,10 @@ class AgentLoop:
         allowing callers to override or extend the standard config-derived
         parameters (e.g. ``cron_service``, ``session_manager``).
         """
+        from nanobot.cli.log_control import configure_file_logging
         from nanobot.providers.factory import make_provider
+
+        configure_file_logging(config)
 
         if bus is None:
             bus = MessageBus()
@@ -578,7 +581,7 @@ class AgentLoop:
         session_key: str,
         name: str | None,
     ) -> LLMRuntime:
-        """Validate and persist one session's preset selection, or clear override if default/reset/unset/None."""
+        """Validate and persist session preset selection, or clear override if default/reset/unset/None."""
         session = self.sessions.get_or_create(session_key)
         if name is None or name.strip().lower() in ("default", "reset", "unset"):
             session.metadata.pop(SESSION_MODEL_PRESET_METADATA_KEY, None)

@@ -47,6 +47,8 @@ the focused guides first and come back here for exact fields and defaults.
 | Add MCP servers | [MCP](#mcp-model-context-protocol) |
 | Review shell, workspace, and SSRF controls | [Security](#security) |
 | Control access and pairing | [Pairing](#pairing) |
+| Configure rotating file logging | [File Logging](#file-logging) |
+| Audit sessions and daily reports | [Session Audit & Reporting](#session-audit--reporting) |
 | Tune gateway jobs, sessions, and tools | [Gateway Heartbeat](#gateway-heartbeat), [Auto Compact](#auto-compact), [Unified Session](#unified-session), [Tool Hint Max Length](#tool-hint-max-length) |
 
 ## Where a Setting Lives
@@ -65,6 +67,8 @@ If the WebUI does not expose the option you need, start from the task below. Mos
 | Enable image generation | `tools.imageGeneration.enabled`, `tools.imageGeneration.provider`, `tools.imageGeneration.model`, matching provider credentials | Enable Image Generation in the WebUI and send one image request | [Image Generation](#image-generation) |
 | Add external tools through MCP | `tools.mcpServers.<name>` | Start `nanobot gateway --verbose` and check startup/tool logs | [MCP](#mcp-model-context-protocol) |
 | Tighten tool and network safety | `tools.restrictToWorkspace`, `tools.exec.sandbox`, `tools.ssrfWhitelist`, `channels.*.allowFrom` | Run the same workflow through the channel or CLI you plan to expose | [Security](#security), [Pairing](#pairing) |
+| Rotate and persist runtime logs | `logging.enabled`, `logging.file`, `logging.level`, `logging.rotation` | `nanobot gateway` then inspect log file | [File Logging](#file-logging) |
+| Audit chat sessions and generate daily reports | `auditSessions.enabled`, `auditSessions.reportsDir`, `auditSessions.autoReportDaily` | Inspect reports in WebUI or `./audit_reports` | [Session Audit & Reporting](#session-audit--reporting) |
 | Tune request timeouts or process concurrency | `NANOBOT_LLM_TIMEOUT_S`, `NANOBOT_STREAM_IDLE_TIMEOUT_S`, `NANOBOT_MAX_CONCURRENT_REQUESTS` | Start nanobot from the same environment and inspect startup/runtime logs | [Runtime Environment Variables](#runtime-environment-variables) |
 | Run multiple isolated bots | separate `--config` and `--workspace` paths, plus distinct `gateway.port` or channel ports when processes run together | Use the same explicit paths with `nanobot status`, `agent`, `webui`, `gateway`, and `serve` | [Multiple Instances](./multiple-instances.md), [CLI Reference](./cli-reference.md) |
 | Observe model calls | `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_BASE_URL` environment variables | Run one model call, then check the matching Langfuse project | [Langfuse Observability](#langfuse-observability) |
@@ -195,6 +199,8 @@ These variables are process-level switches. Set them in the same terminal, servi
 | `NANOBOT_WORKSPACE_SANDBOX_ENFORCED` | unset | Marks that an external workspace sandbox is already enforced. Truthy values (`1`, `true`, `yes`, `on`, `enabled`) use `NANOBOT_WORKSPACE_SANDBOX_PROVIDER` as the label; any other non-false value is treated as the provider name. |
 | `NANOBOT_WORKSPACE_SANDBOX_PROVIDER` | `unknown` | Display label for the external workspace sandbox when `NANOBOT_WORKSPACE_SANDBOX_ENFORCED` is truthy, for example `macos_app_sandbox` or `bwrap`. |
 | `NANOBOT_SANDBOX_ENFORCED` | unset | Legacy compatibility alias for `NANOBOT_WORKSPACE_SANDBOX_ENFORCED`. |
+| `NANOBOT_LOG_LEVEL` | unset | Log level for file and console logging (`DEBUG`, `INFO`, `WARNING`, `ERROR`). Overrides `logging.level`. |
+| `NANOBOT_LOG_FILE` | unset | Explicit path to runtime log file sink. Overrides `logging.file` (defaults to `<workspace>/../logs/nanobot.log`). |
 | `NANOBOT_TMUX_SOCKET_DIR` | `${TMPDIR:-/tmp}/nanobot-tmux-sockets` | Socket directory used by the bundled `tmux` skill scripts. |
 
 ### Installer, build, and WebUI development
@@ -2402,3 +2408,60 @@ Set `agents.defaults.toolHintMaxLength` to control the truncation threshold:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `agents.defaults.toolHintMaxLength` | `40` | Maximum characters for tool hint display. Range: 20–500. Higher values show more of the command or path; lower values keep hints compact. |
+
+## File Logging
+
+nanobot supports a configurable rotating file sink for runtime and diagnostic logs using Loguru. When enabled, logs are written asynchronously with timestamps, log levels, channels, and stack traces.
+
+```json
+{
+  "logging": {
+    "enabled": true,
+    "level": "INFO",
+    "file": null,
+    "rotation": "10 MB",
+    "retention": "14 days",
+    "compression": "gz"
+  }
+}
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `logging.enabled` | `true` | Enable or disable writing logs to a file sink. |
+| `logging.level` | `"INFO"` | Minimum logging level (`"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`). Overridden by the `NANOBOT_LOG_LEVEL` environment variable. |
+| `logging.file` | `null` | Path to the log file. If omitted (`null`), nanobot logs to `~/.nanobot/logs/nanobot.log` (or `NANOBOT_LOG_FILE` if set). |
+| `logging.rotation` | `"10 MB"` | File rotation condition (e.g. `"10 MB"`, `"500 MB"`, `"1 day"`). |
+| `logging.retention` | `"14 days"` | Log file retention duration (e.g. `"14 days"`, `"1 month"`). Older rotated archives are automatically pruned. |
+| `logging.compression` | `"gz"` | Compression algorithm for rotated archive files (`"gz"`, `"zip"`, or `null` to disable). |
+
+## Session Audit & Reporting
+
+The session audit subsystem enables centralized auditing of conversation sessions across all configured channels (WebUI, Telegram, WhatsApp, Discord, Slack, etc.). It generates structured HTML and JSON audit reports, archives pre-reset conversation snapshots, and provides an integrated WebUI viewer and REST API.
+
+```json
+{
+  "auditSessions": {
+    "enabled": true,
+    "reportsDir": "./audit_reports",
+    "autoReportDaily": true,
+    "dispatchWhatsappJid": "",
+    "dispatchTelegramChatId": "",
+    "retentionDays": 30,
+    "cronExpression": "0 0 * * *",
+    "webSessionIdleResetMinutes": 30
+  }
+}
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `auditSessions.enabled` | `true` | Enable or disable multi-workspace session auditing and daily cron jobs. |
+| `auditSessions.reportsDir` | `"./audit_reports"` | Directory path where generated HTML and JSON audit reports are saved. |
+| `auditSessions.autoReportDaily` | `true` | Whether the gateway automatically runs daily audit generation at midnight. |
+| `auditSessions.dispatchWhatsappJid` | `""` | Optional WhatsApp JID/group to receive daily audit summary notifications. |
+| `auditSessions.dispatchTelegramChatId` | `""` | Optional Telegram chat ID to receive daily audit summary notifications. |
+| `auditSessions.retentionDays` | `30` | Number of days to retain generated daily audit reports before cleanup. |
+| `auditSessions.cronExpression` | `"0 0 * * *"` | Cron expression schedule for automatic daily audit report generation. |
+| `auditSessions.webSessionIdleResetMinutes` | `30` | Inactivity window (in minutes) after which an idle web session context is automatically archived and reset. |
+

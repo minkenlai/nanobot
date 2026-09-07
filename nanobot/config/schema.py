@@ -454,6 +454,17 @@ class AuditSessionsConfig(Base):
     )
 
 
+class LoggingConfig(Base):
+    """Logging configuration for file and runtime sinks."""
+
+    enabled: bool = True
+    level: str = "INFO"
+    file: str | None = None
+    rotation: str = "10 MB"
+    retention: str = "14 days"
+    compression: str | None = "gz"
+
+
 class GatewayConfig(Base):
     """Gateway/server configuration."""
 
@@ -549,6 +560,11 @@ class Config(BaseSettings):
         default_factory=dict,
         validation_alias=AliasChoices("modelPresets", "model_presets"),
         serialization_alias="modelPresets",
+    )
+    logging: LoggingConfig = Field(
+        default_factory=LoggingConfig,
+        validation_alias=AliasChoices("logging"),
+        serialization_alias="logging",
     )
 
     def __init__(self, **values: Any) -> None:

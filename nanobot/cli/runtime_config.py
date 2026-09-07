@@ -150,6 +150,9 @@ def _load_runtime_config(
             )
             raise typer.Exit(1)
         loaded.agents.defaults.model_preset = preset_name
+    from nanobot.cli.log_control import configure_file_logging
+
+    configure_file_logging(loaded)
     return loaded
 
 

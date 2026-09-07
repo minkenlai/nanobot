@@ -353,6 +353,9 @@ def _run_gateway(
     gateway_instance: GatewayInstance | None = None,
 ) -> None:
     """Shared gateway runtime; ``open_browser_url`` opens a tab once channels are up."""
+    from nanobot.cli.log_control import configure_file_logging
+
+    configure_file_logging(config)
     from nanobot.agent.model_presets import load_model_preset_catalog
     from nanobot.agent.tools.message import MessageTool
     from nanobot.agent.turn_delivery import TurnDeliveryFactory
