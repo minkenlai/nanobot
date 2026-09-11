@@ -320,38 +320,79 @@ class AuditSessionsTool(Tool):
             return cwd_candidate
         return ws_candidate
 
-    def resolve_session_dirs(self, ctx: ToolContext | None = None) -> list[Path]:
-        return self._resolve_session_dirs(ctx)
+    def resolve_session_dirs(
+        self,
+        ctx: ToolContext | None = None,
+        *,
+        workspace: Path | str | None = None,
+        session_manager: Any = None,
+    ) -> list[Path]:
+        return self._resolve_session_dirs(ctx, workspace=workspace, session_manager=session_manager)
 
-    def _resolve_session_dirs(self, ctx: ToolContext | None = None) -> list[Path]:
-        ws = get_workspace_path()
-        if ctx and hasattr(ctx, "workspace") and getattr(ctx, "workspace", None):
-            ws = Path(getattr(ctx, "workspace")).expanduser()
+    def _resolve_session_dirs(
+        self,
+        ctx: ToolContext | None = None,
+        *,
+        workspace: Path | str | None = None,
+        session_manager: Any = None,
+    ) -> list[Path]:
+        sm = session_manager or (getattr(ctx, "sessions", None) if ctx else None)
+        ws: Path
+        if workspace is not None:
+            ws = Path(workspace).expanduser().resolve(strict=False)
+        elif ctx and hasattr(ctx, "workspace") and getattr(ctx, "workspace", None):
+            ws = Path(getattr(ctx, "workspace")).expanduser().resolve(strict=False)
+        elif sm and hasattr(sm, "workspace") and getattr(sm, "workspace", None):
+            ws = Path(getattr(sm, "workspace")).expanduser().resolve(strict=False)
+        else:
+            ws = get_workspace_path().resolve(strict=False)
 
         if self._raw_sessions_dirs:
             return [self._resolve_single_path(d, ws) for d in self._raw_sessions_dirs]
 
-        candidates: list[Path] = [
+        candidates: list[Path | None] = [
             get_runtime_subdir("sessions"),
             get_legacy_sessions_dir(),
             get_sessions_dir(),
             ws / "sessions",
             ws / "guide-workspace" / "sessions",
+            ws.parent / "sessions",
+            ws.parent / "guide-workspace" / "sessions",
             Path.home() / ".nanobot" / "workspace" / "sessions",
             Path.home() / ".nanobot" / "workspace" / "guide-workspace" / "sessions",
+            Path.home() / ".nanobot" / "sessions",
+            Path.home() / "workspace" / "sessions",
+            Path.home() / "sessions",
             Path.cwd() / "sessions",
+            Path.cwd().parent / "sessions",
         ]
+        if len(ws.parents) >= 2:
+            candidates.append(ws.parents[1] / "sessions")
+
+        if sm is not None:
+            sm_dir = getattr(sm, "sessions_dir", None)
+            if sm_dir is not None:
+                p_sm_dir = Path(sm_dir).resolve()
+                candidates.insert(0, p_sm_dir)
+                candidates.insert(1, p_sm_dir.parent)
+
         existing: list[Path] = []
         for cand in candidates:
+            if cand is None:
+                continue
             cand_resolved = cand.resolve()
             if cand_resolved.exists() and cand_resolved.is_dir():
                 if cand_resolved not in existing:
                     existing.append(cand_resolved)
-                # Expand out-of-workspace workspace session subdirectories (e.g. ~/.nanobot/sessions/<workspace_id>/)
+                # Expand out-of-workspace workspace session subdirectories (e.g. parent_dir/sessions/<instance_id>/)
                 with suppress(Exception):
                     for sub in cand_resolved.iterdir():
                         if sub.is_dir() and sub not in existing and not sub.name.startswith("."):
-                            if (sub / ".workspace").exists() or (sub / "archives").exists() or list(sub.glob("*.json*")):
+                            if (
+                                (sub / ".workspace").exists()
+                                or (sub / "archives").exists()
+                                or list(sub.glob("*.json*"))
+                            ):
                                 existing.append(sub)
 
         if existing:

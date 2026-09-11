@@ -889,7 +889,13 @@ def _run_gateway(
             from nanobot.agent.tools.audit_sessions import AuditSessionsTool
 
             audit_tool = AuditSessionsTool.from_config(config)
-            resolved_dirs = [str(d) for d in audit_tool.resolve_session_dirs()]
+            resolved_dirs = [
+                str(d)
+                for d in audit_tool.resolve_session_dirs(
+                    workspace=config.workspace_path,
+                    session_manager=session_manager,
+                )
+            ]
             cron_expr = getattr(audit_cfg, "cron_expression", "0 0 * * *")
             cron.register_system_job(CronJob(
                 id="audit_sessions_daily",

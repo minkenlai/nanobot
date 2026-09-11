@@ -597,7 +597,12 @@ async def handle_audit_sessions(request: web.Request) -> web.Response:
 
     channel_filter = request.query.get("channel", "all").strip().lower()
 
-    session_dirs = audit_tool.resolve_session_dirs()
+    sessions_mgr = getattr(loop, "sessions", None) if loop else None
+    ws_path = getattr(loop, "workspace", None) if loop else None
+    session_dirs = audit_tool.resolve_session_dirs(
+        workspace=ws_path,
+        session_manager=sessions_mgr,
+    )
     sessions = audit_tool.load_sessions(session_dirs)
 
     res_sessions: list[dict[str, Any]] = []

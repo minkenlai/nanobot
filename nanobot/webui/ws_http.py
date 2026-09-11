@@ -685,7 +685,15 @@ class GatewayHTTPHandler:
         _, query = _parse_request_path(request.path)
         channel_filter = (_query_first(query, "channel") or "all").strip().lower()
 
-        session_dirs = audit_tool.resolve_session_dirs()
+        ws_path = (
+            getattr(self.session_manager, "workspace", None)
+            if self.session_manager is not None
+            else self.skills_workspace_path
+        )
+        session_dirs = audit_tool.resolve_session_dirs(
+            workspace=ws_path,
+            session_manager=self.session_manager,
+        )
         sessions = audit_tool.load_sessions(session_dirs)
 
         res_sessions: list[dict[str, Any]] = []

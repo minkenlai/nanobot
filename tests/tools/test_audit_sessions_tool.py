@@ -376,3 +376,33 @@ async def test_audit_sessions_auto_discovery_workspace_subdirectories(tmp_path: 
     guide_session = next(s for s in sessions if s["key"] == "api:web:guide_user")
     assert guide_session["node_type"] == "guide"
 
+
+@pytest.mark.asyncio
+async def test_audit_sessions_parent_dir_sessions_discovery(tmp_path: Path) -> None:
+    """Verify that AuditSessionsTool discovers sessions stored in parent_dir/sessions/[instance_id]."""
+    # Layout:
+    # tmp_path/
+    #   workspace/
+    #     studio-agent/   (active agent workspace)
+    #   sessions/
+    #     instance_abc/   (out-of-workspace instance sessions)
+    #       session_1.jsonl
+    agent_ws = tmp_path / "workspace" / "studio-agent"
+    agent_ws.mkdir(parents=True, exist_ok=True)
+
+    instance_sessions = tmp_path / "workspace" / "sessions" / "instance_abc"
+    instance_sessions.mkdir(parents=True, exist_ok=True)
+
+    session_file = instance_sessions / "web_user1.jsonl"
+    meta = {"_type": "metadata", "key": "web:user1", "created_at": "2026-09-10T12:00:00", "updated_at": "2026-09-10T12:05:00"}
+    msg1 = {"role": "user", "content": "Hello from parent sessions dir", "timestamp": "2026-09-10T12:00:00"}
+    session_file.write_text(f"{json.dumps(meta)}\n{json.dumps(msg1)}\n", encoding="utf-8")
+
+    tool = AuditSessionsTool()
+    dirs = tool.resolve_session_dirs(workspace=agent_ws)
+    assert any("instance_abc" in str(d) for d in dirs) or any("sessions" in str(d) for d in dirs)
+
+    sessions = tool.load_sessions(dirs)
+    keys = [s["key"] for s in sessions]
+    assert "web:user1" in keys
+
