@@ -32,6 +32,19 @@ Deterministic shell command (with quiet mode to only notify on non-empty output/
 cron(action="add", command="python scripts/check_health.py", every_seconds=300, quiet=True)
 ```
 
+Destination routing (route operational output to staff, error logs privately to admin):
+```
+cron(
+  action="add",
+  name="poll-leads",
+  command="python scripts/poll_leads.py",
+  channel="telegram",
+  chat_id="-1001234567890",
+  cron_expr="*/15 * * * *",
+  quiet=True
+)
+```
+
 Deterministic skill script execution:
 ```
 cron(action="add", skill_name="my_skill", script_name="sync.py", every_seconds=600, quiet=True)
@@ -53,6 +66,14 @@ cron(action="list")
 cron(action="remove", job_id="abc123")
 ```
 
+## Destination Routing & Stream Decoupling
+
+Scheduled jobs can specify an explicit destination (`channel`, `chat_id`, optional `thread_id`):
+- **`stdout` (Operational Output)**: Delivered to the configured `channel` and `chat_id` (e.g., a staff Telegram/Discord/Slack channel).
+- **`stderr` & Failures (Technical Errors)**: Automatically routed back to the **originating session** (the administrator/developer who created the job). This prevents technical logs, stack traces, and runtime warnings from cluttering client-facing or staff groups.
+- If a job produces only `stderr` (or logs an error to stderr and exits 0), the target receives nothing, and the originating admin receives a `⚠️ Scheduled task '...' [stderr]:` notification.
+- **`quiet=True`**: Suppresses notifications when there is no output, but still delivers operational `stdout` to target and technical `stderr` / errors to the origin.
+
 ## Time Expressions
 
 | User says | Parameters |
@@ -67,3 +88,4 @@ cron(action="remove", job_id="abc123")
 ## Timezone
 
 Use `tz` with `cron_expr` to schedule in a specific IANA timezone. Without `tz`, the server's local timezone is used.
+

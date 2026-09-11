@@ -64,7 +64,7 @@ report each run.
 
 - **Quiet Mode (`quiet=True`)**: Deterministic cron commands or skill scripts can run in quiet mode, which suppresses notifications unless the command produces non-empty output or exits with an error.
 - **Deterministic Execution**: In addition to standard agent turns, `cron` jobs can directly invoke shell commands or workspace skill scripts under sandbox isolation (`bwrap`), bypassing LLM overhead for routine tasks.
-- **Destination Routing**: Scheduled jobs can explicitly specify a delivery destination (`channel`, `to` / `chat_id`, optional `thread_id`), allowing scheduled maintenance or monitoring tasks to deliver reports to dedicated alert channels.
+- **Destination Routing**: Scheduled jobs can explicitly specify a delivery destination (`channel`, `to` / `chat_id`, optional `thread_id`), allowing scheduled maintenance or monitoring tasks to deliver reports to dedicated alert or staff channels. For deterministic tasks (`exec_command` and `skill_script`), nanobot decouples the execution streams: successful operational output (`stdout`) is delivered to the target channel, while error logs, warnings (`stderr`), and execution failures are automatically routed to the originating session/administrator to avoid cluttering staff channels with technical errors.
 - **Direct Messaging**: For fixed reminders without agent invocation, `cron` jobs can deliver static messages directly to the recipient.
 
 For periodic checks across the workspace that should stay quiet unless there is something useful to

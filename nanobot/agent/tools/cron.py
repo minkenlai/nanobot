@@ -51,6 +51,7 @@ _CRON_PARAMETERS = tool_parameters_schema(
     ),
     channel=StringSchema(
         "Optional target channel (e.g. 'telegram', 'discord', 'slack') for destination routing. "
+        "When provided, stdout is delivered to the target while stderr/errors route to the creator's session. "
         "Defaults to current session."
     ),
     chat_id=StringSchema(

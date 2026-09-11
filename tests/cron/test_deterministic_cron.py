@@ -814,5 +814,191 @@ async def test_cron_payload_store_persistence(tmp_path: Path) -> None:
     assert j.payload.record_session is False
 
 
+async def test_run_bound_deterministic_destination_routing_stdout_and_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    recorder = _MockRecorder()
+    delivered_messages: list[tuple[OutboundMessage, bool, str | None]] = []
+
+    async def mock_deliver(msg: OutboundMessage, *, record: bool = False, session_key: str | None = None) -> None:
+        delivered_messages.append((msg, record, session_key))
+
+    async def mock_exec(cmd: str, **kwargs: Any) -> Any:
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate = MagicMock(
+            return_value=asyncio.sleep(0, result=(b"NEW LEADS: 5\n", b"API WARNING: token expiring\n"))
+        )
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", mock_exec)
+
+    job = CronJob(
+        id="poll-leads-allday",
+        name="poll-leads-allday",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="python poll_leads.py",
+            session_key="telegram:admin",
+            origin_channel="telegram",
+            origin_chat_id="admin",
+            target_channel="telegram",
+            target_chat_id="staff-group",
+            record_session=False,
+        ),
+    )
+
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        deliver_callback=mock_deliver,
+        cron=recorder,
+    )
+
+    # The result in audit log / return contains both
+    assert "NEW LEADS: 5" in (result or "")
+    assert "API WARNING: token expiring" in (result or "")
+
+    # Exactly 2 messages delivered: stdout to target, stderr to origin
+    assert len(delivered_messages) == 2
+
+    # Message 1: stdout to target (staff-group)
+    msg_target, record_target, target_session = delivered_messages[0]
+    assert msg_target.channel == "telegram"
+    assert msg_target.chat_id == "staff-group"
+    assert msg_target.content == "NEW LEADS: 5"
+    assert "API WARNING" not in msg_target.content
+    assert target_session == "telegram:staff-group"
+    assert record_target is False
+
+    # Message 2: stderr to origin (admin)
+    msg_origin, record_origin, origin_session = delivered_messages[1]
+    assert msg_origin.channel == "telegram"
+    assert msg_origin.chat_id == "admin"
+    assert "API WARNING: token expiring" in msg_origin.content
+    assert "⚠️ Scheduled task 'poll-leads-allday' [stderr]:" in msg_origin.content
+    assert origin_session == "telegram:admin"
+    assert record_origin is True
+
+
+async def test_run_bound_deterministic_destination_routing_stderr_only_exit_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import MagicMock
+
+    recorder = _MockRecorder()
+    delivered_messages: list[tuple[OutboundMessage, bool, str | None]] = []
+
+    async def mock_deliver(msg: OutboundMessage, *, record: bool = False, session_key: str | None = None) -> None:
+        delivered_messages.append((msg, record, session_key))
+
+    async def mock_exec(cmd: str, **kwargs: Any) -> Any:
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.communicate = MagicMock(
+            return_value=asyncio.sleep(0, result=(b"", b"POLL ERROR: connection timeout\n"))
+        )
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", mock_exec)
+
+    job = CronJob(
+        id="poll-leads-timeout",
+        name="poll-leads-timeout",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="exec_command",
+            command="python poll_leads.py",
+            session_key="telegram:admin",
+            origin_channel="telegram",
+            origin_chat_id="admin",
+            target_channel="telegram",
+            target_chat_id="staff-group",
+        ),
+    )
+
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        deliver_callback=mock_deliver,
+        cron=recorder,
+    )
+
+    assert "POLL ERROR: connection timeout" in (result or "")
+
+    # Target (staff group) receives NOTHING
+    # Origin (admin) receives stderr notification
+    assert len(delivered_messages) == 1
+    msg, record, session_key = delivered_messages[0]
+    assert msg.channel == "telegram"
+    assert msg.chat_id == "admin"
+    assert "POLL ERROR: connection timeout" in msg.content
+    assert session_key == "telegram:admin"
+    assert record is True
+
+
+async def test_run_bound_deterministic_skill_script_destination_routing_stdout_and_stderr(
+    tmp_path: Path,
+) -> None:
+    # Create skill script that outputs to both stdout and stderr
+    script_dir = tmp_path / "skills" / "leads-skill" / "scripts"
+    script_dir.mkdir(parents=True)
+    script_file = script_dir / "leads.py"
+    script_file.write_text(
+        "import sys\n"
+        "sys.stdout.write('LEADS PROCESSED: 3\\n')\n"
+        "sys.stderr.write('WARN: rate limited on batch 2\\n')\n"
+    )
+
+    recorder = _MockRecorder()
+    delivered_messages: list[tuple[OutboundMessage, bool, str | None]] = []
+
+    async def mock_deliver(msg: OutboundMessage, *, record: bool = False, session_key: str | None = None) -> None:
+        delivered_messages.append((msg, record, session_key))
+
+    job = CronJob(
+        id="skill-leads-dest",
+        name="skill-leads-dest",
+        schedule=CronSchedule(kind="every", every_ms=60000),
+        payload=CronPayload(
+            kind="skill_script",
+            skill_name="leads-skill",
+            script_name="leads.py",
+            session_key="slack:admin-channel",
+            origin_channel="slack",
+            origin_chat_id="admin-channel",
+            target_channel="slack",
+            target_chat_id="staff-channel",
+        ),
+    )
+
+    result = await run_bound_deterministic_cron_job(
+        job,
+        workspace=tmp_path,
+        deliver_callback=mock_deliver,
+        cron=recorder,
+    )
+
+    assert "LEADS PROCESSED: 3" in (result or "")
+    assert "WARN: rate limited" in (result or "")
+
+    # 2 messages: stdout to staff-channel, stderr to admin-channel
+    assert len(delivered_messages) == 2
+
+    target_msg, _, target_key = delivered_messages[0]
+    assert target_msg.chat_id == "staff-channel"
+    assert target_msg.content == "LEADS PROCESSED: 3"
+    assert "WARN:" not in target_msg.content
+
+    origin_msg, _, origin_key = delivered_messages[1]
+    assert origin_msg.chat_id == "admin-channel"
+    assert "WARN: rate limited on batch 2" in origin_msg.content
+    assert "⚠️ Scheduled task 'skill-leads-dest' [stderr]:" in origin_msg.content
+
+
+
 
 

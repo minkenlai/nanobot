@@ -235,7 +235,11 @@ class RunSkillScriptTool(Tool):
             output = stdout_str
             if stderr_str:
                 output = f"{output}\n[stderr]: {stderr_str}" if output else stderr_str
-            return ToolResult(output or f"Skill script '{script_name}' executed successfully with no output.")
+            return ToolResult(
+                output or f"Skill script '{script_name}' executed successfully with no output.",
+                stdout=stdout_str,
+                stderr=stderr_str,
+            )
         except Exception as e:
             logger.warning("Failed to execute skill script: {}", e)
             return ToolResult.error(f"Failed to execute skill script: {e}")

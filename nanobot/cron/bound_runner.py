@@ -234,12 +234,14 @@ async def run_bound_deterministic_cron_job(
     )
 
     try:
+        stdout_str = ""
+        stderr_str = ""
         if job.payload.kind == "direct_message":
             msg_text = (job.payload.message or "").strip()
             if not msg_text:
                 raise ValueError("direct_message cron job requires a non-empty message")
+            stdout_str = msg_text
             response = msg_text
-            has_output = True
 
         elif job.payload.kind == "exec_command":
             cmd = (job.payload.command or job.payload.message or "").strip()
@@ -305,11 +307,12 @@ async def run_bound_deterministic_cron_job(
                 )
                 raise RuntimeError(err_msg)
 
-            has_output = bool(stdout_str)
-            response = stdout_str or f"Scheduled task '{job.name}' completed with no output."
-            if stderr_str:
-                response += f"\n[stderr]: {stderr_str}"
-                has_output = True
+            if stdout_str and stderr_str:
+                response = f"{stdout_str}\n[stderr]: {stderr_str}"
+            elif stderr_str:
+                response = f"Scheduled task '{job.name}' completed with no output.\n[stderr]: {stderr_str}"
+            else:
+                response = stdout_str or f"Scheduled task '{job.name}' completed with no output."
 
         elif job.payload.kind == "skill_script":
             skill_name = (job.payload.skill_name or "").strip()
@@ -358,42 +361,89 @@ async def run_bound_deterministic_cron_job(
                 )
                 raise RuntimeError(err_msg)
 
-            res_str = str(res).strip()
-            no_output_marker = f"Skill script '{script_name}' executed successfully with no output."
-            has_output = bool(res_str) and (res_str != no_output_marker)
-            response = res_str or no_output_marker
+            raw_stdout = getattr(res, "stdout", None)
+            raw_stderr = getattr(res, "stderr", None)
+            if raw_stdout is None and raw_stderr is None:
+                res_str = str(res).strip()
+                no_output_marker = f"Skill script '{script_name}' executed successfully with no output."
+                stdout_str = "" if res_str == no_output_marker else res_str
+                stderr_str = ""
+            else:
+                stdout_str = raw_stdout or ""
+                stderr_str = raw_stderr or ""
+
+            if stdout_str and stderr_str:
+                response = f"{stdout_str}\n[stderr]: {stderr_str}"
+            elif stderr_str:
+                response = f"Skill script '{script_name}' completed with no output.\n[stderr]: {stderr_str}"
+            else:
+                response = stdout_str or f"Skill script '{script_name}' executed successfully with no output."
         else:
             raise ValueError(f"Unsupported deterministic cron payload kind: {job.payload.kind}")
 
         if deliver_callback is not None:
-            if has_output:
-                target_session_key = (
-                    f"{target_channel}:{target_chat_id}"
-                    if is_custom_target
-                    else session_key
-                )
-                await deliver_callback(
-                    OutboundMessage(
-                        channel=target_channel,
-                        chat_id=target_chat_id,
-                        content=response,
-                        metadata=target_metadata,
-                    ),
-                    record=job.payload.record_session,
-                    session_key=target_session_key,
-                )
-            elif not job.payload.quiet:
-                # No output and quiet is False: deliver notification to origin
-                await deliver_callback(
-                    OutboundMessage(
-                        channel=origin_channel,
-                        chat_id=origin_chat_id,
-                        content=response,
-                        metadata=origin_metadata,
-                    ),
-                    record=False,
-                    session_key=session_key,
-                )
+            if is_custom_target:
+                # Custom destination routing: route stdout to target, stderr to origin
+                if stdout_str:
+                    target_session_key = f"{target_channel}:{target_chat_id}"
+                    await deliver_callback(
+                        OutboundMessage(
+                            channel=target_channel,
+                            chat_id=target_chat_id,
+                            content=stdout_str,
+                            metadata=target_metadata,
+                        ),
+                        record=job.payload.record_session,
+                        session_key=target_session_key,
+                    )
+                if stderr_str:
+                    stderr_msg = f"⚠️ Scheduled task '{job.name}' [stderr]:\n{stderr_str}"
+                    await deliver_callback(
+                        OutboundMessage(
+                            channel=origin_channel,
+                            chat_id=origin_chat_id,
+                            content=stderr_msg,
+                            metadata=origin_metadata,
+                        ),
+                        record=True,
+                        session_key=session_key,
+                    )
+                elif not stdout_str and not job.payload.quiet:
+                    # No output and quiet is False: deliver notification to origin
+                    await deliver_callback(
+                        OutboundMessage(
+                            channel=origin_channel,
+                            chat_id=origin_chat_id,
+                            content=response,
+                            metadata=origin_metadata,
+                        ),
+                        record=False,
+                        session_key=session_key,
+                    )
+            else:
+                has_output = bool(stdout_str or stderr_str)
+                if has_output:
+                    await deliver_callback(
+                        OutboundMessage(
+                            channel=origin_channel,
+                            chat_id=origin_chat_id,
+                            content=response,
+                            metadata=origin_metadata,
+                        ),
+                        record=job.payload.record_session,
+                        session_key=session_key,
+                    )
+                elif not job.payload.quiet:
+                    await deliver_callback(
+                        OutboundMessage(
+                            channel=origin_channel,
+                            chat_id=origin_chat_id,
+                            content=response,
+                            metadata=origin_metadata,
+                        ),
+                        record=False,
+                        session_key=session_key,
+                    )
 
         cron.write_run_record(
             run_id,
