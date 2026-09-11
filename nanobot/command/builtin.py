@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -1108,44 +1109,143 @@ def _extract_response_content(body_bytes: bytes) -> str:
 
 
 def _resolve_guide_config(ctx: CommandContext) -> tuple[str, str, float]:
-    """Resolve Guide instance URL, model, and timeout from channels_config or environment."""
+    """Resolve Guide instance URL, model, and timeout from channels_config, config file, or environment."""
     guide_url = ""
     guide_model = "nanobot"
     timeout_seconds = 45.0
 
+    def _safe_get(obj: object, *keys: str) -> object:
+        curr: object = obj
+        for key in keys:
+            if curr is None:
+                return None
+            if isinstance(curr, dict):
+                curr = cast(dict[str, object], curr).get(key)
+            else:
+                curr = getattr(curr, key, None)
+        return curr
+
+    def _extract_from_dict_or_obj(source: object) -> tuple[str, str, float | None]:
+        url = ""
+        model = ""
+        timeout: float | None = None
+
+        # Check telegram guide_bot
+        tg = _safe_get(source, "telegram")
+        if tg:
+            val = _safe_get(tg, "guide_bot", "guide_instance_url") or _safe_get(tg, "guide_instance_url")
+            if val and str(val).strip():
+                url = str(val).strip()
+            val_model = _safe_get(tg, "guide_bot", "guide_model_name") or _safe_get(tg, "guide_model_name")
+            if val_model and str(val_model).strip():
+                model = str(val_model).strip()
+            val_to = _safe_get(tg, "guide_bot", "forward_timeout_seconds") or _safe_get(tg, "forward_timeout_seconds")
+            if val_to is not None:
+                with suppress(ValueError, TypeError):
+                    timeout = float(val_to)  # type: ignore[arg-type]
+
+        # Check whatsapp routing
+        if not url:
+            wa = _safe_get(source, "whatsapp")
+            if wa:
+                val = _safe_get(wa, "routing", "guide_instance_url") or _safe_get(wa, "guide_instance_url")
+                if val and str(val).strip():
+                    url = str(val).strip()
+                val_model = _safe_get(wa, "routing", "guide_model_name") or _safe_get(wa, "guide_model_name")
+                if val_model and str(val_model).strip():
+                    model = str(val_model).strip()
+                val_to = _safe_get(wa, "routing", "forward_timeout_seconds") or _safe_get(wa, "forward_timeout_seconds")
+                if val_to is not None:
+                    with suppress(ValueError, TypeError):
+                        timeout = float(val_to)  # type: ignore[arg-type]
+
+        # Check any other channels
+        if not url:
+            items: list[object] = []
+            if isinstance(source, dict):
+                items = list(cast(dict[str, object], source).values())
+            elif hasattr(source, "__pydantic_extra__"):
+                pydantic_extra: object = getattr(source, "__pydantic_extra__", None)
+                if isinstance(pydantic_extra, dict):
+                    items = list(cast(dict[str, object], pydantic_extra).values())
+            for ch_val in items:
+                val = (
+                    _safe_get(ch_val, "routing", "guide_instance_url")
+                    or _safe_get(ch_val, "guide_bot", "guide_instance_url")
+                    or _safe_get(ch_val, "guide_instance_url")
+                )
+                if val and str(val).strip():
+                    url = str(val).strip()
+                    val_model = (
+                        _safe_get(ch_val, "routing", "guide_model_name")
+                        or _safe_get(ch_val, "guide_bot", "guide_model_name")
+                        or _safe_get(ch_val, "guide_model_name")
+                    )
+                    if val_model and str(val_model).strip():
+                        model = str(val_model).strip()
+                    val_to = (
+                        _safe_get(ch_val, "routing", "forward_timeout_seconds")
+                        or _safe_get(ch_val, "guide_bot", "forward_timeout_seconds")
+                        or _safe_get(ch_val, "forward_timeout_seconds")
+                    )
+                    if val_to is not None:
+                        with suppress(ValueError, TypeError):
+                            timeout = float(val_to)  # type: ignore[arg-type]
+                    break
+
+        # Check top-level keys if source is root config
+        if not url:
+            source_obj = cast(object, source)
+            val = (
+                _safe_get(source_obj, "guide_instance_url")
+                or _safe_get(source_obj, "guide", "guide_instance_url")
+                or _safe_get(source_obj, "guide_bot", "guide_instance_url")
+                or _safe_get(source_obj, "routing", "guide_instance_url")
+            )
+            if val and str(val).strip():
+                url = str(val).strip()
+
+        return url, model, timeout
+
     channels_cfg = getattr(ctx.loop, "channels_config", None)
     if channels_cfg:
         try:
-            tg = getattr(channels_cfg, "telegram", None)
-            if tg:
-                guide_bot = getattr(tg, "guide_bot", None)
-                if guide_bot:
-                    val = getattr(guide_bot, "guide_instance_url", None)
-                    if val and str(val).strip():
-                        guide_url = str(val).strip()
-                    val = getattr(guide_bot, "guide_model_name", None)
-                    if val and str(val).strip():
-                        guide_model = str(val).strip()
-                    val = getattr(guide_bot, "forward_timeout_seconds", None)
-                    if val is not None:
-                        with suppress(ValueError, TypeError):
-                            timeout_seconds = float(val)  # type: ignore[arg-type]
+            url, model, to = _extract_from_dict_or_obj(channels_cfg)
+            if url:
+                guide_url = url
+            if model:
+                guide_model = model
+            if to is not None:
+                timeout_seconds = to
+        except Exception:
+            pass
 
-            if not guide_url:
-                wa = getattr(channels_cfg, "whatsapp", None)
-                if wa:
-                    routing = getattr(wa, "routing", None)
-                    if routing:
-                        val = getattr(routing, "guide_instance_url", None)
-                        if val and str(val).strip():
-                            guide_url = str(val).strip()
-                        val = getattr(routing, "guide_model_name", None)
-                        if val and str(val).strip():
-                            guide_model = str(val).strip()
-                        val = getattr(routing, "forward_timeout_seconds", None)
-                        if val is not None:
-                            with suppress(ValueError, TypeError):
-                                timeout_seconds = float(val)  # type: ignore[arg-type]
+    # Fallback to reading ~/.nanobot/config.json directly if still not found
+    if not guide_url:
+        try:
+            from nanobot.config.loader import get_config_path
+            cfg_path = get_config_path()
+            if cfg_path.exists():
+                raw_cfg_obj: object = json.loads(cfg_path.read_text(encoding="utf-8"))
+                if isinstance(raw_cfg_obj, dict):
+                    raw_cfg = cast(dict[str, object], raw_cfg_obj)
+                    channels_sub = raw_cfg.get("channels")
+                    if isinstance(channels_sub, dict):
+                        url, model, to = _extract_from_dict_or_obj(cast(dict[str, object], channels_sub))
+                        if url:
+                            guide_url = url
+                        if model:
+                            guide_model = model
+                        if to is not None:
+                            timeout_seconds = to
+                    if not guide_url:
+                        url, model, to = _extract_from_dict_or_obj(raw_cfg)
+                        if url:
+                            guide_url = url
+                        if model:
+                            guide_model = model
+                        if to is not None:
+                            timeout_seconds = to
         except Exception:
             pass
 

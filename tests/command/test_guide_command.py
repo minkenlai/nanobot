@@ -208,3 +208,75 @@ def test_telegram_bus_slash_command_regex_integration() -> None:
     assert pat.fullmatch("/guide")
     assert pat.fullmatch("/guide test prompt")
     assert pat.fullmatch("/guide@admin_bot test prompt")
+
+
+@pytest.mark.asyncio
+async def test_cmd_guide_routes_from_dict_channels_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    received_requests: list[dict[str, Any]] = []
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.headers: dict[str, str] = {"content-type": "text/event-stream"}
+
+        def raise_for_status(self) -> None:
+            pass
+
+        async def aiter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"Port 8900 response"}}]}'
+            yield "data: [DONE]"
+
+    class FakeStreamContext:
+        async def __aenter__(self) -> FakeResponse:
+            return FakeResponse()
+
+        async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            pass
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: float | None = None) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeAsyncClient:
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+            pass
+
+        def stream(self, method: str, url: str, json: Any = None, headers: Any = None) -> FakeStreamContext:
+            received_requests.append({"method": method, "url": url, "json": json})
+            return FakeStreamContext()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    custom_url = "http://127.0.0.1:8900/v1/chat/completions"
+    channels_cfg = ChannelsConfig.model_validate({
+        "whatsapp": {
+            "routing": {
+                "guide_instance_url": custom_url,
+                "guide_model_name": "custom-8900-model",
+            }
+        }
+    })
+
+    msg = InboundMessage(
+        channel="whatsapp",
+        sender_id="+15550199",
+        chat_id="12036304@g.us",
+        content="/guide test dict",
+    )
+    ctx = CommandContext(
+        msg=msg,
+        session=None,
+        key="whatsapp:12036304@g.us",
+        raw="/guide test dict",
+        args="test dict",
+        loop=SimpleNamespace(channels_config=channels_cfg),  # type: ignore[arg-type]
+    )
+
+    resp = await cmd_guide(ctx)
+    assert resp is not None
+    assert resp.content == "Port 8900 response"
+    assert len(received_requests) == 1
+    assert received_requests[0]["url"] == custom_url
+    assert received_requests[0]["json"]["model"] == "custom-8900-model"
+
