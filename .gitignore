@@ -99,6 +99,7 @@ logs/
 tmp/
 temp/
 *.tmp
+*.tar.gz
 exp/
 audit_reports/
 .playwright-mcp/

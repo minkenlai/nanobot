@@ -77,7 +77,8 @@
     "automations": "自動タスク",
     "skills": {
       "title": "スキル"
-    }
+    },
+    "audit": "セッション"
   },
   "settings": {
     "backToChat": "チャットに戻る",
@@ -617,17 +618,31 @@
       }
     },
     "api": {
-      "title": "API サーバー", "openaiCompatible": "OpenAI 互換 API", "description": "ローカルの /v1 エンドポイントから SDK やエージェントを接続します。",
-      "start": "API サーバーを起動", "starting": "起動中...", "stop": "停止", "stopping": "停止中...",
-      "access": "アクセス", "thisDevice": "このデバイス", "localNetwork": "ローカルネットワーク",
-      "localHelp": "このデバイスだけが接続できます。", "networkHelp": "他のデバイスも接続できるため API キーが必要です。",
-      "port": "ポート", "portHelp": "API が使用するローカルポートです。", "apiKey": "API キー", "apiKeyHelp": "クライアントは Bearer トークンとして送信します。",
-      "apiKeyRequired": "ネットワークに公開する前に必要です。", "apiKeyPlaceholder": "API キーを入力",
+      "title": "API サーバー",
+      "openaiCompatible": "OpenAI 互換 API",
+      "description": "ローカルの /v1 エンドポイントから SDK やエージェントを接続します。",
+      "start": "API サーバーを起動",
+      "starting": "起動中...",
+      "stop": "停止",
+      "stopping": "停止中...",
+      "access": "アクセス",
+      "thisDevice": "このデバイス",
+      "localNetwork": "ローカルネットワーク",
+      "localHelp": "このデバイスだけが接続できます。",
+      "networkHelp": "他のデバイスも接続できるため API キーが必要です。",
+      "port": "ポート",
+      "portHelp": "API が使用するローカルポートです。",
+      "apiKey": "API キー",
+      "apiKeyHelp": "クライアントは Bearer トークンとして送信します。",
+      "apiKeyRequired": "ネットワークに公開する前に必要です。",
+      "apiKeyPlaceholder": "API キーを入力",
       "autoInstall": "起動時に API サポートを自動インストールします。"
     },
     "observability": {
-      "title": "可観測性", "configured": "nanobot がトレース認証情報を利用できます。",
-      "environment": "LANGFUSE_SECRET_KEY と LANGFUSE_PUBLIC_KEY を設定して nanobot を再起動してください。", "enable": "トレースサポートを有効化"
+      "title": "可観測性",
+      "configured": "nanobot がトレース認証情報を利用できます。",
+      "environment": "LANGFUSE_SECRET_KEY と LANGFUSE_PUBLIC_KEY を設定して nanobot を再起動してください。",
+      "enable": "トレースサポートを有効化"
     },
     "legal": {
       "thirdPartyBrands": "製品名、ロゴ、ブランドはそれぞれの所有者に帰属します。使用は識別のみを目的とし、承認を意味するものではありません。"

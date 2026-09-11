@@ -11,6 +11,7 @@ import {
   Menu,
   Search,
   Settings,
+  ShieldCheck,
   SquarePen,
   Blocks,
 } from "lucide-react";
@@ -64,9 +65,10 @@ interface SidebarProps {
   onOpenApps: () => void;
   onOpenSkills: () => void;
   onOpenAutomations: () => void;
+  onOpenAudit: () => void;
   onSettingsIntent?: () => void;
   onOpenSearch: () => void;
-  activeUtility?: "apps" | "skills" | "automations" | null;
+  activeUtility?: "apps" | "skills" | "automations" | "audit" | null;
   onToggleArchived: () => void;
   onCollapse: () => void;
   onExpand?: () => void;
@@ -223,6 +225,15 @@ export function Sidebar(props: SidebarProps) {
           active={props.activeUtility === "automations"}
           selectionRef={activeActionRef}
           icon={<CalendarClock className="h-4 w-4" />}
+        />
+        <SidebarActionButton
+          collapsed={collapsed}
+          label={t("sidebar.audit", { defaultValue: "Sessions" })}
+          onClick={props.onOpenAudit}
+          onIntent={props.onSettingsIntent}
+          active={props.activeUtility === "audit"}
+          selectionRef={activeActionRef}
+          icon={<ShieldCheck className="h-4 w-4" />}
         />
         {props.archivedCount ? (
           <SidebarActionButton

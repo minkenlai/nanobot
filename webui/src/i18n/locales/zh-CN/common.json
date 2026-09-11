@@ -77,7 +77,8 @@
     "automations": "自动任务",
     "skills": {
       "title": "技能"
-    }
+    },
+    "audit": "会话"
   },
   "settings": {
     "backToChat": "返回聊天",

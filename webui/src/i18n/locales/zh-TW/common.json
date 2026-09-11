@@ -77,7 +77,8 @@
     "automations": "自動任務",
     "skills": {
       "title": "技能"
-    }
+    },
+    "audit": "會話"
   },
   "settings": {
     "backToChat": "返回聊天",
@@ -617,17 +618,31 @@
       }
     },
     "api": {
-      "title": "API 伺服器", "openaiCompatible": "OpenAI 相容 API", "description": "讓 SDK 與其他智能體透過本機 /v1 端點連線 nanobot。",
-      "start": "啟動 API 伺服器", "starting": "正在啟動…", "stop": "停止", "stopping": "正在停止…",
-      "access": "存取範圍", "thisDevice": "僅此裝置", "localNetwork": "區域網路",
-      "localHelp": "只有目前裝置可以連線。", "networkHelp": "區域網路內其他裝置可以連線，因此必須設定 API 金鑰。",
-      "port": "連接埠", "portHelp": "API 伺服器使用的本機連接埠。", "apiKey": "API 金鑰", "apiKeyHelp": "API 呼叫端會以 Bearer Token 傳送此金鑰。",
-      "apiKeyRequired": "向區域網路開放 API 前必須設定金鑰。", "apiKeyPlaceholder": "輸入 API 金鑰",
+      "title": "API 伺服器",
+      "openaiCompatible": "OpenAI 相容 API",
+      "description": "讓 SDK 與其他智能體透過本機 /v1 端點連線 nanobot。",
+      "start": "啟動 API 伺服器",
+      "starting": "正在啟動…",
+      "stop": "停止",
+      "stopping": "正在停止…",
+      "access": "存取範圍",
+      "thisDevice": "僅此裝置",
+      "localNetwork": "區域網路",
+      "localHelp": "只有目前裝置可以連線。",
+      "networkHelp": "區域網路內其他裝置可以連線，因此必須設定 API 金鑰。",
+      "port": "連接埠",
+      "portHelp": "API 伺服器使用的本機連接埠。",
+      "apiKey": "API 金鑰",
+      "apiKeyHelp": "API 呼叫端會以 Bearer Token 傳送此金鑰。",
+      "apiKeyRequired": "向區域網路開放 API 前必須設定金鑰。",
+      "apiKeyPlaceholder": "輸入 API 金鑰",
       "autoInstall": "啟動時會自動安裝 API 支援。"
     },
     "observability": {
-      "title": "可觀測性", "configured": "nanobot 已偵測到追蹤憑證。",
-      "environment": "設定 LANGFUSE_SECRET_KEY 和 LANGFUSE_PUBLIC_KEY 後重新啟動 nanobot。", "enable": "啟用追蹤支援"
+      "title": "可觀測性",
+      "configured": "nanobot 已偵測到追蹤憑證。",
+      "environment": "設定 LANGFUSE_SECRET_KEY 和 LANGFUSE_PUBLIC_KEY 後重新啟動 nanobot。",
+      "enable": "啟用追蹤支援"
     },
     "legal": {
       "thirdPartyBrands": "產品名稱、Logo 與品牌均為各自擁有者的財產。僅供識別之用，不代表任何形式的背書。"

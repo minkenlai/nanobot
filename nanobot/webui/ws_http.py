@@ -512,6 +512,10 @@ class GatewayHTTPHandler:
         if got == "/webui/bootstrap":
             return self._handle_bootstrap(connection, request)
 
+        # Audit Sessions route
+        if got in ("/api/audit_sessions", "/api/v1/audit_sessions", "/v1/audit_sessions"):
+            return self._handle_audit_sessions(connection, request)
+
         # Settings routes (delegated)
         response = await self.settings_routes.dispatch(connection, request, got)
         if response is not None:
@@ -667,6 +671,38 @@ class GatewayHTTPHandler:
         if api_token is not None:
             payload["api_token"] = api_token
         return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
+
+    # -- Audit Sessions ------------------------------------------------------
+
+    def _handle_audit_sessions(self, connection: Any, request: Any) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+
+        from nanobot.agent.tools.audit_sessions import AuditSessionsTool, detect_channel
+
+        audit_tool = AuditSessionsTool.from_config(self.config)
+
+        _, query = _parse_request_path(request.path)
+        channel_filter = (_query_first(query, "channel") or "all").strip().lower()
+
+        session_dirs = audit_tool.resolve_session_dirs()
+        sessions = audit_tool.load_sessions(session_dirs)
+
+        res_sessions: list[dict[str, Any]] = []
+        for s in sessions:
+            key = str(s.get("key", ""))
+            chan = detect_channel(key)
+            if channel_filter != "all" and chan != channel_filter:
+                continue
+            res_sessions.append(s)
+
+        self._log.info(
+            "Serving {} audited sessions via GET {} (dirs: {})",
+            len(res_sessions),
+            request.path,
+            session_dirs,
+        )
+        return _http_json_response({"status": "ok", "sessions": res_sessions})
 
     def _bootstrap_ws_url(self, request: Any) -> str:
         headers = getattr(request, "headers", {}) or {}

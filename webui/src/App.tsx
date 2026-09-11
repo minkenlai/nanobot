@@ -256,6 +256,9 @@ function readShellRoute(): ShellRoute {
   if (path === "/skills") {
     return { view: "skills", activeKey, settingsSection: "skills" };
   }
+  if (path === "/audit") {
+    return { view: "audit", activeKey, settingsSection: "overview" };
+  }
   if (path.startsWith("/temporary/")) {
     const encoded = path.slice("/temporary/".length);
     try {
@@ -2431,6 +2434,12 @@ function Shell({
       });
       return;
     }
+    if (view === "audit") {
+      document.title = t("app.documentTitle.chat", {
+        title: t("sidebar.audit", { defaultValue: "Sessions" }),
+      });
+      return;
+    }
     document.title = activeSession
       ? t("app.documentTitle.chat", { title: headerTitle })
       : t("app.documentTitle.base");
@@ -2490,7 +2499,7 @@ function Shell({
     onSettingsIntent,
     onOpenSearch: onOpenSessionSearch,
     activeUtility:
-      view === "apps" || view === "skills" || view === "automations"
+      view === "apps" || view === "skills" || view === "automations" || view === "audit"
         ? view
         : null,
     onToggleArchived,

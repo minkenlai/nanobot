@@ -77,7 +77,8 @@
     "automations": "Tự động hóa",
     "skills": {
       "title": "Kỹ năng"
-    }
+    },
+    "audit": "Phiên"
   },
   "settings": {
     "backToChat": "Quay lại chat",
@@ -617,17 +618,31 @@
       }
     },
     "api": {
-      "title": "Máy chủ API", "openaiCompatible": "API tương thích OpenAI", "description": "Kết nối SDK và tác nhân qua điểm cuối /v1 cục bộ.",
-      "start": "Khởi động API", "starting": "Đang khởi động...", "stop": "Dừng", "stopping": "Đang dừng...",
-      "access": "Truy cập", "thisDevice": "Thiết bị này", "localNetwork": "Mạng nội bộ",
-      "localHelp": "Chỉ thiết bị này có thể kết nối.", "networkHelp": "Thiết bị khác có thể kết nối; cần khóa API.",
-      "port": "Cổng", "portHelp": "API sử dụng cổng cục bộ này.", "apiKey": "Khóa API", "apiKeyHelp": "Client gửi khóa dưới dạng Bearer token.",
-      "apiKeyRequired": "Bắt buộc trước khi mở API ra mạng.", "apiKeyPlaceholder": "Nhập khóa API",
+      "title": "Máy chủ API",
+      "openaiCompatible": "API tương thích OpenAI",
+      "description": "Kết nối SDK và tác nhân qua điểm cuối /v1 cục bộ.",
+      "start": "Khởi động API",
+      "starting": "Đang khởi động...",
+      "stop": "Dừng",
+      "stopping": "Đang dừng...",
+      "access": "Truy cập",
+      "thisDevice": "Thiết bị này",
+      "localNetwork": "Mạng nội bộ",
+      "localHelp": "Chỉ thiết bị này có thể kết nối.",
+      "networkHelp": "Thiết bị khác có thể kết nối; cần khóa API.",
+      "port": "Cổng",
+      "portHelp": "API sử dụng cổng cục bộ này.",
+      "apiKey": "Khóa API",
+      "apiKeyHelp": "Client gửi khóa dưới dạng Bearer token.",
+      "apiKeyRequired": "Bắt buộc trước khi mở API ra mạng.",
+      "apiKeyPlaceholder": "Nhập khóa API",
       "autoInstall": "Hỗ trợ API sẽ tự động được cài khi khởi động."
     },
     "observability": {
-      "title": "Khả năng quan sát", "configured": "Thông tin xác thực tracing đã sẵn sàng cho nanobot.",
-      "environment": "Đặt LANGFUSE_SECRET_KEY và LANGFUSE_PUBLIC_KEY rồi khởi động lại nanobot.", "enable": "Bật hỗ trợ tracing"
+      "title": "Khả năng quan sát",
+      "configured": "Thông tin xác thực tracing đã sẵn sàng cho nanobot.",
+      "environment": "Đặt LANGFUSE_SECRET_KEY và LANGFUSE_PUBLIC_KEY rồi khởi động lại nanobot.",
+      "enable": "Bật hỗ trợ tracing"
     },
     "legal": {
       "thirdPartyBrands": "Tên sản phẩm, logo và thương hiệu thuộc về chủ sở hữu tương ứng. Việc sử dụng chỉ nhằm nhận diện và không ngụ ý được xác nhận."
@@ -1415,8 +1430,8 @@
     "copyReply": "Sao chép",
     "copiedReply": "Đã sao chép",
     "turnLatencyTitle": "Thời gian phản hồi (end-to-end)",
-      "fileEditViewDiff": "Xem khác biệt",
-      "fileEditViewLargeDiff": "Xem khác biệt lớn",
+    "fileEditViewDiff": "Xem khác biệt",
+    "fileEditViewLargeDiff": "Xem khác biệt lớn",
     "fileEditDiffLineCount": "{{count}} dòng",
     "fileEditUnchangedLinesHidden": "Đã ẩn {{count}} dòng không đổi",
     "fileEditShowMoreLines": "Hiển thị thêm {{count}} dòng",

@@ -77,7 +77,8 @@
     "automations": "Automations",
     "skills": {
       "title": "Skills"
-    }
+    },
+    "audit": "Sessions"
   },
   "settings": {
     "backToChat": "Back to chat",
