@@ -122,6 +122,28 @@ or report.
 Heartbeat is enabled by default when `nanobot gateway` starts. Configure it in
 [`configuration.md#gateway-heartbeat`](./configuration.md#gateway-heartbeat).
 
+### Gated Triggers and Session Activity Metadata
+
+When running recurring automation checks (such as deterministic guard scripts before triggering an LLM turn, or workspace checks in `HEARTBEAT.md`), scripts executing in sandbox or workspace-isolated environments (`restrict_to_workspace`) cannot access `~/.nanobot/sessions/`.
+
+To allow deterministic guard scripts to check recent user activity without violating workspace boundaries or waking the LLM unnecessarily, the gateway automatically maintains `<workspace>/session_activity.json`:
+
+```json
+{
+  "last_activity_timestamp": "2026-09-11T05:30:00.123456+00:00",
+  "channel": "telegram",
+  "session_id": "telegram:123456789",
+  "window_minutes": 60,
+  "active_sessions": {
+    "telegram:123456789": "2026-09-11T05:30:00.123456+00:00"
+  }
+}
+```
+
+- **Automatic Updates**: Whenever inbound user input is accepted from any channel (WebUI, Telegram, WhatsApp, Discord, Slack, etc.), the gateway atomically updates this file. System and scheduled turns do not trigger updates.
+- **Sliding Window Pruning**: Sessions without activity in the past `window_minutes` (default 60 minutes) are pruned from `active_sessions`.
+- **Deterministic Guard Workflow**: A local bash script or skill script in `HEARTBEAT.md` or a quiet cron job can inspect `session_activity.json` (e.g., using `jq`) to check whether user activity occurred recently before executing heavier follow-up actions or triggering an agent turn.
+
 ## Manage Automations
 
 Use the WebUI Automations view to:

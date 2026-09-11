@@ -510,7 +510,11 @@ def _run_gateway(
         recovery=recovery,
     )
     from nanobot.bus.events import OutboundMessage
+    from nanobot.session.activity import SessionActivityTracker
     from nanobot.session.keys import session_key_for_channel
+
+    activity_tracker = SessionActivityTracker(workspace=config.workspace_path)
+    activity_tracker.attach_to_bus(bus)
 
     def _channel_session_key(channel: str, chat_id: str) -> str:
         return session_key_for_channel(

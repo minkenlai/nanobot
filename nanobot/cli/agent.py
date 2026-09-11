@@ -198,7 +198,11 @@ def agent(
 
     sync_workspace_templates(runtime_config.workspace_path)
 
+    from nanobot.session.activity import SessionActivityTracker
+
     bus = MessageBus()
+    activity_tracker = SessionActivityTracker(workspace=runtime_config.workspace_path)
+    activity_tracker.attach_to_bus(bus)
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
     if is_default_workspace(runtime_config.workspace_path):
