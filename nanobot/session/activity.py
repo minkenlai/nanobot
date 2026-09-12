@@ -133,6 +133,7 @@ class SessionActivityTracker:
         channel: str,
         session_id: str,
         timestamp: datetime | None = None,
+        fsync: bool = False,
     ) -> dict[str, Any]:
         """Record user activity and atomically update the workspace metadata file."""
         now_dt = timestamp or _current_timestamp()
@@ -154,10 +155,10 @@ class SessionActivityTracker:
             "active_sessions": active_copy,
         }
 
-        self._write_atomically(payload)
+        self._write_atomically(payload, fsync=fsync)
         return payload
 
-    def _write_atomically(self, data: dict[str, Any]) -> None:
+    def _write_atomically(self, data: dict[str, Any], *, fsync: bool = False) -> None:
         """Atomically persist activity state to workspace file."""
         try:
             self.workspace.mkdir(parents=True, exist_ok=True)
@@ -168,8 +169,9 @@ class SessionActivityTracker:
             )
             with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write(content)
-                f.flush()
-                os.fsync(f.fileno())
+                if fsync:
+                    f.flush()
+                    os.fsync(f.fileno())
             os.replace(tmp_path, self.file_path)
         except Exception as exc:
             logger.warning(

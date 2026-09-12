@@ -129,3 +129,53 @@ async def test_session_activity_bus_subscription(tmp_path: Path) -> None:
     assert data["channel"] == "telegram"
     assert data["session_id"] == "telegram:67890"
     assert "telegram:67890" in data["active_sessions"]
+
+
+def test_session_manager_save_records_activity(tmp_path: Path) -> None:
+    from nanobot.session.manager import SessionManager
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions_root"
+    sessions_root.mkdir()
+
+    mgr = SessionManager(workspace, sessions_root=sessions_root)
+    session = mgr.get_or_create("api:default")
+    session.messages.append({
+        "role": "user",
+        "content": "Hello Guide assistant",
+        "timestamp": datetime.now().astimezone().isoformat(),
+    })
+    session.messages.append({
+        "role": "assistant",
+        "content": "Hello, welcome to our studio!",
+        "timestamp": datetime.now().astimezone().isoformat(),
+    })
+
+    mgr.save(session)
+
+    data = load_session_activity(workspace)
+    assert data is not None
+    assert data["channel"] == "api"
+    assert data["session_id"] == "api:default"
+    assert "api:default" in data["active_sessions"]
+
+
+def test_session_manager_save_ignores_system_sessions(tmp_path: Path) -> None:
+    from nanobot.session.manager import SessionManager
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sessions_root = tmp_path / "sessions_root"
+    sessions_root.mkdir()
+
+    mgr = SessionManager(workspace, sessions_root=sessions_root)
+    session = mgr.get_or_create("system:heartbeat")
+    session.messages.append({
+        "role": "user",
+        "content": "Heartbeat check",
+        "timestamp": datetime.now().astimezone().isoformat(),
+    })
+    mgr.save(session)
+
+    assert load_session_activity(workspace) is None

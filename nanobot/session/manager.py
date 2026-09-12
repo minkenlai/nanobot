@@ -1662,6 +1662,8 @@ class SessionManager:
         self._overflow_cache: WeakValueDictionary[str, Session] = WeakValueDictionary()
         self._max_cached_sessions = SESSION_CACHE_MAX_SIZE
         self._delete_observer: Callable[[str], None] | None = None
+        from nanobot.session.activity import SessionActivityTracker
+        self.activity_tracker = SessionActivityTracker(self.workspace)
 
     def _remember(self, session: Session) -> None:
         """Keep recent sessions strongly cached without duplicating live objects."""
@@ -1791,6 +1793,44 @@ class SessionManager:
 
         self._store.save(session, fsync=fsync)
         self._remember(session)
+        self._record_session_activity(session, fsync=fsync)
+
+    def _record_session_activity(self, session: Session, *, fsync: bool = False) -> None:
+        if not session.key or ":" not in session.key:
+            return
+        channel = session.key.split(":", 1)[0].lower()
+        if channel in ("system", "dream", "cron"):
+            return
+
+        last_user_ts: datetime | None = None
+        for msg in reversed(session.messages):
+            if msg.get("role") == "user":
+                raw_ts = msg.get("timestamp")
+                if isinstance(raw_ts, str):
+                    try:
+                        last_user_ts = datetime.fromisoformat(raw_ts)
+                    except Exception:
+                        pass
+                break
+
+        if last_user_ts is None and not any(m.get("role") == "user" for m in session.messages):
+            return
+
+        now = datetime.now().astimezone()
+        activity_ts = last_user_ts or session.updated_at
+        if activity_ts.tzinfo is None:
+            activity_ts = activity_ts.replace(tzinfo=now.tzinfo)
+
+        if abs((now - activity_ts).total_seconds()) <= 900:
+            try:
+                self.activity_tracker.record_activity(
+                    channel=channel,
+                    session_id=session.key,
+                    timestamp=activity_ts,
+                    fsync=False,
+                )
+            except Exception as exc:
+                logger.warning("Failed to update session activity metadata: {}", exc)
 
     def save_runtime_checkpoint(self, session: Session) -> None:
         """Persist volatile recovery state without rewriting long history."""
