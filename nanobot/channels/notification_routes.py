@@ -14,6 +14,8 @@ def notification_metadata(channel: str, source: Mapping[str, Any]) -> dict[str, 
         "feishu": ("message_id", "thread_id", "chat_type"),
     }.get(channel_type, ())
     metadata = {key: source[key] for key in fields if key in source}
+    if "send_tool_hints" in source:
+        metadata["send_tool_hints"] = source["send_tool_hints"]
     if channel_type in {"slack", "mattermost"}:
         nested = source.get(channel_type)
         if isinstance(nested, dict):

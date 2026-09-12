@@ -145,6 +145,8 @@ class TurnDeliveryFactory:
             channel, chat_id = route
             metadata = {}
         metadata = deepcopy(metadata)
+        if "send_tool_hints" in session_metadata:
+            metadata["send_tool_hints"] = session_metadata["send_tool_hints"]
 
         return _bind_events(self.bus, TurnRoute(channel, chat_id, metadata))
 

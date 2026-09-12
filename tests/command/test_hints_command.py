@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -212,3 +213,82 @@ async def test_agent_loop_restore_turn_applies_hints_override(tmp_path) -> None:
 
     await loop._restore_turn(ctx)
     mock_delivery.apply_session_metadata.assert_called_with(session.metadata)
+
+
+@pytest.mark.asyncio
+async def test_channel_manager_drops_compaction_event_when_hints_off() -> None:
+    from nanobot.bus.events import OutboundMessage
+    from nanobot.bus.outbound_events import ContextCompactionEvent
+    from nanobot.bus.queue import MessageBus
+    from nanobot.channels.base import BaseChannel
+    from nanobot.channels.manager import ChannelManager
+    from nanobot.config.schema import Config
+
+    config = Config.model_validate({"channels": {"telegram": {"enabled": True}}})
+    bus = MessageBus()
+    manager = ChannelManager(config, bus)
+    mock_channel = MagicMock(spec=BaseChannel)
+    mock_channel.send = AsyncMock()
+    mock_channel.send_tool_hints = True
+    mock_channel.send_progress = True
+    manager.channels["telegram"] = mock_channel
+
+    # Outbound compaction event with send_tool_hints: False (overridden by /hints off)
+    msg_off = OutboundMessage(
+        channel="telegram",
+        chat_id="chat_1",
+        content="Context compacted.",
+        event=ContextCompactionEvent(compaction_id="1", phase="succeeded"),
+        metadata={"send_tool_hints": False},
+    )
+
+    manager._dispatch_task = asyncio.create_task(manager._dispatch_outbound())
+    try:
+        await bus.publish_outbound(msg_off)
+        # Give dispatcher loop time to process
+        await asyncio.sleep(0.05)
+        mock_channel.send.assert_not_called()
+
+        # Now send with send_tool_hints: True (or omitted with channel default True)
+        msg_on = OutboundMessage(
+            channel="telegram",
+            chat_id="chat_1",
+            content="Context compacted.",
+            event=ContextCompactionEvent(compaction_id="2", phase="succeeded"),
+            metadata={"send_tool_hints": True},
+        )
+        await bus.publish_outbound(msg_on)
+        await asyncio.sleep(0.05)
+        assert mock_channel.send.call_count == 1
+    finally:
+        await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_turn_delivery_session_events_retains_hints_preference() -> None:
+    from nanobot.agent.turn_delivery import TurnDeliveryFactory
+    from nanobot.bus.outbound_events import ContextCompactionEvent
+    from nanobot.bus.queue import MessageBus
+
+    bus = MessageBus()
+    factory = TurnDeliveryFactory(bus)
+
+    # Simulate session metadata with _compaction_route and send_tool_hints: False
+    session_metadata = {
+        "_compaction_route": {
+            "channel": "telegram",
+            "chat_id": "chat_123",
+            "metadata": {"message_thread_id": 456},
+        },
+        "send_tool_hints": False,
+    }
+
+    sink = factory.session_events("telegram:chat_123", session_metadata)
+    await sink.emit(ContextCompactionEvent(compaction_id="1", phase="succeeded"))
+
+    outbound = bus.outbound.get_nowait()
+    assert outbound.channel == "telegram"
+    assert outbound.chat_id == "chat_123"
+    assert outbound.metadata.get("send_tool_hints") is False
+    assert outbound.metadata.get("message_thread_id") == 456
+

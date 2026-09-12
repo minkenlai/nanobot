@@ -231,13 +231,19 @@ class AnthropicProvider(LLMProvider):
             content = msg.get("content")
 
             if role == "system":
-                system = (
+                system_chunk = (
                     cast(list[dict[str, Any]], content)
                     if isinstance(content, list)
                     else content
                     if isinstance(content, str)
                     else str(content or "")
                 )
+                if not system:
+                    system = system_chunk
+                elif isinstance(system, str) and isinstance(system_chunk, str):
+                    system = f"{system}\n\n---\n\n{system_chunk}"
+                elif isinstance(system, list) and isinstance(system_chunk, list):
+                    cast(list[dict[str, Any]], system).extend(system_chunk)
                 continue
 
             if role == "tool":

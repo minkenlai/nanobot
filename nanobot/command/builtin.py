@@ -1363,7 +1363,7 @@ SESSION_TOOL_HINTS_METADATA_KEY = "send_tool_hints"
 
 
 async def cmd_hints(ctx: CommandContext) -> OutboundMessage:
-    """Toggle or show real-time tool execution notifications for the current chat session."""
+    """Toggle or show real-time tool execution and compaction notifications for the current chat session."""
     session = ctx.session or ctx.loop.sessions.get_or_create(ctx.key)
     args = ctx.args.strip().lower() if ctx.args else ""
 
@@ -1373,11 +1373,11 @@ async def cmd_hints(ctx: CommandContext) -> OutboundMessage:
     if args in ("on", "enable", "true", "1"):
         session.metadata[SESSION_TOOL_HINTS_METADATA_KEY] = True
         ctx.loop.sessions.save(session)
-        msg_text = "🔧 **Tool hints enabled** for this chat.\nReal-time tool execution notifications will be sent."
+        msg_text = "🔧 **Tool hints enabled** for this chat.\nReal-time tool execution and context compaction notifications will be sent."
     elif args in ("off", "disable", "false", "0"):
         session.metadata[SESSION_TOOL_HINTS_METADATA_KEY] = False
         ctx.loop.sessions.save(session)
-        msg_text = "🔇 **Tool hints disabled** for this chat.\nTool notifications are silenced (all tool calls remain fully recorded in session logs)."
+        msg_text = "🔇 **Tool hints disabled** for this chat.\nTool notifications and context compaction notices are silenced (all actions remain fully recorded in session logs)."
     elif args in ("reset", "default", "auto"):
         session.metadata.pop(SESSION_TOOL_HINTS_METADATA_KEY, None)
         ctx.loop.sessions.save(session)
@@ -1392,11 +1392,11 @@ async def cmd_hints(ctx: CommandContext) -> OutboundMessage:
             status_text = f"ℹ️ **Default ({'enabled' if channel_default else 'disabled'})**"
 
         msg_text = (
-            f"**Tool Hints Configuration for this chat:**\n"
+            f"**Notification Hints Configuration for this chat:**\n"
             f"• Status: {status_text}\n\n"
             f"**Usage:**\n"
-            f"• `/hints on` — Enable real-time tool notifications in this chat\n"
-            f"• `/hints off` — Silence tool notifications in this chat\n"
+            f"• `/hints on` — Enable real-time tool and compaction notifications in this chat\n"
+            f"• `/hints off` — Silence tool and compaction notifications in this chat\n"
             f"• `/hints reset` — Revert to channel default\n"
         )
 

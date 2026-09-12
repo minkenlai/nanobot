@@ -280,6 +280,7 @@ class ContextBuilder:
         channel: str | None = None,
         workspace: Path | None = None,
         include_memory: bool = True,
+        session_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build a model transcript while preserving the fresh-turn boundary."""
         root = workspace or self.workspace
@@ -293,8 +294,13 @@ class ContextBuilder:
                     include_memory=include_memory,
                 ),
             },
-            *transcript.history,
         ]
+        if session_context:
+            messages.append({
+                "role": "system",
+                "content": session_context,
+            })
+        messages.extend(transcript.history)
         if transcript.current_message is None:
             return messages
 

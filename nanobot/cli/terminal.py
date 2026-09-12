@@ -370,6 +370,8 @@ async def _maybe_print_interactive_progress(
 ) -> bool:
     event = msg.event
     if isinstance(event, ContextCompactionEvent):
+        if channels_config and not channels_config.send_tool_hints:
+            return True
         await _print_interactive_progress_line(msg.content, thinking, renderer)
         return True
     if isinstance(event, RetryWaitEvent):

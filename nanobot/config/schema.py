@@ -566,6 +566,11 @@ class Config(BaseSettings):
         validation_alias=AliasChoices("logging"),
         serialization_alias="logging",
     )
+    sessions_metadata_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sessionsMetadataPath", "sessions_metadata_path", "sessions_metadata_file"),
+        serialization_alias="sessionsMetadataPath",
+    )
 
     def __init__(self, **values: Any) -> None:
         if not type(self).__pydantic_complete__:

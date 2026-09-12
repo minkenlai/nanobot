@@ -305,12 +305,19 @@ class AgentLoop:
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
         staff_policy: Any = None,
+        session_metadata_store: Any = None,
     ):
         from nanobot.config.schema import ToolsConfig
 
         _tc = tools_config or ToolsConfig()
         defaults = AgentDefaults()
         self.bus = bus
+        if session_metadata_store is not None:
+            self.session_metadata_store = session_metadata_store
+        else:
+            from nanobot.session.metadata_store import SessionMetadataStore
+
+            self.session_metadata_store = SessionMetadataStore()
         self._recovery_admission = recovery_admission
         if turn_delivery_factory is not None:
             if turn_delivery_factory.bus is not bus:
@@ -493,8 +500,8 @@ class AgentLoop:
         if bus is None:
             bus = MessageBus()
         defaults = config.agents.defaults
+        data_dir = config.runtime_data_dir
         if "session_manager" not in extra:
-            data_dir = config.runtime_data_dir
             extra["session_manager"] = SessionManager(
                 config.workspace_path,
                 sessions_root=data_dir / "sessions" if data_dir is not None else None,
@@ -508,6 +515,17 @@ class AgentLoop:
             config,
             provider_snapshot_loader,
         )
+        session_metadata_store = extra.pop("session_metadata_store", None)
+        if session_metadata_store is None:
+            from nanobot.session.metadata_store import SessionMetadataStore
+
+            meta_path_raw = getattr(config, "sessions_metadata_path", None)
+            meta_path: Path | None = (
+                Path(meta_path_raw).expanduser().resolve()
+                if isinstance(meta_path_raw, (str, Path))
+                else (data_dir / "sessions_metadata.json" if data_dir is not None else None)
+            )
+            session_metadata_store = SessionMetadataStore(meta_path)
         return cls(
             bus=bus,
             provider=provider,
@@ -534,6 +552,7 @@ class AgentLoop:
             provider_snapshot_loader=provider_snapshot_loader,
             preset_snapshot_loader=preset_snapshot_loader,
             tool_registry=tool_registry,
+            session_metadata_store=session_metadata_store,
             **extra,
         )
 
@@ -1200,11 +1219,17 @@ class AgentLoop:
             message_metadata=request_metadata,
             session_metadata=session.metadata if session is not None else None,
         )
+        session_context = (
+            self.session_metadata_store.format_injection(request_ctx.chat_id)
+            if hasattr(self, "session_metadata_store") and self.session_metadata_store is not None
+            else None
+        )
         transcript_builder = partial(
             self.context.build_transcript,
             channel=request_ctx.channel,
             workspace=effective_scope.project_path,
             include_memory=session.policy.persist if session is not None else True,
+            session_context=session_context,
         )
         if request_context is None:
             request_ctx = dataclasses.replace(

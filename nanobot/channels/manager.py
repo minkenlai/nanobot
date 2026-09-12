@@ -15,6 +15,7 @@ from loguru import logger
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.outbound_events import (
+    ContextCompactionEvent,
     ProgressEvent,
     RetryWaitEvent,
     RuntimeModelUpdatedEvent,
@@ -876,6 +877,14 @@ class ChannelManager:
                     if not progress_event.tool_hint and not self._should_send_progress(
                         msg.channel,
                         tool_hint=False,
+                        msg_metadata=msg.metadata,
+                    ):
+                        continue
+
+                if isinstance(event, ContextCompactionEvent):
+                    if not self._should_send_progress(
+                        msg.channel,
+                        tool_hint=True,
                         msg_metadata=msg.metadata,
                     ):
                         continue
