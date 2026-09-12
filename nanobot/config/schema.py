@@ -454,6 +454,12 @@ class AuditSessionsConfig(Base):
     )
 
 
+class WorkflowsConfig(Base):
+    """Configuration for declarative task workflows and state machine engine."""
+
+    enabled: bool = True
+
+
 class LoggingConfig(Base):
     """Logging configuration for file and runtime sinks."""
 
@@ -555,6 +561,11 @@ class Config(BaseSettings):
         default_factory=StaffPolicyConfig,
         validation_alias=AliasChoices("staffPolicy", "staff_policy"),
         serialization_alias="staffPolicy",
+    )
+    workflows: WorkflowsConfig = Field(
+        default_factory=WorkflowsConfig,
+        validation_alias=AliasChoices("workflows", "workflow"),
+        serialization_alias="workflows",
     )
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,

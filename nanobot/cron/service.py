@@ -399,6 +399,7 @@ class CronService:
                         "command": j.payload.command,
                         "skillName": j.payload.skill_name,
                         "scriptName": j.payload.script_name,
+                        "workflowId": j.payload.workflow_id,
                         "args": j.payload.args,
                         "deliver": j.payload.deliver,
                         "quiet": j.payload.quiet,

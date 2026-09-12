@@ -1579,3 +1579,172 @@ export type Outbound =
        * generic websocket protocol for other clients. */
       webui?: true;
     };
+
+// ---------------------------------------------------------------------------
+// Workflows (Declarative State Machines)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowTriggerConfig {
+  cron?: string;
+  tz?: string;
+  event?: string;
+  enabled?: boolean;
+}
+
+export interface WorkflowChoiceRule {
+  variable: string;
+  next: string;
+  equals?: unknown;
+  not_equals?: unknown;
+  numeric_gt?: number;
+  numeric_gte?: number;
+  numeric_lt?: number;
+  numeric_lte?: number;
+  boolean_equals?: boolean;
+  is_null?: boolean;
+  contains?: unknown;
+  starts_with?: string;
+  ends_with?: string;
+}
+
+export interface WorkflowTaskState {
+  type: "task";
+  action?: "prompt" | "tool" | "exec" | "send_message" | "pass";
+  resource?: string;
+  prompt?: string;
+  command?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  params?: Record<string, unknown>;
+  result_path?: string;
+  timeout_seconds?: number;
+  max_retries?: number;
+  next?: string;
+  end?: boolean;
+  comment?: string;
+}
+
+export interface WorkflowLLMState {
+  type: "llm";
+  prompt: string;
+  params?: Record<string, unknown>;
+  result_path?: string;
+  timeout_seconds?: number;
+  max_retries?: number;
+  next?: string;
+  end?: boolean;
+  comment?: string;
+}
+
+export interface WorkflowExecState {
+  type: "exec";
+  command: string;
+  params?: Record<string, unknown>;
+  result_path?: string;
+  timeout_seconds?: number;
+  max_retries?: number;
+  next?: string;
+  end?: boolean;
+  comment?: string;
+}
+
+export interface WorkflowToolState {
+  type: "tool";
+  tool: string;
+  args?: Record<string, unknown>;
+  params?: Record<string, unknown>;
+  result_path?: string;
+  timeout_seconds?: number;
+  max_retries?: number;
+  next?: string;
+  end?: boolean;
+  comment?: string;
+}
+
+export interface WorkflowChoiceState {
+  type: "choice";
+  choices: WorkflowChoiceRule[];
+  default?: string;
+  comment?: string;
+}
+
+export interface WorkflowPassState {
+  type: "pass";
+  result?: unknown;
+  result_path?: string;
+  next?: string;
+  end?: boolean;
+  comment?: string;
+}
+
+export interface WorkflowFailState {
+  type: "fail";
+  error?: string;
+  cause?: string;
+  comment?: string;
+}
+
+export interface WorkflowSucceedState {
+  type: "succeed";
+  comment?: string;
+}
+
+export type WorkflowState =
+  | WorkflowTaskState
+  | WorkflowLLMState
+  | WorkflowExecState
+  | WorkflowToolState
+  | WorkflowChoiceState
+  | WorkflowPassState
+  | WorkflowFailState
+  | WorkflowSucceedState;
+
+export interface WorkflowDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  trigger?: WorkflowTriggerConfig;
+  start_at: string;
+  states: Record<string, WorkflowState>;
+  timeout_seconds?: number;
+  max_steps?: number;
+  version?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface StepExecutionRecord {
+  step_index: number;
+  state_name: string;
+  state_type: string;
+  action?: string;
+  status: "succeeded" | "failed" | "timed_out";
+  input_context_snapshot?: Record<string, unknown>;
+  output_context_snapshot?: Record<string, unknown>;
+  output?: unknown;
+  next_state?: string;
+  duration_ms: number;
+  error?: string;
+  started_at: number;
+  finished_at: number;
+}
+
+export interface WorkflowRunRecord {
+  run_id: string;
+  workflow_id: string;
+  status: "running" | "succeeded" | "failed" | "timed_out";
+  start_time: number;
+  end_time?: number;
+  total_duration_ms: number;
+  initial_context: Record<string, unknown>;
+  final_context: Record<string, unknown>;
+  steps: StepExecutionRecord[];
+  error?: string;
+}
+
+export interface WorkflowsPayload {
+  workflows: WorkflowDefinition[];
+}
+
+export interface WorkflowRunsPayload {
+  runs: WorkflowRunRecord[];
+}

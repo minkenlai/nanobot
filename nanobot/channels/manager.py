@@ -115,6 +115,7 @@ class ChannelManager:
         webui_recovery_action: (
             Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
+        workflow_service: Any | None = None,
         config_path: Path | None = None,
     ):
         if config_path is None:
@@ -127,6 +128,7 @@ class ChannelManager:
         self._session_manager = session_manager
         self._cron_service = cron_service
         self._local_trigger_store = local_trigger_store
+        self._workflow_service = workflow_service
         self._webui_runtime_model_name = webui_runtime_model_name
         self._webui_refresh_runtime_config = webui_refresh_runtime_config
         self._webui_cron_pending_job_ids = webui_cron_pending_job_ids
@@ -215,6 +217,7 @@ class ChannelManager:
                 mcp_reload=self._webui_mcp_reload,
                 skill_state_action=self._webui_skill_state_action,
                 recovery_action=self._webui_recovery_action,
+                workflow_service=self._workflow_service,
                 logger=logger,
             )
             kwargs["gateway"] = gateway

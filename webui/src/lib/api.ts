@@ -42,6 +42,10 @@ import type {
   WorkspacesPayload,
   WebuiThreadPersistedPayload,
   WorkspaceScopePayload,
+  WorkflowDefinition,
+  WorkflowRunRecord,
+  WorkflowRunsPayload,
+  WorkflowsPayload,
 } from "./types";
 import { fetchWithTimeout } from "./http";
 
@@ -1077,5 +1081,92 @@ export async function updateTranscriptionSettings(
       max_duration_sec: update.maxDurationSec,
       max_upload_mb: update.maxUploadMb,
     },
+  );
+}
+
+export async function fetchWorkflows(
+  token: string,
+  base: string = "",
+): Promise<WorkflowsPayload> {
+  return request<WorkflowsPayload>(
+    `${base}/api/webui/workflows`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function fetchWorkflow(
+  token: string,
+  id: string,
+  base: string = "",
+): Promise<WorkflowDefinition> {
+  return request<WorkflowDefinition>(
+    `${base}/api/webui/workflows/${encodeURIComponent(id)}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function saveWorkflow(
+  transport: WebUIMutationTransport,
+  definition: WorkflowDefinition,
+): Promise<{ status: string; workflow: WorkflowDefinition }> {
+  return mutation<{ status: string; workflow: WorkflowDefinition }>(
+    transport,
+    "workflow.save",
+    { definition },
+  );
+}
+
+export async function deleteWorkflow(
+  transport: WebUIMutationTransport,
+  id: string,
+): Promise<{ status: string; deleted: boolean }> {
+  return mutation<{ status: string; deleted: boolean }>(
+    transport,
+    "workflow.delete",
+    { id },
+  );
+}
+
+export async function runWorkflow(
+  transport: WebUIMutationTransport,
+  id: string,
+  initialContext?: Record<string, unknown>,
+): Promise<{ status: string; run: WorkflowRunRecord }> {
+  return mutation<{ status: string; run: WorkflowRunRecord }>(
+    transport,
+    "workflow.run",
+    { id, initial_context: initialContext },
+  );
+}
+
+export async function fetchWorkflowRuns(
+  token: string,
+  id: string,
+  base: string = "",
+  limit: number = 20,
+): Promise<WorkflowRunsPayload> {
+  return request<WorkflowRunsPayload>(
+    `${base}/api/webui/workflows/${encodeURIComponent(id)}/runs?limit=${limit}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
+  );
+}
+
+export async function fetchWorkflowRun(
+  token: string,
+  id: string,
+  runId: string,
+  base: string = "",
+): Promise<WorkflowRunRecord> {
+  return request<WorkflowRunRecord>(
+    `${base}/api/webui/workflows/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}`,
+    token,
+    undefined,
+    API_READ_TIMEOUT_MS,
   );
 }

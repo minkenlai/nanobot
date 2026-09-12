@@ -500,6 +500,17 @@ def _run_gateway(
         tool_registry=tools,
         recovery_admission=recovery,
     )
+    workflow_service = None
+    wf_cfg = getattr(config, "workflows", None)
+    if wf_cfg is None or getattr(wf_cfg, "enabled", True):
+        from nanobot.workflow.service import WorkflowService
+
+        workflow_service = WorkflowService(
+            config.workspace_path / "workflows",
+            cron_service=cron,
+            agent_loop=agent,
+        )
+
     def _schedule_webui_background(awaitable: Awaitable[None]) -> None:
         agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
 
@@ -708,6 +719,25 @@ def _run_gateway(
                 logger.info("Heartbeat: silenced by post-run evaluation")
             return response
 
+        if job.payload.kind == "workflow" or job.id.startswith("workflow:"):
+            if workflow_service is None:
+                logger.warning("Scheduled workflow '{}' triggered but workflows feature is disabled", job.name)
+                return f"Workflow {job.name} skipped: workflows disabled"
+            wf_id = job.payload.workflow_id or job.payload.message or job.id.removeprefix("workflow:")
+            logger.info("Executing scheduled workflow '{}' ({})", job.name, wf_id)
+            try:
+                run_rec = await workflow_service.run_workflow(wf_id)
+                logger.info(
+                    "Workflow '{}' run {} finished with status: {}",
+                    wf_id,
+                    run_rec.run_id,
+                    run_rec.status,
+                )
+                return f"Workflow {wf_id} run completed: {run_rec.status}"
+            except Exception as exc:
+                logger.exception("Scheduled workflow '{}' failed: {}", wf_id, exc)
+                return f"Workflow {wf_id} failed: {exc}"
+
         if is_bound_cron_job(job):
             if job.payload.kind in ("exec_command", "skill_script", "direct_message"):
                 return await run_bound_deterministic_cron_job(
@@ -760,6 +790,7 @@ def _run_gateway(
         webui_mcp_reload=mcp_provider.reload,
         webui_skill_state_action=_webui_skill_state_action,
         webui_recovery_action=recovery.handle_action,
+        workflow_service=workflow_service,
         config_path=Path(config_path),
     )
 
@@ -876,6 +907,10 @@ def _run_gateway(
         ))
     else:
         cron.remove_system_job("heartbeat")
+
+    # Synchronize scheduled workflows with cron
+    if workflow_service is not None:
+        workflow_service.sync_cron_jobs()
 
     cron_status = cron.status()
     cron_job_count = cast(int, cron_status["jobs"])

@@ -142,6 +142,9 @@ _WEBUI_MUTATION_PATHS = {
     "automation.delete": "/api/webui/automations/delete",
     "automation.run": "/api/webui/automations/run",
     "automation.update": "/api/webui/automations/update",
+    "workflow.save": "/api/webui/workflows/save",
+    "workflow.delete": "/api/webui/workflows/delete",
+    "workflow.run": "/api/webui/workflows/run",
     "skill.install": "/api/webui/skills/install",
     "skill.update": "/api/webui/skills/update",
     "skill.delete": "/api/webui/skills/delete",
@@ -226,6 +229,7 @@ if TYPE_CHECKING:
     from nanobot.cron.service import CronService
     from nanobot.triggers.local_store import LocalTriggerStore
     from nanobot.webui.settings_services import WebUISettingsServices
+    from nanobot.workflow.service import WorkflowService
 
 def _decode_api_key(raw_key: str) -> str | None:
     key = unquote(raw_key)
@@ -330,6 +334,7 @@ class GatewayHTTPHandler:
         recovery_action: (
             Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None
         ) = None,
+        workflow_service: WorkflowService | None = None,
         log: Any = logger,
     ) -> None:
         self.config = config
@@ -354,6 +359,11 @@ class GatewayHTTPHandler:
         self.local_trigger_store = local_trigger_store
         self.cron_pending_job_ids = cron_pending_job_ids
         self.local_trigger_pending_ids = local_trigger_pending_ids
+        wf_cfg = getattr(config, "workflows", None)
+        workflows_enabled = bool(getattr(wf_cfg, "enabled", True))
+        self.workflow_service: WorkflowService | None = (
+            workflow_service if workflows_enabled else None
+        )
         self._log = log
         self._runtime_surface = runtime_surface
 
@@ -462,6 +472,8 @@ class GatewayHTTPHandler:
             return True
         if re.match(r"^/api/webui/automations/(enable|disable|delete|run|update)$", path):
             return True
+        if re.match(r"^/api/webui/workflows/(save|delete|run)$", path):
+            return True
         if path in {"/api/webui/recovery/continue", "/api/webui/recovery/dismiss"}:
             return True
         return path in {
@@ -538,6 +550,11 @@ class GatewayHTTPHandler:
 
         # Automation routes
         response = await self._dispatch_automation_routes(request, got)
+        if response is not None:
+            return response
+
+        # Workflow routes
+        response = await self._dispatch_workflow_routes(request, got)
         if response is not None:
             return response
 
@@ -1171,6 +1188,175 @@ class GatewayHTTPHandler:
             return
         if not ran:
             logger.warning("WebUI automation run-now task did not execute")
+
+    # -- Workflow routes ----------------------------------------------------
+
+    async def _dispatch_workflow_routes(
+        self,
+        request: WsRequest,
+        got: str,
+    ) -> Response | None:
+        if not (got == "/api/webui/workflows" or got.startswith("/api/webui/workflows/")):
+            return None
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+
+        if got == "/api/webui/workflows":
+            return self._handle_workflows_list(request)
+
+        m = re.match(r"^/api/webui/workflows/([^/]+)/runs/([^/]+)$", got)
+        if m:
+            return self._handle_workflow_run_detail(request, m.group(1), m.group(2))
+
+        m = re.match(r"^/api/webui/workflows/([^/]+)/runs$", got)
+        if m:
+            return self._handle_workflow_runs_list(request, m.group(1))
+
+        m = re.match(r"^/api/webui/workflows/([^/]+)/run$", got)
+        if m:
+            return await self._handle_workflow_run(request, m.group(1))
+
+        if got == "/api/webui/workflows/save":
+            return self._handle_workflow_save(request)
+        if got == "/api/webui/workflows/validate":
+            return self._handle_workflow_validate(request)
+        if got == "/api/webui/workflows/delete":
+            return self._handle_workflow_delete(request)
+        if got == "/api/webui/workflows/run":
+            return await self._handle_workflow_run(request)
+
+        m = re.match(r"^/api/webui/workflows/([^/]+)$", got)
+        if m:
+            wf_id = m.group(1)
+            method = getattr(request, "method", "GET")
+            if method == "DELETE":
+                return self._handle_workflow_delete(request, wf_id)
+            return self._handle_workflow_get(request, wf_id)
+
+        return None
+
+    def _handle_workflows_list(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+        workflows = self.workflow_service.list_workflows()
+        return _http_json_response({"workflows": workflows})
+
+    def _handle_workflow_get(self, request: WsRequest, workflow_id: str) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+        wf = self.workflow_service.get_workflow(workflow_id)
+        if wf is None:
+            return _http_error(404, f"Workflow '{workflow_id}' not found")
+        return _http_json_response(wf.model_dump())
+
+    def _handle_workflow_save(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+        from nanobot.workflow.schema import WorkflowDefinition
+
+        payload = _mutation_payload(request)
+        definition_raw: Any = None
+        if isinstance(payload, dict):
+            definition_raw = payload.get("definition") or payload
+        if not isinstance(definition_raw, dict):
+            return _http_error(400, "definition object is required")
+        try:
+            workflow = WorkflowDefinition.model_validate(definition_raw)
+            saved = self.workflow_service.save_workflow(workflow)
+            return _http_json_response({"status": "ok", "workflow": saved.model_dump()})
+        except Exception as exc:
+            return _http_error(400, f"Invalid workflow definition: {exc}")
+
+    def _handle_workflow_validate(self, request: WsRequest) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+        payload = _mutation_payload(request) or {}
+        raw = payload.get("definition") if "definition" in payload else payload
+        if not isinstance(raw, dict):
+            return _http_error(400, "definition object is required")
+        result = self.workflow_service.validate_workflow(cast(dict[str, Any], raw))
+        return _http_json_response(result)
+
+    def _handle_workflow_delete(
+        self, request: WsRequest, workflow_id: str | None = None
+    ) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+        if not workflow_id:
+            payload = _mutation_payload(request) or {}
+            workflow_id = str(payload.get("id") or payload.get("workflow_id") or "").strip()
+            if not workflow_id:
+                query = _request_query(request)
+                workflow_id = (_query_first(query, "id") or _query_first(query, "workflow_id") or "").strip()
+        if not workflow_id:
+            return _http_error(400, "workflow_id is required")
+        deleted = self.workflow_service.delete_workflow(workflow_id)
+        if not deleted:
+            return _http_error(404, f"Workflow '{workflow_id}' not found")
+        return _http_json_response({"status": "ok", "deleted": True})
+
+    async def _handle_workflow_run(
+        self, request: WsRequest, workflow_id: str | None = None
+    ) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+        initial_context: dict[str, Any] | None = None
+        payload = _mutation_payload(request)
+        if isinstance(payload, dict):
+            if not workflow_id:
+                workflow_id = str(payload.get("id") or payload.get("workflow_id") or "").strip()
+            raw_ctx = payload.get("initial_context")
+            if isinstance(raw_ctx, dict):
+                initial_context = cast(dict[str, Any], raw_ctx)
+        if not workflow_id:
+            query = _request_query(request)
+            workflow_id = (_query_first(query, "id") or _query_first(query, "workflow_id") or "").strip()
+        if not workflow_id:
+            return _http_error(400, "workflow_id is required")
+        try:
+            record = await self.workflow_service.run_workflow(
+                workflow_id, initial_context=initial_context
+            )
+            return _http_json_response({"status": "ok", "run": record.model_dump()})
+        except ValueError as exc:
+            return _http_error(404, str(exc))
+        except Exception as exc:
+            return _http_error(500, f"Workflow run failed: {exc}")
+
+    def _handle_workflow_runs_list(self, request: WsRequest, workflow_id: str) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+        query = _parse_query(request.path)
+        limit_str = _query_first(query, "limit")
+        limit = int(limit_str) if limit_str and limit_str.isdigit() else 20
+        runs = self.workflow_service.list_runs(workflow_id, limit=limit)
+        return _http_json_response({"runs": [r.model_dump() for r in runs]})
+
+    def _handle_workflow_run_detail(
+        self, request: WsRequest, workflow_id: str, run_id: str
+    ) -> Response:
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        if self.workflow_service is None:
+            return _http_error(404, "Workflows feature is disabled")
+        run = self.workflow_service.get_run(run_id, workflow_id)
+        if run is None:
+            return _http_error(404, f"Run '{run_id}' not found for workflow '{workflow_id}'")
+        return _http_json_response(run.model_dump())
 
     # -- Media routes -------------------------------------------------------
 

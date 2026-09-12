@@ -116,7 +116,7 @@ const TOKEN_REFRESH_MIN_DELAY_MS = 5_000;
 const PAIRING_POLL_INTERVAL_MS = 5_000;
 const PAIRING_IDLE_POLL_INTERVAL_MS = 15_000;
 const PAIRING_DISMISS_SNOOZE_MS = 30_000;
-type ShellView = "chat" | "settings" | "apps" | "automations" | "skills" | "audit";
+type ShellView = "chat" | "settings" | "apps" | "automations" | "skills" | "audit" | "workflows";
 type ShellRoute = {
   view: ShellView;
   activeKey: string | null;
@@ -131,6 +131,10 @@ const SettingsView = lazy(async () => {
 const AuditSessionsView = lazy(async () => {
   const module = await import("@/components/audit/AuditSessionsView");
   return { default: module.AuditSessionsView };
+});
+const WorkflowsView = lazy(async () => {
+  const module = await import("@/components/workflow/WorkflowsView");
+  return { default: module.WorkflowsView };
 });
 const SessionSearchDialog = lazy(async () => {
   const module = await import("@/components/SessionSearchDialog");
@@ -258,6 +262,9 @@ function readShellRoute(): ShellRoute {
   }
   if (path === "/audit") {
     return { view: "audit", activeKey, settingsSection: "overview" };
+  }
+  if (path === "/workflows") {
+    return { view: "workflows", activeKey, settingsSection: "overview" };
   }
   if (path.startsWith("/temporary/")) {
     const encoded = path.slice("/temporary/".length);
@@ -1948,6 +1955,12 @@ function Shell({
     setMobileSidebarOpen(false);
   }, [activeKey, navigate]);
 
+  const onOpenWorkflows = useCallback(() => {
+    setSessionSearchOpen(false);
+    navigate({ view: "workflows", activeKey, settingsSection: "overview" });
+    setMobileSidebarOpen(false);
+  }, [activeKey, navigate]);
+
   const onSettingsSectionChange = useCallback(
     (section: SettingsSectionKey) => {
       navigate({
@@ -2440,6 +2453,12 @@ function Shell({
       });
       return;
     }
+    if (view === "workflows") {
+      document.title = t("app.documentTitle.chat", {
+        title: t("sidebar.workflows", { defaultValue: "Workflows" }),
+      });
+      return;
+    }
     document.title = activeSession
       ? t("app.documentTitle.chat", { title: headerTitle })
       : t("app.documentTitle.base");
@@ -2496,10 +2515,11 @@ function Shell({
     onOpenAutomations,
     onOpenSkills,
     onOpenAudit,
+    onOpenWorkflows,
     onSettingsIntent,
     onOpenSearch: onOpenSessionSearch,
     activeUtility:
-      view === "apps" || view === "skills" || view === "automations" || view === "audit"
+      view === "apps" || view === "skills" || view === "automations" || view === "audit" || view === "workflows"
         ? view
         : null,
     onToggleArchived,
@@ -2775,7 +2795,14 @@ function Shell({
                 </Suspense>
               </div>
             )}
-            {view !== "chat" && view !== "audit" && (
+            {view === "workflows" && (
+              <div className="absolute inset-0 flex flex-col">
+                <Suspense fallback={<SurfaceLoadingFallback />}>
+                  <WorkflowsView onBackToChat={onBackToChat} />
+                </Suspense>
+              </div>
+            )}
+            {view !== "chat" && view !== "audit" && view !== "workflows" && (
               <div className="absolute inset-0 flex flex-col">
                 <Suspense fallback={<SurfaceLoadingFallback />}>
                   <SettingsView

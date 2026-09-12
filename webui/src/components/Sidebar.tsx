@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   SquarePen,
   Blocks,
+  GitFork,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -66,9 +67,10 @@ interface SidebarProps {
   onOpenSkills: () => void;
   onOpenAutomations: () => void;
   onOpenAudit: () => void;
+  onOpenWorkflows?: () => void;
   onSettingsIntent?: () => void;
   onOpenSearch: () => void;
-  activeUtility?: "apps" | "skills" | "automations" | "audit" | null;
+  activeUtility?: "apps" | "skills" | "automations" | "audit" | "workflows" | null;
   onToggleArchived: () => void;
   onCollapse: () => void;
   onExpand?: () => void;
@@ -225,6 +227,15 @@ export function Sidebar(props: SidebarProps) {
           active={props.activeUtility === "automations"}
           selectionRef={activeActionRef}
           icon={<CalendarClock className="h-4 w-4" />}
+        />
+        <SidebarActionButton
+          collapsed={collapsed}
+          label={t("sidebar.workflows", { defaultValue: "Workflows" })}
+          onClick={props.onOpenWorkflows || (() => {})}
+          onIntent={props.onSettingsIntent}
+          active={props.activeUtility === "workflows"}
+          selectionRef={activeActionRef}
+          icon={<GitFork className="h-4 w-4" />}
         />
         <SidebarActionButton
           collapsed={collapsed}
