@@ -7,7 +7,6 @@ import type {
   WorkflowDefinition,
   WorkflowRunRecord,
   WorkflowState,
-  WorkflowTaskState,
 } from "@/lib/types";
 
 export const NODE_WIDTH = 240;
