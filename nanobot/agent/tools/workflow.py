@@ -25,20 +25,18 @@ from nanobot.workflow.service import WorkflowService
         ),
         definition=ObjectSchema(
             description=(
-                "Workflow definition dictionary containing 'id', 'name', 'start_at', and 'states'. "
-                "Supported state types: "
-                "1. Standard ASL 'task': "
-                "   - LLM turn: {'type': 'task', 'action': 'prompt', 'prompt': 'Instruction...', 'result_path': '$.data'} "
-                "   - Shell command: {'type': 'task', 'action': 'exec', 'command': 'git status', 'result_path': '$.data'} "
-                "   - Agent tool: {'type': 'task', 'action': 'tool', 'tool': 'read_file', 'args': {'path': 'file.txt'}, 'result_path': '$.data'} "
-                "2. First-class shortcuts: "
-                "   - 'llm': {'type': 'llm', 'prompt': 'Instruction...', 'result_path': '$.data'} "
-                "   - 'exec': {'type': 'exec', 'command': 'pytest', 'result_path': '$.data'} "
-                "   - 'tool': {'type': 'tool', 'tool': 'read_file', 'args': {'path': 'file.txt'}, 'result_path': '$.data'} "
-                "3. 'choice': conditional branching: {'type': 'choice', 'choices': [{'variable': '$.data.exit_code', 'equals': 0, 'next': 'NextState'}], 'default': 'Fallback'} "
-                "4. 'pass': static data injection: {'type': 'pass', 'result': {...}, 'result_path': '$.data', 'next': '...'} "
-                "5. 'succeed': terminal success state {'type': 'succeed'} "
-                "6. 'fail': terminal failure state {'type': 'fail', 'error': 'Reason'}"
+                "Workflow definition dictionary containing 'id', 'name', 'start_at', and 'states'.\n"
+                "State types & output contracts:\n"
+                "1. 'exec' (or 'task' with action='exec'): Runs shell command. "
+                "Output shape: {'exit_code': int, 'stdout': str, 'stderr': str, 'json': object|null}. "
+                "If stdout is valid JSON, parsed fields are accessible via '$.data.json.<field>' or directly '$.data.<field>'.\n"
+                "2. 'llm' (or 'task' with action='prompt'): Executes LLM turn. Stores generated text at 'result_path'. "
+                "Use '{{$.path}}' or '${$.path}' to interpolate variables into prompt (e.g. 'Summarize: {{$.data.json.sessions}}'). Bare '$.var' without braces is not interpolated.\n"
+                "3. 'tool' (or 'task' with action='tool'): Executes an agent tool: {'tool': 'read_file', 'args': {'path': 'file.txt'}, 'result_path': '$.file'}.\n"
+                "4. 'choice': Conditional branching: {'choices': [{'variable': '$.data.exit_code', 'equals': 0, 'next': 'NextState'}], 'default': 'Fallback'}.\n"
+                "5. 'pass': Static data injection: {'result': {...}, 'result_path': '$.data', 'next': '...'}.\n"
+                "6. 'succeed': Terminal success state {'type': 'succeed'}.\n"
+                "7. 'fail': Terminal failure state {'type': 'fail', 'error': 'Reason'}."
             ),
             additional_properties=True,
         ),

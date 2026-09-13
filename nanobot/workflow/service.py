@@ -12,7 +12,7 @@ from typing import Any, cast
 from loguru import logger
 
 from nanobot.config.paths import get_config_path
-from nanobot.workflow.engine import WorkflowEngine
+from nanobot.workflow.engine import WorkflowEngine, WorkflowExecutionError
 from nanobot.workflow.schema import (
     ChoiceState,
     ExecState,
@@ -65,7 +65,7 @@ class WorkflowService:
         if act == "exec":
             cmd = params.get("command") or prompt
             if not cmd:
-                return {"status": "error", "error": "Missing required parameter 'command' for exec action"}
+                raise WorkflowExecutionError("Missing required parameter 'command' for exec action")
             import subprocess
 
             proc = subprocess.run(
@@ -75,17 +75,33 @@ class WorkflowService:
                 text=True,
                 timeout=params.get("timeout", 60),
             )
-            return {
+            stdout_str = proc.stdout.strip()
+            res: dict[str, Any] = {
                 "exit_code": proc.returncode,
-                "stdout": proc.stdout.strip(),
+                "stdout": stdout_str,
                 "stderr": proc.stderr.strip(),
             }
+            if stdout_str.startswith(("{", "[")):
+                try:
+                    import json
+
+                    parsed = json.loads(stdout_str)
+                    if isinstance(parsed, dict):
+                        res["json"] = parsed
+                        for k, v in cast(dict[str, Any], parsed).items():
+                            if k not in res:
+                                res[k] = v
+                    else:
+                        res["json"] = parsed
+                except Exception:
+                    pass
+            return res
 
         # 3. Direct agent tool execution
         if act == "tool":
             tool_name = params.get("tool") or params.get("name")
             if not tool_name:
-                return {"status": "error", "error": "Missing required parameter 'tool' for tool action"}
+                raise WorkflowExecutionError("Missing required parameter 'tool' for tool action")
             if self.agent_loop is not None and getattr(self.agent_loop, "tools", None) is not None:
                 tool = self.agent_loop.tools.get(str(tool_name))
                 if tool is not None:
@@ -97,8 +113,8 @@ class WorkflowService:
                     )
                     res = await tool.execute(**tool_args)
                     return str(res)
-                return {"status": "error", "error": f"Tool '{tool_name}' not found in registered tools"}
-            return {"status": "error", "error": "Agent loop or tool registry not available"}
+                raise WorkflowExecutionError(f"Tool '{tool_name}' not found in registered tools")
+            raise WorkflowExecutionError("Agent loop or tool registry not available to execute tool action")
 
         # 4. Message dispatch
         if act == "send_message":
@@ -122,7 +138,7 @@ class WorkflowService:
         if act == "prompt":
             prompt_text = prompt or params.get("prompt")
             if not prompt_text:
-                return {"status": "error", "error": "Missing required parameter 'prompt' for prompt action"}
+                raise WorkflowExecutionError("Missing required parameter 'prompt' for prompt action")
 
             if self.agent_loop is not None:
                 channel = params.get("channel", "workflow")
@@ -135,12 +151,13 @@ class WorkflowService:
                     chat_id=chat_id,
                 )
                 return outbound.content if outbound else ""
-            return f"[Simulated LLM response for: {str(prompt_text)[:80]}...]"
+            raise WorkflowExecutionError(
+                "Agent loop is not available to execute LLM turn. Ensure WorkflowService is bound to an active AgentLoop."
+            )
 
-        return {
-            "status": "error",
-            "error": f"Unsupported action '{action}'. Valid actions are: 'prompt', 'tool', 'exec', 'send_message', 'pass'.",
-        }
+        raise WorkflowExecutionError(
+            f"Unsupported action '{action}'. Valid actions are: 'prompt', 'tool', 'exec', 'send_message', 'pass'."
+        )
 
     # ------------------------------------------------------------------
     # Workflow Definition Persistence

@@ -54,6 +54,11 @@ def test_interpolate_template() -> None:
     rendered = interpolate_template(tpl, context)
     assert rendered == "Hello Alice, your issue is in billing with amount $150."
 
+    # Braced ${...} and {{...}} are supported; bare text remains literal
+    tpl2 = "Hello ${user}, details: ${$.analysis.category}, literal: $.analysis.category."
+    rendered2 = interpolate_template(tpl2, context)
+    assert rendered2 == "Hello Alice, details: billing, literal: $.analysis.category."
+
     # Recursive object interpolation
     params = {
         "text": "User: {{$.user}}",

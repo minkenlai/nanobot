@@ -8,7 +8,7 @@ from typing import Any, cast
 
 from nanobot.workflow.schema import ChoiceRule
 
-_TEMPLATE_VAR_RE = re.compile(r"\{\{\s*(\$?\.?[a-zA-Z0-9_.\-\[\]]+)\s*\}\}")
+_TEMPLATE_VAR_RE = re.compile(r"(?:\{\{|\$\{)\s*(\$?\.?[a-zA-Z0-9_.\-\[\]]+)\s*(?:\}\}|\})")
 _INDEX_SPLIT_RE = re.compile(r"\[(\d+)\]")
 
 
@@ -87,11 +87,11 @@ def set_path(data: dict[str, Any], path: str, value: Any) -> None:
 
 
 def interpolate_template(template: str, context: dict[str, Any]) -> str:
-    """Interpolate {{$.path}} placeholders in a string template."""
-    if not template or "{{" not in template:
+    """Interpolate {{$.path}} or ${$.path} placeholders in a string template."""
+    if not template or ("{{" not in template and "${" not in template):
         return template
 
-    def _replace(match: re.Match[str]) -> str:
+    def _replace_braced(match: re.Match[str]) -> str:
         var_path = match.group(1)
         val = resolve_path(context, var_path)
         if val is None:
@@ -100,7 +100,7 @@ def interpolate_template(template: str, context: dict[str, Any]) -> str:
             return json.dumps(val, ensure_ascii=False)
         return str(val)
 
-    return _TEMPLATE_VAR_RE.sub(_replace, template)
+    return _TEMPLATE_VAR_RE.sub(_replace_braced, template)
 
 
 def interpolate_obj(obj: Any, context: dict[str, Any]) -> Any:

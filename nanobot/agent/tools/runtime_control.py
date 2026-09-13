@@ -156,6 +156,14 @@ class AgentRuntimeControl:
         self.__scratchpad: dict[str, JsonValue] = {}
         self.__workspace_display: str | None = None
 
+    @property
+    def target(self) -> _RuntimeControlTarget:
+        return self.__target
+
+    @property
+    def agent_loop(self) -> _RuntimeControlTarget:
+        return self.__target
+
     def snapshot(self) -> RuntimeSnapshot:
         target = self.__target
         return RuntimeSnapshot(

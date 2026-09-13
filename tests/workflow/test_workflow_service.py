@@ -99,7 +99,7 @@ async def test_workflow_service_dispatcher_actions(tmp_path: Path) -> None:
         start_at="run_cmd",
         states={
             "run_cmd": ExecState(
-                command="echo 'exec state test'",
+                command="echo '{\"new_activity\": true, \"count\": 3}'",
                 result_path="$.cmd_out",
                 end=True,
             ),
@@ -109,7 +109,9 @@ async def test_workflow_service_dispatcher_actions(tmp_path: Path) -> None:
     run_res = await service.run_workflow("exec_flow")
     assert run_res.status == "succeeded"
     assert run_res.final_context["cmd_out"]["exit_code"] == 0
-    assert run_res.final_context["cmd_out"]["stdout"] == "exec state test"
+    assert run_res.final_context["cmd_out"]["new_activity"] is True
+    assert run_res.final_context["cmd_out"]["count"] == 3
+    assert run_res.final_context["cmd_out"]["json"]["new_activity"] is True
 
     # 2. Standard ASL TaskState with resource="nanobot:exec"
     wf_asl_exec = WorkflowDefinition(
@@ -130,7 +132,7 @@ async def test_workflow_service_dispatcher_actions(tmp_path: Path) -> None:
     assert run_asl.status == "succeeded"
     assert run_asl.final_context["asl_out"]["stdout"] == "asl resource test"
 
-    # 3. LLMState fallback simulation without live agent
+    # 3. LLMState failure when live agent is not available
     wf_llm = WorkflowDefinition(
         id="llm_flow",
         name="LLM Flow",
@@ -145,8 +147,12 @@ async def test_workflow_service_dispatcher_actions(tmp_path: Path) -> None:
     )
     service.save_workflow(wf_llm)
     run_llm = await service.run_workflow("llm_flow")
-    assert run_llm.status == "succeeded"
-    assert "Simulated LLM response for: Summarize today's logs" in run_llm.final_context["summary"]
+    assert run_llm.status == "failed"
+    assert run_llm.error is not None
+    assert "Agent loop is not available" in run_llm.error
+    assert len(run_llm.steps) == 1
+    assert run_llm.steps[0].status == "failed"
+    assert "Agent loop is not available" in (run_llm.steps[0].error or "")
 
     # 4. LLMState with mocked agent loop
     mock_loop = MagicMock()
@@ -199,9 +205,9 @@ async def test_workflow_service_dispatcher_actions(tmp_path: Path) -> None:
     )
     service.save_workflow(wf_unsupported)
     run_bad = await service.run_workflow("bad_action")
-    assert run_bad.status == "succeeded"
-    assert run_bad.final_context["bad_out"]["status"] == "error"
-    assert "Unsupported action 'invalid_action_name'" in run_bad.final_context["bad_out"]["error"]
+    assert run_bad.status == "failed"
+    assert run_bad.error is not None
+    assert "Unsupported action 'invalid_action_name'" in run_bad.error
 
     # 7. Deterministic error for missing required parameter
     wf_missing_param = WorkflowDefinition(
@@ -218,7 +224,7 @@ async def test_workflow_service_dispatcher_actions(tmp_path: Path) -> None:
     )
     service.save_workflow(wf_missing_param)
     run_missing = await service.run_workflow("missing_cmd")
-    assert run_missing.status == "succeeded"
-    assert run_missing.final_context["err_out"]["status"] == "error"
-    assert "Missing required parameter 'command'" in run_missing.final_context["err_out"]["error"]
+    assert run_missing.status == "failed"
+    assert run_missing.error is not None
+    assert "Missing required parameter 'command'" in run_missing.error
 
